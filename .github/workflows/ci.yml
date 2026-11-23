@@ -9,6 +9,8 @@
 # Not verified on GitHub: this file was written without a runner to try it on. The checks themselves
 # are run on Linux by the project's own test run (see the notes in tools/ci-checks.mjs).
 # Actions are named by major version tag, not pinned to a commit.
+# A toolchain file may end its lines with CR LF (verifier-v4/rust-toolchain.toml does): the channel is read up to
+# its closing quote, whatever follows on the line.
 name: CI
 
 on:
@@ -45,7 +47,7 @@ jobs:
           node-version: "26"
       - name: Install the toolchain named in rust-toolchain.toml
         run: |
-          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          channel="$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)"
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy
           rustup default "$channel"
@@ -84,7 +86,7 @@ jobs:
       # The build runs in a staging folder that carries verifier-v4/rust-toolchain.toml.
       - name: Install the verifier's toolchain
         run: |
-          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' verifier-v4/rust-toolchain.toml)"
+          channel="$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' verifier-v4/rust-toolchain.toml)"
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy
           rustup default "$channel"
@@ -105,7 +107,7 @@ jobs:
           node-version: "26"
       - name: Install the toolchain named in rust-toolchain.toml
         run: |
-          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          channel="$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)"
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
           rustup default "$channel"

@@ -1,0 +1,61 @@
+[package]
+name = "timecurrency-v5"
+version = "0.9.0"
+edition = "2024"
+publish = false
+description = "Version-5 execution engine for the protocol-4 ledger: in-memory authenticated state, parallel signature checks, snapshot persistence"
+
+[lib]
+name = "timecurrency_v5"
+
+[[bin]]
+name = "time-node-v5"
+path = "src/main.rs"
+
+[[bin]]
+name = "time-bench-v5"
+path = "src/bin/bench.rs"
+
+[features]
+# A rehearsal build: its list of implemented versions also holds a version 5
+# with the rules of version 4 (`rules::REHEARSAL_SPEC`), so that an activation
+# can be rehearsed on a real network with two real programs, this one and the
+# release build. It prints `rehearsal=5` in its version line, which the kit
+# and the release tool refuse: a rehearsal build is never released or leased.
+rehearsal-v5 = []
+
+[dependencies]
+anyhow = "=1.0.104"
+base64 = "=0.22.1"
+ed25519-consensus = "=2.1.0"
+ed25519-dalek = "=3.0.0"
+hex = "=0.4.3"
+prost = "0.13"
+rayon = "=1.12.0"
+serde = { version = "=1.0.229", features = ["derive", "rc"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+tendermint = "=0.40.4"
+tendermint-abci = "=0.40.4"
+tendermint-proto = "=0.40.4"
+timecurrency-node = { path = ".." }
+pos = { package = "time-pos", path = "../pos" }
+bitcoin_bridge = { package = "timecurrency-bitcoin-bridge", path = "../bitcoin-bridge" }
+treasury = { package = "time-treasury-policy", path = "../treasury" }
+history = { package = "time-history", path = "../history" }
+registration = { package = "time-registration", path = "../registration" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+curve25519-dalek = "=5.0.0"
+jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2", "mocks"] }
+sha2_10 = { package = "sha2", version = "=0.10.9" }
+tempfile = "=3.27.0"
+timecurrency-v4 = { path = "../v4" }
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+strip = "debuginfo"

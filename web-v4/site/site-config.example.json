@@ -1,0 +1,9 @@
+{
+  "wallet": "https://wallet.example",
+  "faucet": "https://faucet.example",
+  "explorer": "https://api.example/explorer/",
+  "blog": "https://blog.example",
+  "api": "https://api.example",
+  "network_name": "Time test network",
+  "ends": "2026-12-20"
+}

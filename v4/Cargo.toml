@@ -1,0 +1,42 @@
+[package]
+name = "timecurrency-v4"
+version = "0.4.0"
+edition = "2024"
+publish = false
+description = "Protocol-4 development candidate: Bitcoin receipts, stake validators and authenticated accounts"
+
+[lib]
+name = "timecurrency_v4"
+
+[[bin]]
+name = "time-node-v4"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "=1.0.104"
+base64 = "=0.22.1"
+ed25519-dalek = "=3.0.0"
+hex = "=0.4.3"
+prost = "0.13"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+tendermint-abci = "=0.40.4"
+tendermint-proto = "=0.40.4"
+timecurrency-node = { path = ".." }
+timecurrency-v2 = { path = "../v2" }
+pos = { package = "time-pos", path = "../pos" }
+bitcoin_bridge = { package = "timecurrency-bitcoin-bridge", path = "../bitcoin-bridge" }
+treasury = { package = "time-treasury-policy", path = "../treasury" }
+
+history = { package = "time-history", path = "../history" }
+registration = { package = "time-registration", path = "../registration" }
+
+[dev-dependencies]
+tendermint = "=0.40.4"
+tempfile = "=3.27.0"
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+strip = "debuginfo"

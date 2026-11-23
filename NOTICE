@@ -1,0 +1,28 @@
+Time
+Copyright 2026 The Time Network authors
+
+This software is licensed under the Apache License, Version 2.0.
+The full text is in the file LICENSE.
+
+Trademarks. The project name "Time" and its logo are trademarks of
+the Time Network maintainers. They are not licensed with the software:
+section 6 of the Apache License grants no permission to use them, except to
+describe where the software comes from. A modified version, or a network run
+with this software, must not present itself as the original project.
+
+Status. This software has not been audited by an outside party and no network
+running it has launched. It accepts development chains only. Do not use it to
+hold anything of real value.
+
+Third-party software. This repository contains, and its builds include,
+software written by others under their own licences:
+
+- web-v4/wallet/vendor/argon2-4.12.0.umd.min.js is taken from hash-wasm 4.12.0
+  (MIT). Its licence is in web-v4/wallet/vendor/LICENSE.hash-wasm.
+- web-v4/shared/verifier/timecurrency_verifier_v4_bg.wasm is compiled from
+  verifier-v4/ and contains the Rust crates locked in verifier-v4/Cargo.lock.
+- The node binaries are built from the Rust crates locked in the Cargo.lock
+  files, and the consensus binary from CometBFT 0.38.26 (Apache-2.0) and the Go
+  modules in consensus/go.mod.
+
+THIRD-PARTY-LICENSES.md lists every one of them with its licence.

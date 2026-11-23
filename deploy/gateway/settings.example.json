@@ -1,0 +1,13 @@
+{
+  "manifest_file": "/operator/pinned-time-v4.json",
+  "manifest_sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_MANIFEST_SHA256",
+  "native_rpc_url": "http://127.0.0.1:26657/",
+  "data_directory": "/data/gateway",
+  "recipient": "0",
+  "wallet_port": 8907,
+  "merchant_port": 8908,
+  "public_origins": {
+    "wallet": "https://wallet.example",
+    "merchant": "https://app.example"
+  }
+}

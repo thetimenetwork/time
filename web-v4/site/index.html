@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="The Time test network: create an account, get test time, send it to a friend and sign in to a demo website.">
+  <title>Time test network</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+  <script type="module" src="web-v4/shared/network-menu.js"></script>
+</head>
+<body>
+  <p class="strip"><strong>Test network.</strong> The seconds here have no value.</p>
+  <main>
+    <div data-network-menu data-app="site"></div>
+    <header class="hero">
+      <div class="hero-text">
+        <h1><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time</h1>
+        <p class="lede">Time is a currency whose unit is the second. The network creates one second of currency for each second that passes on its chain, one for the whole network and not one per person, so the supply always equals the time since the network started.</p>
+      </div>
+    </header>
+
+    <section class="notice" aria-labelledby="test-title">
+      <h2 id="test-title">This is a test network</h2>
+      <ul>
+        <li>The seconds here have no value. They cannot be bought, sold or exchanged for anything.</li>
+        <li>The network may be reset at any time, and everything on it erased.</li>
+        <li>The software has not had its outside audit yet.</li>
+        <li id="ends">The end date of this test network is not set on this page.</li>
+      </ul>
+    </section>
+
+    <p id="config-note" class="problem" role="status" hidden></p>
+
+    <section class="part steps-part" aria-labelledby="steps-title">
+      <h2 id="steps-title">Try it in four steps</h2>
+      <ol class="steps">
+        <li class="card">
+          <h3>Create your account</h3>
+          <p>Open the wallet and choose a name and a password. Your key is made in your browser, and the password never leaves it.</p>
+          <a class="button" data-link="wallet" rel="noopener noreferrer">Open the wallet</a>
+        </li>
+        <li class="card">
+          <h3>Get test time</h3>
+          <p>The wallet has a button for it. The faucet page is the other way: type your @name there.</p>
+          <a class="button secondary" data-link="faucet" rel="noopener noreferrer">Open the faucet</a>
+        </li>
+        <li class="card">
+          <h3>Send some to a friend</h3>
+          <p>In the wallet, send seconds to your friend's @name. The wallet shows what you are about to send before you approve.</p>
+          <a class="button secondary" data-link="wallet" rel="noopener noreferrer">Open the wallet</a>
+        </li>
+        <li class="card">
+          <h3>Sign in to the demo blog</h3>
+          <p>Sign in with your wallet, write a post, and see how a website asks for a payment.</p>
+          <a class="button secondary" data-link="blog" rel="noopener noreferrer">Open the blog</a>
+        </li>
+      </ol>
+    </section>
+
+    <section class="card part keys-part" aria-labelledby="keys-title">
+      <h2 id="keys-title">Your keys in one minute</h2>
+      <dl class="keys">
+        <dt><span class="tag day">Every day</span></dt>
+        <dd>Your @name and your password. The password unlocks the key that this browser keeps for you.</dd>
+        <dt><span class="tag safe">Keep safe</span></dt>
+        <dd>The backup file. With it and your password you can open your account in another browser. Your password alone cannot bring the key back once this browser's data is cleared.</dd>
+        <dt><span class="tag later">After "Protect my account"</span></dt>
+        <dd>The recovery sheet and the recovery passphrase, on paper and kept apart from each other. The wallet shows them only once.</dd>
+      </dl>
+      <a class="quiet-link" data-link="wallet" rel="noopener noreferrer">The wallet explains it in full</a>
+    </section>
+
+    <section class="card part" aria-labelledby="explorer-title">
+      <h2 id="explorer-title">Look it up</h2>
+      <p>Look up any account or payment, and check it in your own browser. Its Validators page shows who signs the blocks, and how to run a validator yourself.</p>
+      <a class="button secondary" data-link="explorer" rel="noopener noreferrer">Open the explorer</a>
+    </section>
+
+    <section class="card part live" aria-labelledby="live-title">
+      <h2 id="live-title">The network now</h2>
+      <p id="network-name" class="soft" hidden></p>
+      <p id="live-headline" class="figure">Asking the network…</p>
+      <p id="live-detail"></p>
+      <p class="soft small">As the network's service reports it. The explorer checks blocks in your own browser.</p>
+    </section>
+
+    <footer>Time test network. Nothing here is money.</footer>
+  </main>
+</body>
+</html>

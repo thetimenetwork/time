@@ -1,0 +1,425 @@
+/* The wallet. The visual language of every Time page (web-v4/wallet/README.md, "How it looks"): a white canvas, near-black
+   ink, pale gray surfaces, bold numbers, round quick actions, pill buttons, fine line drawings of people and a pale
+   ribbon behind the balance. Colours follow the reader's system setting; nothing is loaded from elsewhere (system
+   fonts, icons drawn from data: images, drawings inline). No state is told by colour alone: every mark has words. */
+:root {
+  color-scheme: light dark;
+  --page: #ffffff; --surface: #f1f1f1; --track: #e4e4e4; --card: #ffffff; --ink: #222222; --soft: #666666;
+  --line: #dddddd; --edge: #767676; --link: #222222; --ribbon: #f4f4f4;
+  --ok: #1b6e3a; --ok-bg: #e7f3ea; --bad: #b3261e; --bad-bg: #fcebe9; --warn: #6f4700; --warn-bg: #fff2d4;
+  --unknown-bg: #f1f1f1; --busy-bg: #f1f1f1; --day-bg: #f1f1f1; --warn-ink: #6f4700;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Sizes: the spacing scale 4, 8, 12, 16, 24, 32, 48, 64; controls tall enough for a thumb; brief, calm movement. */
+  --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1rem; --s5: 1.5rem; --s6: 2rem; --s7: 3rem; --s8: 4rem;
+  --gutter: 1.5rem; --radius-field: .875rem; --radius-sheet: 1.25rem; --pill: 999px;
+  --button-height: 3.25rem; --field-height: 3.5rem; --row-height: 4rem; --fast: 180ms; --sheet: 260ms; --ease: cubic-bezier(.2, .7, .2, 1);
+}
+/* The dark palette: the same roles, checked for contrast on their own (text at least 4.5:1, controls 3:1). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #121212; --surface: #1e1e1e; --track: #2c2c2c; --card: #1a1a1a; --ink: #ededed; --soft: #a8a8a8;
+    --line: #2f2f2f; --edge: #8d8d8d; --link: #ededed; --ribbon: #191919;
+    --ok: #7fd49a; --ok-bg: #12291a; --bad: #ff9d93; --bad-bg: #3a1714; --warn: #ffd27a; --warn-bg: #352705;
+    --unknown-bg: #1e1e1e; --busy-bg: #1e1e1e; --day-bg: #1e1e1e; --warn-ink: #ffd27a;
+  }
+}
+@media (max-width: 22.5rem) { :root { --gutter: 1rem; } }
+
+* { box-sizing: border-box; }
+html { font: 16px/1.5 var(--sans); background: var(--page); color: var(--ink); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-padding-bottom: 6.5rem; }
+body { margin: 0; background: var(--page); color: var(--ink); overflow-x: hidden; }
+[hidden] { display: none !important; }
+a { color: var(--link); text-underline-offset: .2em; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+h1 { font-size: 1.625rem; line-height: 1.2; letter-spacing: -.01em; margin: var(--s1) 0 var(--s2); }
+h2 { font-size: 1.1875rem; line-height: 1.3; margin: 0 0 var(--s2); }
+h3 { font-size: 1rem; margin: var(--s4) 0 var(--s1); }
+p { margin: var(--s2) 0; }
+.subtle { color: var(--soft); }
+.eyebrow { margin: 0 0 var(--s1); font-size: .8125rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Which network this is: always in view, in quiet amber, never in the colours of a confirmation. */
+.net-strip { position: sticky; top: 0; z-index: 5; margin: 0; padding: var(--s2) var(--gutter); background: var(--warn-bg); color: var(--warn); text-align: center; font-size: .875rem; line-height: 1.4; }
+.topbar { max-width: 76rem; margin: 0 auto; padding: var(--s3) var(--gutter); display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+.brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: 1.375rem; font-weight: 800; letter-spacing: -.02em; color: var(--ink); text-decoration: none; }
+.brand-mark { width: 1.75rem; height: 1.75rem; flex: none; }
+.brand-mark circle { fill: var(--ink); }
+.brand-mark path { fill: none; stroke: var(--page); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.network { margin-left: auto; display: flex; align-items: center; gap: var(--s2); font-size: .8125rem; color: var(--soft); min-width: 0; }
+.network i { flex: none; width: .625rem; height: .625rem; border-radius: 50%; border: 1.5px solid var(--edge); }
+.network i.good { background: var(--ok); border-color: var(--ok); }
+/* On a phone: the name of the app and Lock on one line; the network menu and the state of the network on the next. */
+@media (max-width: 34rem) {
+  .topbar { padding-top: var(--s2); padding-bottom: var(--s2); }
+  #lock-button { order: 2; margin-left: auto; }
+  .topbar [data-network-menu] { order: 3; margin: 0; }
+  .network { order: 4; flex: 1 1 0; min-width: 0; margin-left: 0; }
+  #network-status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}
+main { max-width: 76rem; margin: 0 auto; padding: 0 var(--gutter) var(--s6); }
+/* Everything outside the dashboard (sign-up, a website's window, a recovery) reads in one calm column. */
+main > section:not(#dashboard):not(#auth-panel), main > details { max-width: 40rem; margin-left: auto; margin-right: auto; }
+
+/* Controls: pill buttons a thumb can hit (52 px), fields of 56 px, one dominant action in each place. */
+button, .button-link { font: inherit; font-weight: 600; line-height: 1.25; min-height: var(--button-height); padding: .75rem 1.5rem; border: 1px solid var(--ink); border-radius: var(--pill); background: var(--ink); color: var(--page); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); text-align: center; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.secondary, .button-link.secondary { background: transparent; color: var(--ink); border-color: var(--edge); }
+button.quiet { background: transparent; color: var(--ink); border-color: var(--edge); min-height: 2.75rem; padding: .375rem 1rem; font-size: .875rem; }
+button.link { background: none; border: 0; border-radius: .25rem; padding: 0; min-height: 2.75rem; color: var(--link); text-decoration: underline; text-underline-offset: .2em; font-weight: 500; display: inline-flex; vertical-align: middle; text-align: left; }
+@media (hover: hover) {
+  button.secondary:not(:disabled):hover, button.quiet:not(:disabled):hover, .button-link.secondary:hover { background: var(--surface); }
+  button:not(.secondary):not(.quiet):not(.link):not(:disabled):hover { opacity: .88; }
+}
+label { display: block; margin: var(--s4) 0 var(--s2); font-weight: 600; }
+input, select, textarea { width: 100%; min-width: 0; min-height: var(--field-height); font: inherit; font-size: 1rem; padding: .75rem var(--s4); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--card); color: var(--ink); }
+textarea { font-family: var(--mono); font-size: .875rem; line-height: 1.5; resize: vertical; }
+input[type=checkbox] { width: 1.375rem; height: 1.375rem; min-height: 0; margin: .125rem var(--s3) 0 0; padding: 0; flex: none; accent-color: var(--ink); }
+input[type=file] { padding: .875rem var(--s4); }
+input[type=search] { -webkit-appearance: none; appearance: none; }
+input::placeholder, textarea::placeholder { color: var(--soft); opacity: 1; }
+/* The amount: the number is what matters on the screen where it is typed. */
+input.money { min-height: 4rem; font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+form { display: block; }
+form button[type=submit] { margin-top: var(--s5); }
+#send-form button[type=submit], #auth-form button[type=submit] { width: 100%; }
+.field-note { margin: var(--s2) 0; font-size: .875rem; color: var(--soft); }
+.wide { width: 100%; }
+.input-prefix { display: flex; align-items: center; min-height: var(--field-height); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--card); }
+.input-prefix span { padding-left: var(--s4); color: var(--soft); font-weight: 600; }
+.input-prefix input { border: 0; padding-left: .25rem; background: transparent; }
+.input-prefix input:focus-visible { outline: none; }
+.input-prefix:focus-within { outline: 3px solid var(--link); outline-offset: 2px; }
+details > summary { cursor: pointer; min-height: 2.75rem; padding: var(--s3) 0; font-weight: 600; }
+.button-row { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); margin-top: var(--s4); }
+
+/* Groups. Sections are flat: spacing and headings group them, a hairline separates them. Only what needs it gets a
+   surface (the Protection controls, what waits on the account, a website's request) or a border. */
+.card { background: transparent; border: 0; border-radius: 0; padding: 0; margin: var(--s6) 0; }
+.card + .card, .card + details.card { border-top: 1px solid var(--line); padding-top: var(--s6); }
+/* The notice says what happened in words; its sign only says what kind of line it is: "i" for information (a notice
+   can say that something was not checked or did not arrive, so it never wears a tick), a warning sign on red for a
+   refusal or a failure, a turning ring while something is under way. A tick is kept for "Sent" under the form. */
+.notice { position: relative; margin: var(--s4) 0; padding: var(--s3) var(--s4) var(--s3) 3rem; border-radius: var(--radius-field); background: var(--surface); color: var(--ink); overflow-wrap: anywhere; }
+.notice::before { content: ""; position: absolute; left: var(--s4); top: .9rem; width: 1.25rem; height: 1.25rem; background: var(--ink); -webkit-mask: var(--i-info) center / contain no-repeat; mask: var(--i-info) center / contain no-repeat; }
+.notice.error { background: var(--bad-bg); }
+.notice.error::before { background: var(--bad); -webkit-mask-image: var(--i-alert); mask-image: var(--i-alert); }
+.notice.busy { background: var(--surface); }
+.notice.busy::before { background: transparent; -webkit-mask: none; mask: none; border: 2px solid var(--edge); border-top-color: var(--ink); border-radius: 50%; animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.warning { padding: var(--s3) var(--s4); border-left: 4px solid var(--bad); border-radius: .5rem; background: var(--bad-bg); }
+.nudge { padding: var(--s3) var(--s4); border-left: 4px solid var(--warn); border-radius: .5rem; background: var(--warn-bg); }
+.result { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--radius-field); background: var(--ok-bg); }
+.result h3 { margin: 0; }
+.result h3::before { content: "\2713  "; color: var(--ok); }
+
+/* Drawings: fine black lines, solid black hair and clothes, white faces, a pale ribbon behind. */
+.art { display: block; color: var(--ink); width: 100%; height: auto; }
+.art-line { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.art-bold { stroke-width: 3; }
+.art-paper { fill: var(--page); stroke: currentColor; stroke-width: 1.75; stroke-linejoin: round; }
+.art-solid { fill: currentColor; }
+.art-ribbon { fill: var(--ribbon); }
+.art-text { fill: currentColor; font: 700 20px var(--sans); }
+.art-small { max-width: 13rem; margin: 0 auto var(--s4); }
+
+/* Start: one line about the wallet, then the form. Side by side on a wide screen. */
+.start { margin: var(--s4) auto var(--s6); max-width: 40rem; }
+.start-hero { text-align: center; }
+.hero-line { max-width: 26rem; margin: var(--s3) auto var(--s5); font-size: 1.0625rem; color: var(--soft); text-wrap: balance; }
+.start-card { margin-top: 0; }
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1); margin-bottom: var(--s5); padding: var(--s1); border-radius: var(--pill); background: var(--surface); }
+.segmented button { min-height: 2.75rem; padding: .5rem var(--s3); background: transparent; color: var(--soft); border-color: transparent; font-size: .9375rem; }
+.segmented button.active { background: var(--card); color: var(--ink); border-color: var(--edge); }
+.other-ways { margin: var(--s6) 0 var(--s4); }
+.other-ways h2 { font-size: .875rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); margin-bottom: var(--s1); }
+.other-ways details { border-top: 1px solid var(--line); }
+.other-ways details:last-child { border-bottom: 1px solid var(--line); }
+.other-ways details > summary { list-style: none; position: relative; display: flex; align-items: center; min-height: var(--row-height); padding: var(--s3) 2.25rem var(--s3) 0; font-weight: 500; color: var(--ink); }
+.other-ways details > summary::-webkit-details-marker { display: none; }
+.other-ways details[open] { padding-bottom: var(--s4); }
+.other-ways button.active { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+@media (min-width: 64rem) {
+  .start { max-width: 64rem; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 27rem); gap: var(--s7); align-items: start; margin-top: var(--s6); }
+  .start-hero { position: sticky; top: 6rem; text-align: left; padding-top: var(--s1); }
+  .hero-line { margin: 0; font-size: 1.75rem; line-height: 1.3; font-weight: 600; color: var(--ink); max-width: 24rem; }
+}
+
+/* The dashboard's five places. On a phone and a tablet they sit at the bottom of the screen, within reach of a thumb;
+   on a wide screen they are a column on the left. Each has a drawn sign above its word, and the word says where. */
+.nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; margin: 0; padding: .25rem .25rem calc(.25rem + env(safe-area-inset-bottom)); background: var(--page); border-top: 1px solid var(--line); }
+.nav button { flex-direction: column; gap: .1875rem; min-height: 3.5rem; padding: .375rem .125rem; background: transparent; color: var(--soft); border: 0; border-radius: var(--radius-field); font-size: .75rem; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav button::before { content: ""; flex: none; width: 1.5rem; height: 1.5rem; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.nav button.active { color: var(--ink); font-weight: 800; }
+footer { padding-bottom: 7rem; }
+@media (min-width: 64rem) {
+  #dashboard { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 0 var(--s7); align-items: start; }
+  .nav { position: sticky; top: 4.5rem; display: flex; flex-direction: column; gap: var(--s1); padding: var(--s5) 0 0; border: 0; background: transparent; }
+  .nav button { flex-direction: row; justify-content: flex-start; gap: var(--s3); min-height: 3rem; padding: .5rem var(--s4); border-radius: var(--pill); font-size: .9375rem; }
+  .nav button.active { background: var(--surface); }
+  .workspace-panel { max-width: 44rem; }
+  footer { padding-bottom: 2rem; }
+  html { scroll-padding-bottom: 0; }
+}
+.back { margin-top: var(--s5); min-height: 2.75rem; padding: .375rem 1rem .375rem .625rem; background: transparent; color: var(--ink); border-color: var(--edge); }
+.back::before { content: ""; width: 1.25rem; height: 1.25rem; background: currentColor; -webkit-mask: var(--i-back) center / contain no-repeat; mask: var(--i-back) center / contain no-repeat; }
+
+/* Home: who, the balance, the quick actions, what is staked, the Protection controls; what waits and the latest
+   actions beside them on a wide screen. */
+@media (min-width: 80rem) {
+  #panel-home { max-width: none; }
+  .home-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 22rem); gap: 0 var(--s7); align-items: start; }
+  .home-side > .card:first-child, .home-side > .card[hidden] + .card { border-top: 0; padding-top: 0; margin-top: var(--s5); }
+}
+.balance-card { position: relative; isolation: isolate; margin: var(--s4) calc(-1 * var(--gutter)) 0; padding: var(--s4) var(--gutter) var(--s5); overflow: hidden; }
+/* On a phone the ribbon runs to the edges of the screen; on a wider screen it stays inside a rounded frame. */
+@media (min-width: 40rem) { .balance-card { margin: var(--s4) 0 0; padding: var(--s5) var(--s5) var(--s5); border: 1px solid var(--line); border-radius: var(--radius-sheet); } }
+.home-side > .card:first-child, .home-side > .card[hidden] + .card { border-top: 0; padding-top: 0; }
+.ribbon { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; }
+.ribbon path { fill: var(--ribbon); }
+.who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin: 0 0 var(--s4); font-size: 1.0625rem; }
+.who strong { overflow-wrap: anywhere; }
+.avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--ink); color: var(--page); font-weight: 800; font-size: 1.0625rem; }
+.avatar:empty { display: none; }
+.avatar-large { width: 3.5rem; height: 3.5rem; font-size: 1.5rem; }
+.balance-label { margin: 0; color: var(--soft); font-size: .9375rem; font-weight: 600; }
+.balance { margin: 0 0 var(--s2); font-size: clamp(2.5rem, 11vw, 3rem); font-weight: 800; line-height: 1.1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.unit { font-size: 1.0625rem; font-weight: 500; letter-spacing: 0; color: var(--soft); }
+.checked { margin: var(--s2) 0 0; font-size: .875rem; color: var(--soft); }
+.small-print { margin: 0; font-size: .875rem; color: var(--soft); }
+.small-print button.link { font-size: .875rem; }
+.badge { display: inline-flex; align-items: center; gap: .25rem; padding: .125rem .625rem; border: 1px solid var(--edge); border-radius: var(--pill); font-size: .8125rem; font-weight: 600; color: var(--soft); background: var(--page); }
+.badge.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-bg); }
+.badge.ok::before { content: "\2713"; }
+/* Quick actions: round, with their word under them. */
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: var(--s4) var(--s5); margin: var(--s5) 0; }
+.action { position: relative; flex-direction: column; justify-content: flex-start; gap: var(--s2); min-width: 4.5rem; min-height: 0; padding: 0; background: transparent; color: var(--ink); border: 0; border-radius: var(--radius-field); font-size: .875rem; font-weight: 600; }
+.action::before { content: ""; width: 3.5rem; height: 3.5rem; border-radius: 50%; background-color: var(--surface); background-image: none; -webkit-mask: none; mask: none; box-shadow: inset 0 0 0 1px var(--line); }
+.action::after { content: ""; position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); width: 1.5rem; height: 1.5rem; background: var(--ink); -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+#home-send { --icon: var(--i-send); }
+#home-send::before { background-color: var(--ink); box-shadow: none; }
+#home-send::after { background: var(--page); }
+#home-receive { --icon: var(--i-receive); }
+#faucet-button { --icon: var(--i-hourglass); }
+/* A line of what the account holds besides its balance. */
+.holding { width: 100%; min-height: var(--row-height); justify-content: space-between; gap: var(--s4); padding: var(--s3) var(--s4); background: var(--surface); color: var(--ink); border: 0; border-radius: var(--radius-field); text-align: left; font-weight: 600; }
+.holding-name { display: flex; flex-direction: column; min-width: 0; }
+.holding-name small { font-weight: 400; font-size: .8125rem; color: var(--soft); }
+.holding-value { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.holding::after { content: ""; flex: none; width: 1.25rem; height: 1.25rem; background: var(--soft); -webkit-mask: var(--i-chevron) center / contain no-repeat; mask: var(--i-chevron) center / contain no-repeat; }
+#home-pending, #home-backup { margin: var(--s4) 0; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.section-head h2 { margin: 0; }
+.receive { text-align: center; }
+.big-name { margin: var(--s2) 0 var(--s4); font-size: 1.75rem; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
+/* Payments: Send and Receive are one place with two sides. */
+.pay-switch { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1); max-width: 22rem; margin: var(--s4) 0 0; padding: var(--s1); border-radius: var(--pill); background: var(--surface); }
+.pay-switch button { min-height: 2.75rem; padding: .5rem var(--s3); background: transparent; color: var(--soft); border-color: transparent; }
+.pay-switch button.active { background: var(--card); color: var(--ink); border-color: var(--edge); }
+.pay-switch + .card { margin-top: var(--s5); }
+.paid-names { margin-top: var(--s2); }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.chip { min-height: 2.75rem; padding: .375rem var(--s4); background: var(--surface); color: var(--ink); border: 1px solid var(--line); font-family: var(--mono); font-weight: 600; font-size: .9375rem; }
+.chip.alike { border: 2px dashed var(--warn); background: var(--warn-bg); }
+.alike-note { color: var(--warn); font-weight: 600; }
+
+/* Home: the Protection card. A switch is a real checkbox, drawn as a track with a knob; the whole row is its label,
+   so the row is what a thumb taps, and the word beside the switch says its state. Its colours are the palette's. */
+.card.protect { margin: var(--s5) 0; padding: var(--s4) var(--s5) var(--s5); border: 0; border-radius: var(--radius-sheet); background: var(--surface); }
+.card.protect + .card { border-top: 0; }
+.protect h2 { margin-top: var(--s1); }
+.protect-status { margin: var(--s1) 0 var(--s3); font-weight: 600; }
+.protect-item { padding: var(--s3) 0; border-top: 1px solid var(--line); }
+.protect-item h3 { margin: 0 0 var(--s2); }
+.protect-rule { margin: 0; padding-top: var(--s3); border-top: 1px solid var(--line); font-size: .875rem; color: var(--soft); }
+.protect .field-note { color: var(--soft); }
+.switch-row { display: flex; align-items: center; gap: .75rem; min-height: 2.75rem; padding: .25rem 0; margin: 0; cursor: pointer; }
+.switch-name { flex: 1 1 auto; min-width: 0; font-size: 1.0625rem; }
+.switch-state { flex: none; font-weight: 500; color: var(--soft); }
+input.switch { -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 3.5rem; height: 2rem; min-height: 0; margin: 0; padding: 0; border: 2px solid var(--edge); border-radius: 1rem; background: var(--track); cursor: pointer; transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease); }
+input.switch::before { content: ""; position: absolute; top: .1875rem; left: .1875rem; width: 1.375rem; height: 1.375rem; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 1px var(--edge); transition: left var(--fast) var(--ease); }
+input.switch:checked { background: var(--ink); border-color: var(--ink); }
+input.switch:checked::before { left: 1.6875rem; background: var(--page); box-shadow: none; }
+input.switch:disabled { opacity: .4; cursor: not-allowed; }
+/* What can be paid now, out of the daily limit. The sentence under the bar says the same in words. */
+progress.bar { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: .625rem; border: 1px solid var(--edge); border-radius: var(--pill); background: var(--track); color: var(--ink); overflow: hidden; }
+progress.bar::-webkit-progress-bar { background: var(--track); }
+progress.bar::-webkit-progress-value { background: var(--ink); border-radius: var(--pill); }
+progress.bar::-moz-progress-bar { background: var(--ink); border-radius: var(--pill); }
+/* The small step a switch or "Change" opens: what is needed for it, and nothing else. */
+.step { margin: var(--s3) 0 var(--s1); padding: var(--s1) var(--s4) var(--s4); border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--card); }
+.step h3 { margin: var(--s3) 0 var(--s1); }
+.step h4 { font-size: 1rem; margin: var(--s4) 0 var(--s1); }
+.step .button-row > button[type=submit] { margin-top: 0; }
+
+/* Lists of things */
+.row { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s3); min-height: var(--row-height); padding: var(--s3) 0; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row > div { flex: 1 1 14rem; min-width: 0; }
+.row strong { display: block; font-weight: 600; }
+.row small { display: block; color: var(--soft); font-size: .8125rem; overflow-wrap: anywhere; word-break: break-word; }
+.row button { min-height: 2.75rem; padding: .375rem var(--s4); font-size: .875rem; }
+.row.alert { border-left: 4px solid var(--bad); padding-left: var(--s3); }
+/* In Activity and on Home, each action has a round sign before it. */
+#activity-list .row, #home-activity .row { padding-left: 3.5rem; }
+#activity-list .row::before, #home-activity .row::before { content: ""; position: absolute; left: 0; top: var(--s3); width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--surface); }
+#activity-list .row::after, #home-activity .row::after { content: ""; position: absolute; left: .625rem; top: calc(var(--s3) + .625rem); width: 1.25rem; height: 1.25rem; background: var(--ink); -webkit-mask: var(--i-receipt) center / contain no-repeat; mask: var(--i-receipt) center / contain no-repeat; }
+#activity-list .row small { font-family: var(--sans); }
+.search { position: relative; margin: var(--s4) 0; }
+.search input { padding-left: 3rem; border-radius: var(--pill); background: var(--surface); border-color: transparent; }
+.search::before { content: ""; position: absolute; left: 1.125rem; top: 50%; width: 1.25rem; height: 1.25rem; transform: translateY(-50%); background: var(--soft); -webkit-mask: var(--i-search) center / contain no-repeat; mask: var(--i-search) center / contain no-repeat; pointer-events: none; }
+.art-empty { display: none; margin-top: var(--s4); }
+#panel-activity:has(#activity-list > p.subtle:only-child) .art-empty { display: block; }
+.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3) var(--s4); margin: var(--s4) 0; padding: var(--s4); border-radius: var(--radius-field); background: var(--surface); }
+@media (min-width: 40rem) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.metrics dt { font-size: .8125rem; color: var(--soft); }
+.metrics dd { margin: 0; font-size: 1.125rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* More: who, then one row for each place, each with its sign. */
+.profile { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s4); }
+.profile h2 { margin: 0; }
+.profile p { margin: 0; overflow-wrap: anywhere; }
+.more-list { display: grid; }
+.more-list button { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .125rem; text-align: left; width: 100%; min-height: var(--row-height); padding: var(--s3) 2.5rem var(--s3) 3.75rem; background: transparent; color: var(--ink); border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.more-list button:first-child { border-top: 0; }
+.more-list button::before { content: ""; position: absolute; left: 0; top: 50%; width: 2.75rem; height: 2.75rem; transform: translateY(-50%); border-radius: 50%; background: var(--surface); }
+.more-list button::after { content: ""; position: absolute; right: .25rem; top: 50%; width: 1.25rem; height: 1.25rem; transform: translateY(-50%); background: var(--soft); -webkit-mask: var(--i-chevron) center / contain no-repeat; mask: var(--i-chevron) center / contain no-repeat; }
+.more-list button > small { font-weight: 400; font-size: .875rem; color: var(--soft); }
+.more-list button > .sign { position: absolute; left: .75rem; top: 50%; width: 1.25rem; height: 1.25rem; transform: translateY(-50%); background: var(--ink); -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+@media (hover: hover) { .more-list button:not(:disabled):hover { background: var(--surface); } }
+.over-limit { margin-top: var(--s5); padding: var(--s4); border-radius: var(--radius-field); background: var(--warn-bg); }
+.over-limit h3:first-child { margin-top: 0; }
+#pending-panel:not(:empty) { margin: var(--s3) 0; padding: var(--s3) var(--s4); border-radius: var(--radius-field); background: var(--surface); overflow-wrap: anywhere; }
+#pending-panel button { margin: var(--s2) var(--s2) 0 0; }
+.plain-list { margin: var(--s2) 0; padding-left: 1.25rem; }
+.plain-list li { margin: var(--s3) 0; }
+#security-inbox-card { padding: var(--s4) var(--s5); border-radius: var(--radius-sheet); background: var(--surface); border-top: 0; }
+#security-adopt { padding: var(--s5); border-radius: var(--radius-sheet); border: 1px solid var(--edge); }
+#security-adopt + .card, #security-inbox-card + .card { border-top: 0; }
+
+/* Keys: each thing on a card, marked in words as one for every day or one to keep safe. */
+.key-cards { display: grid; gap: var(--s3); margin: var(--s4) 0; }
+@media (min-width: 40rem) { .key-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.key-card { border: 1px solid var(--line); border-radius: var(--radius-field); padding: var(--s4); break-inside: avoid; background: var(--card); }
+.key-card.safe { border: 2px dashed var(--edge); }
+.key-card header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s1) var(--s3); }
+.key-card h3 { margin: 0; font-size: 1.0625rem; }
+.key-card dl { margin: var(--s2) 0 0; }
+.key-card dt { margin-top: var(--s2); font-size: .8125rem; font-weight: 600; color: var(--soft); }
+.key-card dd { margin: 0; overflow-wrap: anywhere; }
+.tag { display: inline-block; padding: .0625rem .625rem; border: 1px solid var(--edge); border-radius: var(--pill); font-size: .75rem; font-weight: 700; white-space: nowrap; }
+.tag.day { background: var(--surface); }
+.tag.safe { background: var(--warn-bg); color: var(--warn); border-style: dashed; border-color: var(--warn); }
+details.reveal { margin-top: var(--s4); }
+details.reveal > summary { list-style: none; display: inline-flex; align-items: center; min-height: var(--button-height); padding: .75rem 1.5rem; border: 1px solid var(--ink); border-radius: var(--pill); background: var(--ink); color: var(--page); }
+details.reveal > summary::-webkit-details-marker { display: none; }
+details.reveal[open] > summary { background: transparent; color: var(--ink); border-color: var(--edge); }
+details.change > summary { font-size: 1.0625rem; }
+.change-item { margin-top: var(--s4); padding-top: var(--s1); border-top: 1px solid var(--line); }
+.sheet { font-family: var(--mono); font-size: 1.1875rem; line-height: 1.8; letter-spacing: .06em; word-spacing: .4em; padding: var(--s3) var(--s4); border: 1px dashed var(--edge); border-radius: var(--radius-field); background: var(--surface); overflow-wrap: anywhere; }
+.sheet-title { font-weight: 600; margin-bottom: var(--s1); }
+.sheet-note { font-size: .875rem; color: var(--soft); }
+
+/* A website's window: the address of the website first, in a font that tells letters apart. */
+.card.approval { margin-top: var(--s4); padding: var(--s5); border: 2px solid var(--ink); border-radius: var(--radius-sheet); }
+.origin { margin: var(--s1) 0 var(--s3); font-family: var(--mono); font-size: 1.25rem; font-weight: 700; overflow-wrap: anywhere; word-break: break-all; }
+body.approve-mode #dashboard, body.approve-mode .other-ways, body.approve-mode .start-hero { display: none !important; }
+body.approve-mode .start { display: block; max-width: 40rem; }
+
+/* The review before anything is signed: a sheet from the bottom on a phone, a window in the middle on a wide screen.
+   Nothing decorative in it: each line is a fact, the total stands out, the button says what it does. */
+dialog { width: 100%; max-width: 100%; max-height: calc(100dvh - 1rem); margin: auto 0 0; overflow: auto; padding: var(--s5) var(--gutter) calc(var(--s5) + env(safe-area-inset-bottom)); border: 0; border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; background: var(--card); color: var(--ink); }
+dialog::backdrop { background: rgb(0 0 0 / .5); }
+@media (min-width: 40rem) { dialog { width: calc(100% - 2rem); max-width: 32rem; max-height: calc(100dvh - 2rem); margin: auto; padding: var(--s5) var(--s6); border-radius: var(--radius-sheet); } }
+@media (prefers-reduced-motion: no-preference) {
+  dialog[open] { animation: sheet-in var(--sheet) var(--ease); }
+  dialog[open]::backdrop { animation: fade-in var(--sheet) var(--ease); }
+}
+@keyframes sheet-in { from { transform: translateY(1.5rem); opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+dialog dl { display: grid; grid-template-columns: minmax(5.5rem, max-content) minmax(0, 1fr); gap: 0 var(--s4); margin: var(--s4) 0; }
+dialog dt { padding: var(--s3) 0; border-top: 1px solid var(--line); font-size: .875rem; font-weight: 500; color: var(--soft); }
+dialog dd { margin: 0; padding: var(--s3) 0; border-top: 1px solid var(--line); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+dialog dt:first-of-type, dialog dd:first-of-type { border-top: 0; }
+dialog dt.total, dialog dd.total { border-top: 2px solid var(--ink); color: var(--ink); font-weight: 800; font-size: 1.0625rem; }
+@media (max-width: 22.5rem) { dialog dl { grid-template-columns: minmax(0, 1fr); } dialog dd { padding-top: 0; border-top: 0; } dialog dd.total { border-top: 0; } }
+dialog .button-row { flex-direction: column; gap: var(--s2); margin-top: var(--s5); }
+dialog .button-row > button { width: 100%; }
+#review-ack-wrap { display: flex; align-items: flex-start; margin: var(--s4) 0 var(--s1); padding: var(--s3) var(--s4); border-radius: var(--radius-field); background: var(--warn-bg); font-weight: 600; }
+.check-line { display: flex; align-items: flex-start; }
+.check-line label { margin: 0; font-weight: 400; }
+code { font-family: var(--mono); font-size: .875rem; overflow-wrap: anywhere; }
+/* In the review of a payment: what this browser knows of the name it goes to. The names stand in the monospace font, which tells 1 from l and 0 from o, and no name is broken over two lines. */
+.name-check { margin: var(--s3) 0 0; overflow-wrap: anywhere; }
+.name-check code { font-family: var(--mono); font-size: 1.1rem; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+
+footer { max-width: 76rem; margin: 0 auto; padding: var(--s2) var(--gutter) 7rem; font-size: .8125rem; color: var(--soft); text-align: center; }
+/* Offline trust refresh: rarely needed, also while locked, so it stays at the foot of every screen, quietly. */
+details.trust { margin-top: var(--s7); background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: var(--s1) 0; font-size: .875rem; }
+details.trust > summary { font-weight: 500; color: var(--soft); }
+#review-title:focus-visible { outline: 2px dotted var(--soft); }
+@media (max-width: 40rem) { .button-row > button { flex: 1 1 auto; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* Signs. Each is a line drawing of 24 by 24, used as a mask over the text colour, so it follows the theme. */
+:root {
+  --i-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5.5H9V20H5a1 1 0 0 1-1-1Z'/%3E%3C/svg%3E");
+  --i-pay: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8.5h14.5M15 5l3.5 3.5L15 12M20 15.5H5.5M9 12l-3.5 3.5L9 19'/%3E%3C/svg%3E");
+  --i-activity: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.6 12a7.4 7.4 0 1 0 2.2-5.3M4.5 4.3v3.9h3.9M12 8v4.3l2.9 1.8'/%3E%3C/svg%3E");
+  --i-keys: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 8.5a4.5 4.5 0 1 1-9 0a4.5 4.5 0 1 1 9 0ZM12.3 11.7 4 20M6.3 17.7l2.2 2.2M8.6 15.4l2.2 2.2'/%3E%3C/svg%3E");
+  --i-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15.5 8a3.5 3.5 0 1 1-7 0a3.5 3.5 0 1 1 7 0ZM5 20c1.2-3.6 3.9-5.5 7-5.5s5.8 1.9 7 5.5'/%3E%3C/svg%3E");
+  --i-send: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M9 7h8v8'/%3E%3C/svg%3E");
+  --i-receive: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17 7 7 17M15 17H7V9'/%3E%3C/svg%3E");
+  --i-hourglass: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3.5h10M7 20.5h10M8 3.5c0 4.5 4 5.5 4 8.5s-4 4-4 8.5M16 3.5c0 4.5-4 5.5-4 8.5s4 4 4 8.5'/%3E%3C/svg%3E");
+  --i-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E");
+  --i-back: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 6l-6 6 6 6'/%3E%3C/svg%3E");
+  --i-stake: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20.5V12M12 12c0-4.2 3-7.5 7.5-7.5 0 4.2-3 7.5-7.5 7.5ZM12 14.5c0-3.3-2.6-6-6.5-6 0 3.3 2.6 6 6.5 6Z'/%3E%3C/svg%3E");
+  --i-devices: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 6h12v9h-12ZM2 18.5h15M18.5 9h3v10.5h-3Z'/%3E%3C/svg%3E");
+  --i-guardians: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 9a3 3 0 1 1-6 0a3 3 0 1 1 6 0ZM3.5 19.5c.8-3 3-4.8 5.5-4.8s4.7 1.8 5.5 4.8M15.5 6.2a3 3 0 0 1 0 5.6M17.5 14.9c1.6.7 2.6 2.2 3 4.6'/%3E%3C/svg%3E");
+  --i-signal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 21V4M5.5 4.5h11.5l-2 4 2 4H5.5'/%3E%3C/svg%3E");
+  --i-code: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 6l-3 12'/%3E%3C/svg%3E");
+  --i-server: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 4.5h16v6H4ZM4 13.5h16v6H4ZM7.5 7.5h.01M7.5 16.5h.01'/%3E%3C/svg%3E");
+  --i-receipt: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 3.5h12V21l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3L6 21ZM9 8h6M9 12h6M9 16h3'/%3E%3C/svg%3E");
+  --i-search: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15.6 15.6 20 20M17 10.5a6.5 6.5 0 1 1-13 0a6.5 6.5 0 1 1 13 0Z'/%3E%3C/svg%3E");
+  --i-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+  --i-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 12a8.5 8.5 0 1 1-17 0a8.5 8.5 0 1 1 17 0ZM12 11v5.5M12 7.8h.01'/%3E%3C/svg%3E");
+  --i-alert: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4 21 19.5H3ZM12 10v4.5M12 17h.01'/%3E%3C/svg%3E");
+}
+.nav [data-panel="home"] { --icon: var(--i-home); }
+.nav [data-panel="send"] { --icon: var(--i-pay); }
+.nav [data-panel="activity"] { --icon: var(--i-activity); }
+.nav [data-panel="security"] { --icon: var(--i-keys); }
+.nav [data-panel="more"] { --icon: var(--i-more); }
+.more-list [data-panel="earn"] { --icon: var(--i-stake); }
+.more-list [data-panel="devices"] { --icon: var(--i-devices); }
+.more-list [data-panel="recovery"] { --icon: var(--i-guardians); }
+.more-list [data-panel="upgrade"] { --icon: var(--i-signal); }
+.more-list [data-panel="integrate"] { --icon: var(--i-code); }
+.more-list [data-panel="validator"] { --icon: var(--i-server); }
+
+/* Printing. "Print this page" on Keys prints the cards of what you hold: no secret is on them. "Print the sheet"
+   prints the recovery sheet that is on the screen at that moment, and nothing else. */
+@media print {
+  /* Paper is white whatever the screen's setting. */
+  :root { --page: #fff; --card: #fff; --surface: #fff; --ink: #000; --soft: #333; --line: #888; --edge: #555; --link: #000; --ok: #000; --ok-bg: #fff; --bad: #000; --bad-bg: #fff; --unknown-bg: #fff; --warn-bg: #fff; --warn: #000; --warn-ink: #000; --day-bg: #fff; --ribbon: #fff; }
+  html, body { background: #fff; color: #000; }
+  .net-strip { border-bottom: 2px solid #000; }
+  .net-strip { position: static; }
+  .nav, .notice, .topbar button, dialog, .art, .ribbon, body:not(.print-sheet) .no-print { display: none !important; }
+  body.print-keys main > :not(#dashboard), body.print-keys #dashboard > :not(#panel-security), body.print-keys #panel-security > :not(#keys-card) { display: none !important; }
+  #dashboard { display: block !important; }
+  .card, .key-card { border-color: #777; }
+  body.print-sheet * { visibility: hidden; }
+  body.print-sheet .sheet-print, body.print-sheet .sheet-print * { visibility: visible; }
+  body.print-sheet .sheet-print { position: absolute; left: 0; top: 0; width: 100%; }
+}
+
+/* The network menu (web-v4/shared/network-menu.js and .css), drawn in this page's palette and in the dark one too, with
+   targets a thumb can hit. Its own stylesheet is loaded after this one; these rules are more specific than its own. */
+[data-network-menu] .tn-menu { --tn-text: var(--ink); --tn-soft: var(--soft); --tn-back: var(--page); --tn-line: var(--edge); --tn-hover: var(--surface); --tn-focus: var(--link); --tn-testnet: var(--warn); --tn-mainnet: var(--ok); --tn-other: var(--edge); }
+[data-network-menu] .tn-button { min-height: 2.75rem; padding: .375rem .875rem; }
+[data-network-menu] .tn-button:focus-visible, [data-network-menu] .tn-item:focus-visible { outline-width: 3px; }
+[data-network-menu] .tn-item { min-height: 2.75rem; }
+[data-network-menu] .tn-list { border-radius: .875rem; }
+[data-network-menu] details.tn-menu { margin: 0; padding: 0; border: 0; background: none; }

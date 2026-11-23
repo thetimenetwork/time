@@ -1,0 +1,117 @@
+/* The demo blog: a sample website of someone else that uses Time to sign in and to ask a payment. It has the tokens
+   of the wallet (web-v4/wallet/styles.css), copied below as they are, so it looks at home next to the Time pages;
+   its own mark and its serif masthead say that it is a website of its own, not the wallet. Only the "Sign in with
+   Time" button carries Time's mark. Colours follow the reader's system setting; nothing is loaded from elsewhere. */
+:root {
+  color-scheme: light dark;
+  --page: #ffffff; --surface: #f1f1f1; --track: #e4e4e4; --card: #ffffff; --ink: #222222; --soft: #666666;
+  --line: #dddddd; --edge: #767676; --link: #222222; --ribbon: #f4f4f4;
+  --ok: #1b6e3a; --ok-bg: #e7f3ea; --bad: #b3261e; --bad-bg: #fcebe9; --warn: #6f4700; --warn-bg: #fff2d4;
+  --unknown-bg: #f1f1f1; --busy-bg: #f1f1f1; --day-bg: #f1f1f1; --warn-ink: #6f4700;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Sizes: the spacing scale 4, 8, 12, 16, 24, 32, 48, 64; controls tall enough for a thumb; brief, calm movement. */
+  --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1rem; --s5: 1.5rem; --s6: 2rem; --s7: 3rem; --s8: 4rem;
+  --gutter: 1.5rem; --radius-field: .875rem; --radius-sheet: 1.25rem; --pill: 999px;
+  --button-height: 3.25rem; --field-height: 3.5rem; --row-height: 4rem; --fast: 180ms; --sheet: 260ms; --ease: cubic-bezier(.2, .7, .2, 1);
+}
+/* The dark palette: the same roles, checked for contrast on their own (text at least 4.5:1, controls 3:1). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #121212; --surface: #1e1e1e; --track: #2c2c2c; --card: #1a1a1a; --ink: #ededed; --soft: #a8a8a8;
+    --line: #2f2f2f; --edge: #8d8d8d; --link: #ededed; --ribbon: #191919;
+    --ok: #7fd49a; --ok-bg: #12291a; --bad: #ff9d93; --bad-bg: #3a1714; --warn: #ffd27a; --warn-bg: #352705;
+    --unknown-bg: #1e1e1e; --busy-bg: #1e1e1e; --day-bg: #1e1e1e; --warn-ink: #ffd27a;
+  }
+}
+@media (max-width: 22.5rem) { :root { --gutter: 1rem; } }
+
+* { box-sizing: border-box; }
+html { font: 16px/1.5 var(--sans); background: var(--page); color: var(--ink); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); }
+[hidden], .hidden { display: none !important; }
+a { color: var(--link); text-underline-offset: .2em; }
+a:focus-visible, button:focus-visible, textarea:focus-visible, summary:focus-visible, pre:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+h1 { display: flex; align-items: center; gap: var(--s3); margin: 0; font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif; font-size: 1.75rem; font-weight: 700; line-height: 1.15; letter-spacing: -.01em; }
+h2 { font-size: 1.1875rem; line-height: 1.3; margin: 0; }
+p { margin: var(--s2) 0; }
+.soft { color: var(--soft); }
+.small { font-size: .875rem; }
+
+/* Which network this is: always in view, in quiet amber. */
+.strip { position: sticky; top: 0; z-index: 5; margin: 0; padding: var(--s2) var(--gutter); background: var(--warn-bg); color: var(--warn); text-align: center; font-size: .875rem; line-height: 1.4; }
+main { max-width: 42rem; margin: 0 auto; padding: 0 var(--gutter) var(--s6); }
+
+/* The masthead: the blog's own mark and name, and the way to the reader's wallet. */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); padding: var(--s5) 0 var(--s3); border-bottom: 2px solid var(--ink); }
+.blog-mark { width: 2.25rem; height: 2.25rem; flex: none; }
+.blog-mark rect { fill: var(--ink); }
+.blog-mark path { fill: none; stroke: var(--page); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.blog-mark circle { fill: var(--page); }
+.demo { font-family: var(--sans); font-size: 1rem; font-weight: 400; letter-spacing: 0; color: var(--soft); }
+.wallet-link { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 var(--s4); border: 1px solid var(--edge); border-radius: var(--pill); color: var(--ink); font-size: .9375rem; font-weight: 600; text-decoration: none; }
+@media (hover: hover) { .wallet-link:hover { background: var(--surface); } }
+.lede { margin: var(--s4) 0 var(--s5); font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif; font-size: 1.125rem; color: var(--soft); }
+
+/* Signing in, and the composer: each on a pale surface, the only boxes of the page. */
+.card { margin: var(--s4) 0; padding: var(--s4) var(--s5) var(--s5); border-radius: var(--radius-sheet); background: var(--surface); }
+#connection { margin: 0 0 var(--s1); font-size: .8125rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: 0; }
+#greeting { overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); margin-top: var(--s4); }
+#order-result, #status { overflow-wrap: anywhere; }
+#order-result:empty, #status:empty { display: none; }
+#order-result { margin-top: var(--s4); padding: var(--s3) var(--s4); border-radius: var(--radius-field); background: var(--ok-bg); }
+#status { color: var(--soft); }
+.mark { display: inline-flex; align-items: center; gap: .25rem; padding: .0625rem .625rem; font-size: .8125rem; font-weight: 600; border: 1px solid var(--ok); border-radius: var(--pill); color: var(--ok); background: var(--ok-bg); font-family: var(--sans); }
+.mark::before { content: ""; width: .3rem; height: .6rem; margin: -.125rem .125rem 0 0; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+/* Controls: pill buttons a thumb can hit, a field with a visible edge. */
+button { font: inherit; font-weight: 600; line-height: 1.25; min-height: var(--button-height); padding: .75rem 1.5rem; border: 1px solid var(--ink); border-radius: var(--pill); background: var(--ink); color: var(--page); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); transition: background-color var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+button.quiet { min-height: 2.75rem; padding: .375rem 1rem; background: transparent; color: var(--ink); border-color: var(--edge); font-size: .875rem; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+@media (hover: hover) {
+  button.quiet:not(:disabled):hover { background: var(--page); }
+  button:not(.quiet):not(:disabled):hover { opacity: .88; }
+}
+.time-mark { width: 1.375rem; height: 1.375rem; flex: none; }
+.time-mark circle { fill: var(--page); }
+.time-mark path { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+textarea { display: block; width: 100%; min-height: 8rem; margin-top: var(--s3); padding: .75rem var(--s4); font: inherit; border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--card); color: var(--ink); resize: vertical; }
+#composer-title label { cursor: pointer; }
+#counter { font-variant-numeric: tabular-nums; font-size: .875rem; }
+#counter.over { color: var(--bad); font-weight: 700; }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); margin: var(--s3) 0; }
+
+/* The posts: flat, one under the other, a hairline between them. */
+.feed { margin-top: var(--s6); }
+.feed > .row { margin: 0; }
+.feed > .small { margin-top: var(--s1); }
+#posts-note { margin: var(--s3) 0; padding: var(--s4) var(--s5); border-radius: var(--radius-field); background: var(--surface); color: var(--soft); overflow-wrap: anywhere; }
+.posts { list-style: none; margin: var(--s3) 0; padding: 0; }
+.post { padding: var(--s4) 0; border-top: 1px solid var(--line); }
+.post:first-child { border-top: 0; }
+.post-head { margin: 0 0 var(--s2); display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
+.author { font-weight: 700; overflow-wrap: anywhere; }
+.post-head time { font-size: .875rem; }
+.post-text { margin: 0 0 var(--s2); font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif; font-size: 1.125rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.post button.quiet { margin-top: var(--s1); }
+#older { margin-top: var(--s2); }
+
+details { margin: var(--s6) 0 var(--s4); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+summary { display: list-item; min-height: 2.75rem; padding: .625rem 0; cursor: pointer; font-weight: 600; }
+details[open] { padding-bottom: var(--s3); }
+pre { font: .8125rem/1.6 var(--mono); padding: var(--s3) var(--s4); background: var(--surface); border-radius: var(--radius-field); overflow-x: auto; white-space: pre; }
+code { font-family: var(--mono); font-size: .875rem; overflow-wrap: anywhere; }
+pre code { font-size: inherit; overflow-wrap: normal; }
+footer { color: var(--soft); font-size: .875rem; padding-top: var(--s4); margin-top: var(--s4); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* The network menu (web-v4/shared/network-menu.js and .css), drawn in this page's palette and in the dark one too, with
+   targets a thumb can hit. Its own stylesheet is loaded after this one; these rules are more specific than its own. */
+[data-network-menu] .tn-menu { --tn-text: var(--ink); --tn-soft: var(--soft); --tn-back: var(--page); --tn-line: var(--edge); --tn-hover: var(--surface); --tn-focus: var(--link); --tn-testnet: var(--warn); --tn-mainnet: var(--ok); --tn-other: var(--edge); }
+[data-network-menu] .tn-button { min-height: 2.75rem; padding: .375rem .875rem; }
+[data-network-menu] .tn-button:focus-visible, [data-network-menu] .tn-item:focus-visible { outline-width: 3px; }
+[data-network-menu] .tn-item { min-height: 2.75rem; }
+[data-network-menu] .tn-list { border-radius: .875rem; }
+[data-network-menu] details.tn-menu { margin: 0; padding: 0; border: 0; background: none; }

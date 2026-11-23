@@ -1,0 +1,97 @@
+/* The faucet page. The visual language of the wallet (web-v4/wallet/styles.css): its tokens below are copied from it
+   as they are, so every Time page has the same names and values, in light and in dark. One field, one button, the
+   answer in words, and what the faucet gives. Nothing is loaded from elsewhere: system fonts, the signs drawn inline. */
+:root {
+  color-scheme: light dark;
+  --page: #ffffff; --surface: #f1f1f1; --track: #e4e4e4; --card: #ffffff; --ink: #222222; --soft: #666666;
+  --line: #dddddd; --edge: #767676; --link: #222222; --ribbon: #f4f4f4;
+  --ok: #1b6e3a; --ok-bg: #e7f3ea; --bad: #b3261e; --bad-bg: #fcebe9; --warn: #6f4700; --warn-bg: #fff2d4;
+  --unknown-bg: #f1f1f1; --busy-bg: #f1f1f1; --day-bg: #f1f1f1; --warn-ink: #6f4700;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Sizes: the spacing scale 4, 8, 12, 16, 24, 32, 48, 64; controls tall enough for a thumb; brief, calm movement. */
+  --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1rem; --s5: 1.5rem; --s6: 2rem; --s7: 3rem; --s8: 4rem;
+  --gutter: 1.5rem; --radius-field: .875rem; --radius-sheet: 1.25rem; --pill: 999px;
+  --button-height: 3.25rem; --field-height: 3.5rem; --row-height: 4rem; --fast: 180ms; --sheet: 260ms; --ease: cubic-bezier(.2, .7, .2, 1);
+}
+/* The dark palette: the same roles, checked for contrast on their own (text at least 4.5:1, controls 3:1). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #121212; --surface: #1e1e1e; --track: #2c2c2c; --card: #1a1a1a; --ink: #ededed; --soft: #a8a8a8;
+    --line: #2f2f2f; --edge: #8d8d8d; --link: #ededed; --ribbon: #191919;
+    --ok: #7fd49a; --ok-bg: #12291a; --bad: #ff9d93; --bad-bg: #3a1714; --warn: #ffd27a; --warn-bg: #352705;
+    --unknown-bg: #1e1e1e; --busy-bg: #1e1e1e; --day-bg: #1e1e1e; --warn-ink: #ffd27a;
+  }
+}
+@media (max-width: 22.5rem) { :root { --gutter: 1rem; } }
+
+* { box-sizing: border-box; }
+html { font: 16px/1.5 var(--sans); background: var(--page); color: var(--ink); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); }
+[hidden] { display: none !important; }
+input:focus-visible, button:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+h1 { font-size: 1.75rem; line-height: 1.2; letter-spacing: -.01em; margin: 0 0 var(--s2); }
+h2 { font-size: 1.1875rem; line-height: 1.3; margin: 0 0 var(--s2); }
+p { margin: var(--s2) 0; }
+
+/* Which network this is: always in view, in quiet amber. */
+.strip { position: sticky; top: 0; z-index: 5; padding: var(--s2) var(--gutter); background: var(--warn-bg); color: var(--warn); text-align: center; font-size: .875rem; line-height: 1.4; }
+.topbar { max-width: 40rem; margin: 0 auto; padding: var(--s3) var(--gutter); display: flex; align-items: center; gap: var(--s3); min-height: 4rem; }
+.brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: 1.375rem; font-weight: 800; letter-spacing: -.02em; }
+.brand-mark { width: 1.75rem; height: 1.75rem; flex: none; }
+.brand-mark circle { fill: var(--ink); }
+.brand-mark path { fill: none; stroke: var(--page); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.where { padding-left: var(--s3); border-left: 1px solid var(--line); color: var(--soft); font-size: 1.0625rem; font-weight: 600; }
+main { max-width: 40rem; margin: 0 auto; padding: 0 var(--gutter) var(--s7); }
+
+/* The title over a pale ribbon. */
+.hero { position: relative; isolation: isolate; margin: 0 calc(-1 * var(--gutter)); padding: var(--s5) var(--gutter) var(--s6); overflow: hidden; }
+.ribbon { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; }
+.ribbon path { fill: var(--ribbon); }
+.lede { margin: 0; max-width: 32rem; font-size: 1.0625rem; color: var(--soft); }
+
+/* The field and its button: 56 px each, the button a pill. One under the other on a phone. */
+label { display: block; margin: 0 0 var(--s2); font-weight: 600; }
+.row { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); }
+input { flex: 1 1 14rem; min-width: 0; min-height: var(--field-height); padding: .75rem var(--s4); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--card); color: var(--ink); font: inherit; font-family: var(--mono); font-size: 1rem; }
+input::placeholder { color: var(--soft); opacity: 1; font-family: var(--sans); }
+button { flex: 0 0 auto; min-height: var(--field-height); padding: .75rem 1.5rem; border: 1px solid var(--ink); border-radius: var(--pill); background: var(--ink); color: var(--page); font: inherit; font-weight: 600; line-height: 1.25; cursor: pointer; transition: opacity var(--fast) var(--ease); }
+button:disabled { opacity: .4; cursor: progress; }
+@media (hover: hover) { button:not(:disabled):hover { opacity: .88; } }
+@media (max-width: 30rem) { button { flex-basis: 100%; } }
+
+/* The answer: words first; green with a tick when it was sent, red when it was not. */
+.result { position: relative; margin: var(--s5) 0 0; padding: var(--s3) var(--s4) var(--s3) 3rem; border-radius: var(--radius-field); background: var(--surface); overflow-wrap: anywhere; }
+.result p { margin: var(--s1) 0 0; }
+.result.good { background: var(--ok-bg); }
+.result.bad { background: var(--bad-bg); }
+.result::before { content: ""; position: absolute; left: var(--s4); top: 1.05rem; width: 1.25rem; height: 1.25rem; border-radius: 50%; }
+.result.good::before { left: 1.375rem; top: .95rem; width: .5rem; height: 1rem; border: solid var(--ok); border-width: 0 3px 3px 0; border-radius: 0; transform: rotate(45deg); }
+.result.bad::before { background: var(--bad); }
+.result.bad::after { content: "!"; position: absolute; left: var(--s4); top: 1.05rem; width: 1.25rem; line-height: 1.25rem; text-align: center; color: var(--bad-bg); font-weight: 800; font-size: .875rem; }
+.result-title { font-weight: 700; font-size: 1.0625rem; }
+.result.good .result-title { color: var(--ok); }
+.result.bad .result-title { color: var(--bad); }
+code { font-family: var(--mono); font-size: .875rem; overflow-wrap: anywhere; word-break: break-all; }
+
+/* What the faucet gives: flat, a label and its value on each line. */
+.limits { margin-top: var(--s6); padding-top: var(--s5); border-top: 1px solid var(--line); }
+#status { color: var(--soft); }
+dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 var(--s5); margin: var(--s3) 0 0; }
+dt, dd { padding: var(--s3) 0; border-top: 1px solid var(--line); }
+dt:first-of-type, dd:first-of-type { border-top: 0; }
+dt { color: var(--soft); font-size: .9375rem; }
+dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 30rem) { dl { grid-template-columns: minmax(0, 1fr); } dt { padding-bottom: 0; } dd { border-top: 0; padding-top: var(--s1); } }
+.small { margin-top: var(--s5); color: var(--soft); font-size: .875rem; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* The network menu (web-v4/shared/network-menu.js and .css), drawn in this page's palette and in the dark one too, with
+   targets a thumb can hit. Its own stylesheet is loaded after this one; these rules are more specific than its own. */
+[data-network-menu] .tn-menu { --tn-text: var(--ink); --tn-soft: var(--soft); --tn-back: var(--page); --tn-line: var(--edge); --tn-hover: var(--surface); --tn-focus: var(--link); --tn-testnet: var(--warn); --tn-mainnet: var(--ok); --tn-other: var(--edge); }
+[data-network-menu] .tn-button { min-height: 2.75rem; padding: .375rem .875rem; }
+[data-network-menu] .tn-button:focus-visible, [data-network-menu] .tn-item:focus-visible { outline-width: 3px; }
+[data-network-menu] .tn-item { min-height: 2.75rem; }
+[data-network-menu] .tn-list { border-radius: .875rem; }
+[data-network-menu] details.tn-menu { margin: 0; padding: 0; border: 0; background: none; }

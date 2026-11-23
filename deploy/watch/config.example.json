@@ -1,0 +1,22 @@
+{
+  "gateway": "https://wallet.example",
+  "trust": {
+    "app_version": "4",
+    "network_id": "REPLACE_WITH_THE_NETWORK_ID_OF_THE_INDEPENDENTLY_VERIFIED_MANIFEST",
+    "chain_id": "time-devnet-v4-REPLACE",
+    "nodes_report_upgrades": true,
+    "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
+  },
+  "subscriptions": [
+    { "account": "5", "webhook": "https://hooks.example/time-watch", "secret": "REPLACE_WITH_A_LONG_RANDOM_SECRET_PER_SUBSCRIPTION" },
+    { "account": "42" }
+  ],
+  "poll_seconds": 30,
+  "gateway_timeout_seconds": 30,
+  "max_lag_seconds": 300,
+  "reminder_hours": 6,
+  "port": 8920,
+  "host": "127.0.0.1",
+  "hosts": [],
+  "data_directory": "/var/lib/time-watch"
+}

@@ -1,0 +1,10 @@
+{
+  "controller_url": "https://REPLACE_WITH_THE_CONTROLLERS_ADDRESS:8960",
+  "allow_plain_http": false,
+  "host_id": "REPLACE_WITH_HOST_ID",
+  "host_key_file": "/etc/time-v5/lease-agent/host-key.json",
+  "settings_file": "/etc/time-v5/operator/settings.json",
+  "operator_directory": "/etc/time-v5/operator",
+  "state_file": "/etc/time-v5/lease-agent/lease-agent-state.json",
+  "request_timeout_seconds": 10
+}

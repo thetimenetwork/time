@@ -1,0 +1,31 @@
+[Unit]
+Description=Time v5 engine private devnet operator bundle (remote fenced signer required)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/time-v5
+EnvironmentFile=/etc/time-v5/operator.env
+ExecStartPre=/usr/bin/node /opt/time-v5/context/deploy/build.mjs check-env
+ExecStart=/usr/bin/docker compose --project-name time-v5-private-devnet --file /opt/time-v5/context/deploy/compose.v5.yaml up --abort-on-container-exit
+ExecStop=/usr/bin/docker compose --project-name time-v5-private-devnet --file /opt/time-v5/context/deploy/compose.v5.yaml down
+# systemd skips ExecStop when the main process fails by itself, as `up --abort-on-container-exit` does whenever a
+# container fails; the containers then stayed, and a signer container once stayed running in the network namespace of
+# a validator container that had ended, so that every later start failed (the kit rehearsal). ExecStopPost runs in
+# every case; after ExecStop it finds nothing to remove. Volumes are kept.
+ExecStopPost=/usr/bin/docker compose --project-name time-v5-private-devnet --file /opt/time-v5/context/deploy/compose.v5.yaml down
+Restart=no
+# Compose stops in reverse dependency order with each service's stop_grace_period:
+# monitor 10 s and signer 30 s, then app 120 s (final snapshot), then validator 30 s = 180 s.
+TimeoutStopSec=240
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,568 @@
+{
+  "schema_version": 2,
+  "protocol_version": 4,
+  "platform": "linux/amd64",
+  "image_pins": {
+    "rust": "rust@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c",
+    "go": "golang@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0",
+    "runtime": "node@sha256:fa52d1669505e29b58c042875b1d65c229e0787a3610fd52869b22b68e480853"
+  },
+  "source_files": [
+    {
+      "path": "Cargo.lock",
+      "size": 15321,
+      "sha256": "9d312301de1e7866703cbfaa3ea836617a12c73855ed474e611d843d1c9094ab"
+    },
+    {
+      "path": "Cargo.toml",
+      "size": 676,
+      "sha256": "1ab20899951d50c85a4424225ad57ac7216e1c8e84ac16c3f3f4affc9b589577"
+    },
+    {
+      "path": "bitcoin-bridge/Cargo.lock",
+      "size": 7092,
+      "sha256": "a4a85aa449152f960d37e3caded9763625b88b5231843ca86fcea564ba4f9542"
+    },
+    {
+      "path": "bitcoin-bridge/Cargo.toml",
+      "size": 482,
+      "sha256": "9683931fcf62fd94adfb76850a1b94e8c4850012e8cb6d6ef8f49b60bc177e0c"
+    },
+    {
+      "path": "bitcoin-bridge/src/bin/bitcoin-bridge-check.rs",
+      "size": 5696,
+      "sha256": "e2fe18f5d8542727d3a39235d1e26dd10f2e8476af46f04841744dcf51086171"
+    },
+    {
+      "path": "bitcoin-bridge/src/chain.rs",
+      "size": 31172,
+      "sha256": "5c3a3f65854b8e9ec7b23597e02212dcf394697fc8ad29ce3209a15e2bcd9608"
+    },
+    {
+      "path": "bitcoin-bridge/src/lib.rs",
+      "size": 234,
+      "sha256": "0729aba2e16d27ddbd78a3ad6c7b0d3d3217b095c6767f2d89a0c6e6f1e1899c"
+    },
+    {
+      "path": "bitcoin-bridge/src/receipt.rs",
+      "size": 12373,
+      "sha256": "feec4685d77029f14a614970eece81a2f134f54cb48128a7a5e773a2823649f6"
+    },
+    {
+      "path": "bitcoin-bridge/tests/bridge.rs",
+      "size": 24651,
+      "sha256": "d912cde5bb31248ca1a9ec78b7c5a6a072234e9ae1bf98de08e88d6149d650de"
+    },
+    {
+      "path": "consensus/go.mod",
+      "size": 6534,
+      "sha256": "091c9322e995c49efc8a0194c7ece4f449c73bf1e332e4f2a2f500a3c453f2c2"
+    },
+    {
+      "path": "consensus/go.sum",
+      "size": 53734,
+      "sha256": "1fa6955f5ce65ec8ea8ac4b107ddeda732227bde78970eaad4cbe036417f1608"
+    },
+    {
+      "path": "deploy/Dockerfile",
+      "size": 2975,
+      "sha256": "81d0c31853c960ddffda5614df6dc4cf4200a46819eaeb5832420b4b897e5590"
+    },
+    {
+      "path": "deploy/README.md",
+      "size": 10351,
+      "sha256": "23d9c49374d93f64e68dfbabeb634852a7039b383cf2bc467678bc811fdae452"
+    },
+    {
+      "path": "deploy/alerts.yaml",
+      "size": 757,
+      "sha256": "9f65dccc8113655ffa8c3566448bec2a319b34094d0fd19e447364399a944006"
+    },
+    {
+      "path": "deploy/audit-comet-source.mjs",
+      "size": 4161,
+      "sha256": "a87b20580e960a2c59ff39d44f25653d3a94ef1a73ad0843a59dfc24ce8c3477"
+    },
+    {
+      "path": "deploy/audit-comet.mjs",
+      "size": 7619,
+      "sha256": "2529dddb173a9759a6094a54e369ced17f18f6fa86dfaf058d0cc26847957227"
+    },
+    {
+      "path": "deploy/build.mjs",
+      "size": 5247,
+      "sha256": "47eb823c2767aee6a3e4c9d2e8e9fab500c4cc4e5902f6d07695480c4bc69f77"
+    },
+    {
+      "path": "deploy/comet-source-review.go",
+      "size": 4076,
+      "sha256": "ca5d983b853c63601d840c39a260410d5323d268e5bfb1faf118c7bf512bde74"
+    },
+    {
+      "path": "deploy/compose.yaml",
+      "size": 2719,
+      "sha256": "fbde6cedce5a4045233a0aba16ac92b5fccdc242b32b41f9932ed7243b9288e0"
+    },
+    {
+      "path": "deploy/gateway/README.md",
+      "size": 3388,
+      "sha256": "0281aa8fc334d7dc2b92c459ed74e6181cfb8853f47c97fb926c7732e6939468"
+    },
+    {
+      "path": "deploy/gateway/settings.example.json",
+      "size": 388,
+      "sha256": "6f776820579ac3623db3769971f96555ba13bc25fe36fddd02c92dca3317dfd1"
+    },
+    {
+      "path": "deploy/gateway/start.mjs",
+      "size": 6129,
+      "sha256": "c6cf865b540496ebc7b627304cc3e1b12d70c75a0db4e490f67d2b11ea4a1f75"
+    },
+    {
+      "path": "deploy/gateway/start.test.mjs",
+      "size": 2955,
+      "sha256": "b408958e1465a3cf458c926d5a9553b988ce455b40b8f9bd0b0e6a24ddcf4227"
+    },
+    {
+      "path": "deploy/gateway/time-gateway.service",
+      "size": 638,
+      "sha256": "b946dbd8dfefe506c5e39af6a354aa87c9e922800a640530e7d66c36549dc425"
+    },
+    {
+      "path": "deploy/images.verified.json",
+      "size": 276,
+      "sha256": "13a62c3bc8aaa433cbed3c4a41d9361b121540607fb897c3b8c11667688d6755"
+    },
+    {
+      "path": "deploy/keygen.mjs",
+      "size": 2216,
+      "sha256": "eaf8b6a41dcb768e3e8d6c4d5bd40cbea379bba900fc82804650d558a8ede2ea"
+    },
+    {
+      "path": "deploy/launch-check.mjs",
+      "size": 2725,
+      "sha256": "65e18421744f8f648de00382ac450dc59132ba7c780f8987cc20602d9abb3325"
+    },
+    {
+      "path": "deploy/lib.mjs",
+      "size": 4003,
+      "sha256": "b86f04927407e72e9e01b7b871328c77bcb567a671d7b0e11dcf14b980158781"
+    },
+    {
+      "path": "deploy/monitor.mjs",
+      "size": 1429,
+      "sha256": "3a15611f2d84c40afadcd4992845e5c743f81c910b75e3b6e92946ffd50831e0"
+    },
+    {
+      "path": "deploy/operator.mjs",
+      "size": 9072,
+      "sha256": "eb64ea439e114f1293c47eab5dd8634735801d00a0413f3ee58cb41776656ea8"
+    },
+    {
+      "path": "deploy/prometheus.yaml",
+      "size": 436,
+      "sha256": "2fa74c160d8afcd6a835d0b89eabb12507c14c9f04bef98a08c39c77bac373ec"
+    },
+    {
+      "path": "deploy/restore-check.mjs",
+      "size": 2321,
+      "sha256": "688672ceaf3a3e3545aa65150ea577fa343c2022b021a324f88105ce83914409"
+    },
+    {
+      "path": "deploy/sentry.toml",
+      "size": 721,
+      "sha256": "dc0c2b737c590522847f4ab79413280b86457201d87526df914a374d550e9fef"
+    },
+    {
+      "path": "deploy/settings.example.json",
+      "size": 503,
+      "sha256": "3c4bb1560ab057809447a55567ae30e64267ab44f3e907d27d3dca179c87ffa2"
+    },
+    {
+      "path": "deploy/time-v4.service",
+      "size": 754,
+      "sha256": "64354fe9c7aecb1c83bc1a254525894e0355e9fa05065e667d8bc70aa88031be"
+    },
+    {
+      "path": "deploy/trust.example.json",
+      "size": 110,
+      "sha256": "68da715681861b31efcc0b1cdd67372fccf378b5555dbcc9c0a7671645af67ac"
+    },
+    {
+      "path": "deploy/verify.mjs",
+      "size": 4822,
+      "sha256": "5cf57d133586132b7bfec5463e8f04a242b7ef7dd3f2db63d05c2bcee7f82d1f"
+    },
+    {
+      "path": "history/Cargo.lock",
+      "size": 7703,
+      "sha256": "1fc19ff83f0d55060d2cbebba885d0607828ada508921ed61e93a5e0d32b080e"
+    },
+    {
+      "path": "history/Cargo.toml",
+      "size": 402,
+      "sha256": "6628e462a2d80aeab24f175553d13208d6ca88a54becdc855ab975be027b7e58"
+    },
+    {
+      "path": "history/src/archive.rs",
+      "size": 8522,
+      "sha256": "7627612b45fcb31099e537515a2a62713a289a3fd3139f02b7ba2e5c690554ac"
+    },
+    {
+      "path": "history/src/lib.rs",
+      "size": 14042,
+      "sha256": "6da7f28a34550538360bdefd2a6601a11ccb8b016edabc2ec56ed0325924b676"
+    },
+    {
+      "path": "history/vectors.json",
+      "size": 76459,
+      "sha256": "8c607cf18fddbd3ce3a182977322e31e829f5f0114af2415f688515bc77c3aab"
+    },
+    {
+      "path": "pos/Cargo.lock",
+      "size": 20391,
+      "sha256": "96933f84ccb929aacffdd290ed9bacbe9f3bd0c96d54e334ce43a0dc2439f346"
+    },
+    {
+      "path": "pos/Cargo.toml",
+      "size": 428,
+      "sha256": "b106dbc89c440167c63ff16869a26a73f09008a3ddd7a7b95a14049f8251f0c6"
+    },
+    {
+      "path": "pos/src/evidence.rs",
+      "size": 2749,
+      "sha256": "b5047d628acfcfdec999f13c5da03ad7da7cc76c143744fb757b968d503b7ffb"
+    },
+    {
+      "path": "pos/src/lib.rs",
+      "size": 23787,
+      "sha256": "6f138cc1cf63231ed7f54393fc33639b4c926c4323740de56bebf9bdfc019355"
+    },
+    {
+      "path": "pos/src/selection.rs",
+      "size": 30430,
+      "sha256": "b2846b174c98f8ca4e846bcd1ec00281acc5b8bda57e8bb427351739f7db7b87"
+    },
+    {
+      "path": "pos/tests/policy.rs",
+      "size": 17790,
+      "sha256": "3dd5edd39fa54699b9bfa8a75fbeda8cb748e841304d13cb0ccf06e4fe398e29"
+    },
+    {
+      "path": "pos/tests/rewards.rs",
+      "size": 9893,
+      "sha256": "5fc96de3ef0fbcc5f0b0ede092435b5091c3a55ad2c5f254db36bb450ce2245e"
+    },
+    {
+      "path": "registration/Cargo.lock",
+      "size": 7849,
+      "sha256": "86e10b2d23cee25830ccba5eb0256229320abb79368516cfa559146bfa97bab1"
+    },
+    {
+      "path": "registration/Cargo.toml",
+      "size": 387,
+      "sha256": "c5738eadac96eed42e681a2f32129742a5d7cc728974a65664009fd80987f84b"
+    },
+    {
+      "path": "registration/src/lib.rs",
+      "size": 24176,
+      "sha256": "a985a9cb01bc1a4c22e0ccee91f4b0653fab7f5571ecce07644857e2fb78b9f7"
+    },
+    {
+      "path": "registration/tests/protocol.rs",
+      "size": 17940,
+      "sha256": "25f9cec84cd9006783467dd30047fa592f115c8022b1eea2fd378dad5cd5b72b"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "size": 86,
+      "sha256": "d13306be0ecda81ce779baa290ffb417380d525928477f16200884b5169cca33"
+    },
+    {
+      "path": "spec/action-v1.json",
+      "size": 40888,
+      "sha256": "614e03c07b6cb7d57a6e3d050e8069c6c232e02806a9d5533629f22a807ec23a"
+    },
+    {
+      "path": "src/app.rs",
+      "size": 52698,
+      "sha256": "68e7ed8647f11f1842fa73491b0cbaf38b81da61c46163ceee848ae4cec01370"
+    },
+    {
+      "path": "src/ledger.rs",
+      "size": 42374,
+      "sha256": "31455feca016811e30af8cc68b65636981c7438258eb73cf8b25784101cd8d76"
+    },
+    {
+      "path": "src/ledger/decimal.rs",
+      "size": 3083,
+      "sha256": "1d631dd8b18facc78db007a770160fe30d0f14cfb91d8822e0f628ba36e7ac05"
+    },
+    {
+      "path": "src/ledger/recovery.rs",
+      "size": 17336,
+      "sha256": "d1a9b3c192b9e3d44f57110c9d2a06f38308fb8ecf7c602fc8263e74ec927cda"
+    },
+    {
+      "path": "src/ledger/v1.rs",
+      "size": 35258,
+      "sha256": "216980e2adb4c837ab4796a2ff16d8e8407873b6464620d91bc4e3437e43dc2d"
+    },
+    {
+      "path": "src/ledger/v1_tests.rs",
+      "size": 52464,
+      "sha256": "3d18b5d906f481431ba52b69d6dd853f18d975a27cb6b5112b9cbf9d57a65630"
+    },
+    {
+      "path": "src/lib.rs",
+      "size": 144,
+      "sha256": "c0805b7a653211c41456ed3a4a30d33c6aa05757744e5b70f2976ca218b59f59"
+    },
+    {
+      "path": "src/main.rs",
+      "size": 4536,
+      "sha256": "132043f548838927c9f16d90a2ecabe96c4d31156cb986fa8871994f0ca50a33"
+    },
+    {
+      "path": "src/store.rs",
+      "size": 26228,
+      "sha256": "a985c436385d41f4061fff2b1e75af3c5c59a7992e68feb9a3e1c435f9660ab9"
+    },
+    {
+      "path": "src/transport.rs",
+      "size": 16682,
+      "sha256": "61addcc55ec7683cdc1c7af14570a845d5633de33e67fd109d89a901d61a0fb9"
+    },
+    {
+      "path": "tools/release-v4.mjs",
+      "size": 21815,
+      "sha256": "c0fd4fc2d044a262b33da7e7e35dadc066de5ff967f21a1b6bf48e2d26258ca5"
+    },
+    {
+      "path": "tools/release-v4.test.mjs",
+      "size": 18914,
+      "sha256": "8133f8e6a81e190a5d9d0b421338dfca76e310b3651faa85b5fbf90ea75945ea"
+    },
+    {
+      "path": "treasury/Cargo.lock",
+      "size": 11861,
+      "sha256": "adb56b42a3eeb476ee96c6a08b5e9ac4baa722dbb63385228c73852b4b07fffb"
+    },
+    {
+      "path": "treasury/Cargo.toml",
+      "size": 458,
+      "sha256": "06f4f90d0d26f17304df8205c4c6f748311fb7823ab583a0694a5f71cca5d181"
+    },
+    {
+      "path": "treasury/src/lib.rs",
+      "size": 14539,
+      "sha256": "381c05a2c03121c99960c6c040d68d17d788aab9a435fa423585865d1c6503bb"
+    },
+    {
+      "path": "treasury/tests/adversarial.rs",
+      "size": 4420,
+      "sha256": "f5ab6e1806fdd5699989fdb0fb11593e95e3c505e4f0dc655fc21adbee4fa92a"
+    },
+    {
+      "path": "treasury/tests/policy.rs",
+      "size": 10178,
+      "sha256": "c680173b660926943ce105077170a2bd153429d5d3cd87995d74cd7edc59fb72"
+    },
+    {
+      "path": "v2/Cargo.lock",
+      "size": 23459,
+      "sha256": "c67adad58f1ce7e9d45ff2b15c971040e7ca7e1c794441eb5bd0a0492cf2d791"
+    },
+    {
+      "path": "v2/Cargo.toml",
+      "size": 1024,
+      "sha256": "2a383c01fda36131049301e44d5d32497469b9ffecfc437c31e8f716a9ab062d"
+    },
+    {
+      "path": "v2/src/app.rs",
+      "size": 22542,
+      "sha256": "eb59d3b4103953ab68f3bf28ebcbc27161f6a84758ad18c5d8af883b65176b52"
+    },
+    {
+      "path": "v2/src/engine.rs",
+      "size": 53851,
+      "sha256": "e18b76f47e5ad5ab8be7981884aa8d1ed814020a1c975d855f65b466de9cc6dc"
+    },
+    {
+      "path": "v2/src/engine/decimal.rs",
+      "size": 1490,
+      "sha256": "11ac373d74a8cf842570f5b0fc97d01b4e9fb296e56410f1d58f7457b84073f4"
+    },
+    {
+      "path": "v2/src/lib.rs",
+      "size": 150,
+      "sha256": "d35a0f7934648ab7e27eb3046f298f3ff9204e75bab6747671f4ca3ac60027e4"
+    },
+    {
+      "path": "v2/src/main.rs",
+      "size": 4949,
+      "sha256": "cf632ae3b25b397ed1a96595874fa1798e846c66695bd28f5a603f2387cedd61"
+    },
+    {
+      "path": "v2/src/proof.rs",
+      "size": 2176,
+      "sha256": "3bb6ae16b7bfc4542a55e4003165c07a616a061e9eea45c294802f7c1dd37732"
+    },
+    {
+      "path": "v2/src/scale.rs",
+      "size": 9644,
+      "sha256": "781d41b2b1a60a2ac52c07406398675b8842aefe8fc692da9fe39f53ed160860"
+    },
+    {
+      "path": "v2/src/store.rs",
+      "size": 81608,
+      "sha256": "ecbbfb7af331820391de88c6910b459cc5e9bb59ef00684e38fbb6d0ebff9a78"
+    },
+    {
+      "path": "v2/src/store/audit.rs",
+      "size": 19886,
+      "sha256": "507e7ed002f62c3e833f01db8182eee9cf4b6c30c12f3c33859e2f005f767ba6"
+    },
+    {
+      "path": "v2/tests/app.rs",
+      "size": 10548,
+      "sha256": "5e2aebfdf9d12ba3fdcb8a6572fff055b5b067efed7337b055bc74b78e79bb31"
+    },
+    {
+      "path": "v2/tests/engine.rs",
+      "size": 35230,
+      "sha256": "af66483f0397743b11c1029b1146412b3766e263e27e71efc9b55958b9a22996"
+    },
+    {
+      "path": "v4/Cargo.lock",
+      "size": 34953,
+      "sha256": "536b352a9f2335281c6c4944d988506d4c9c9cca60c16e24041a924f46f58bae"
+    },
+    {
+      "path": "v4/Cargo.toml",
+      "size": 1143,
+      "sha256": "f54b3a43eb11d9ad5bdc941848c1117b1f74ac2633623ab9a6f9c142f02f77de"
+    },
+    {
+      "path": "v4/src/app.rs",
+      "size": 27750,
+      "sha256": "7bb72c08f150d8bf7979ae2f92fcbe34bd45c1a01963b27805a718a2bf1ae993"
+    },
+    {
+      "path": "v4/src/auction.rs",
+      "size": 14446,
+      "sha256": "1e82174e9cfbec58b21efb4a4e35228a43385951746ba65c171969e56a728ab2"
+    },
+    {
+      "path": "v4/src/bitcoin_adapter.rs",
+      "size": 15809,
+      "sha256": "de957e01b3d06edc910875ab4e7cc6282588611da94a0411341b05cff5e98806"
+    },
+    {
+      "path": "v4/src/engine.rs",
+      "size": 70511,
+      "sha256": "9ce978b99c9ad55baab5947afff9240bf80007473f9cca12adad3ff3e0c45f9e"
+    },
+    {
+      "path": "v4/src/engine/decimal.rs",
+      "size": 1531,
+      "sha256": "5c1b28c88941afcb7f95040c4526382f8782b5d713d7df3c9cd63f50889d7f1c"
+    },
+    {
+      "path": "v4/src/genesis.rs",
+      "size": 5964,
+      "sha256": "e5a97e888eb0606e95a69ccd921b1e9927a0d61e43b413f14789147f86895724"
+    },
+    {
+      "path": "v4/src/lib.rs",
+      "size": 298,
+      "sha256": "80c19f88f71eb73c2ffbd838218d1e141042d78510671949fcbb08ecd24f106f"
+    },
+    {
+      "path": "v4/src/main.rs",
+      "size": 6355,
+      "sha256": "82818bbc3343668568d7dfa9e087417474647ba8281f7ecf3c985068c35a2481"
+    },
+    {
+      "path": "v4/src/pos_adapter.rs",
+      "size": 41405,
+      "sha256": "05928bcfee010d6d3367cfd837acc41d339c237ee99410f37790e9d15e7374c3"
+    },
+    {
+      "path": "v4/src/registration_adapter.rs",
+      "size": 5070,
+      "sha256": "5d37f7975154f27cef472ca479672bc0830a32bffe5e2e8f099f3eb283f5261a"
+    },
+    {
+      "path": "v4/src/treasury_adapter.rs",
+      "size": 12963,
+      "sha256": "9b55b033e037bec97bf90ce72ff176f02840b36ec8cf7793e85dd3990d37fe34"
+    },
+    {
+      "path": "v4/src/wire.rs",
+      "size": 6125,
+      "sha256": "0001b31f875680059dd2d2c47dabbc21bb4b84c592e70a1686b4a9069eaa6e6e"
+    },
+    {
+      "path": "v4/tests/abci.rs",
+      "size": 5047,
+      "sha256": "3098a22ac3aac2826455ceaca94ffe04b5f6ca46ca0fd5ae38e375ae41e7b90d"
+    },
+    {
+      "path": "v4/tests/common/mod.rs",
+      "size": 2405,
+      "sha256": "4cc5363f3b86df5c297af65cf1f7fe2121a51cd9d9183eba8853f152bb2f24eb"
+    },
+    {
+      "path": "v4/tests/engine.rs",
+      "size": 32361,
+      "sha256": "4a0b894062b7554cf7c28f2aae057e773572db173e881a960c77e8e9fac5ab0b"
+    },
+    {
+      "path": "v4/tests/rewards.rs",
+      "size": 8906,
+      "sha256": "c1fbacfa9a0626cbd7f90f5bd83cc151efeb3662b828408cb95e85001b65ed71"
+    }
+  ],
+  "generated_dockerignore_sha256": "39602c24eb6c0db63542d8c09a362b297b8bf8bfff28e836150816d7851f92c1",
+  "binaries": [],
+  "evidence": [
+    {
+      "path": "bitcoin-bridge/results/core-regtest-d24cd9dc-a083-45dc-abbb-aa89c526ab0b/report.json",
+      "sha256": "4a9d9f36f16af677c771c80184bfa6e2176f3ccc180d47cee6b895acf2f4000a",
+      "size": 6178
+    },
+    {
+      "path": "deploy/results/comet-audit-53e0bf50-1864-4c33-bf16-ca7a55f433ab/main-module-review.json",
+      "sha256": "e8324fd13e8ddb15de457e74ef055de3ce799f4ed141178380178e027bbf9ba3",
+      "size": 11746
+    },
+    {
+      "path": "deploy/results/comet-audit-53e0bf50-1864-4c33-bf16-ca7a55f433ab/report.json",
+      "sha256": "5cf6b81846a8820e6aca21be2ce0a7e70cba9cd8d540941e85af9e4f76c83b6b",
+      "size": 990803
+    },
+    {
+      "path": "results-v4-engine/reward-validation.json",
+      "sha256": "6a27ac55004ec995f4c316b907b170c908778c81657eff06e3239a95d027c7ff",
+      "size": 17112
+    }
+  ],
+  "sbom_sha256": "73294d54326a67dd6fbdc8c671414b34a06829c41458a469ae07b6f4ff5c05ff",
+  "release_id": "26357d10cf4efe74346a2a422e9989131afe5596c6379d69025a6fb6a3321486",
+  "created_utc": "2026-11-09T21:56:27.605Z",
+  "source_date_epoch": 0,
+  "status": "DEVELOPMENT_CANDIDATE",
+  "public_funds_allowed": false,
+  "mainnet_receipts_enabled": false,
+  "monetary_enable_toggle": false,
+  "sbom_scope": "Cargo.lock and Go checksum inventory; Go entries can overinclude historical modules. Exact binary module usage, license completeness and vulnerability review require external tooling.",
+  "external_gates": {
+    "independent_security_review": "OUTSTANDING_SIGNED_ATTESTATION_REQUIRED",
+    "operator_independence": "OUTSTANDING_SIGNED_ATTESTATIONS_REQUIRED",
+    "multi_host_linux_fault_validation": "OUTSTANDING_SIGNED_ATTESTATION_REQUIRED",
+    "remote_signer_fencing": "OUTSTANDING_SIGNED_ATTESTATION_REQUIRED",
+    "bitcoin_mainnet_custody": "NOT_CONFIGURED_NO_MAINNET_FUNDS"
+  },
+  "linux_runtime_validation": "NOT_RUN_BY_PACKAGER"
+}

@@ -1,0 +1,207 @@
+/* The explorer. The visual language of the wallet (web-v4/wallet/styles.css): its tokens below are copied from it
+   as they are, so every Time page has the same names and values. A white canvas, near-black ink, pale gray surfaces,
+   calm rows and hairlines, monospace for hashes and keys, tabular figures with their unit. Colours follow the
+   reader's system setting; nothing is loaded from elsewhere (system fonts, the two signs drawn inline in the page).
+   Green, red and amber stand only for a state, and always next to the words that say it. */
+:root {
+  color-scheme: light dark;
+  --page: #ffffff; --surface: #f1f1f1; --track: #e4e4e4; --card: #ffffff; --ink: #222222; --soft: #666666;
+  --line: #dddddd; --edge: #767676; --link: #222222; --ribbon: #f4f4f4;
+  --ok: #1b6e3a; --ok-bg: #e7f3ea; --bad: #b3261e; --bad-bg: #fcebe9; --warn: #6f4700; --warn-bg: #fff2d4;
+  --unknown-bg: #f1f1f1; --busy-bg: #f1f1f1; --day-bg: #f1f1f1; --warn-ink: #6f4700;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Sizes: the spacing scale 4, 8, 12, 16, 24, 32, 48, 64; controls tall enough for a thumb; brief, calm movement. */
+  --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1rem; --s5: 1.5rem; --s6: 2rem; --s7: 3rem; --s8: 4rem;
+  --gutter: 1.5rem; --radius-field: .875rem; --radius-sheet: 1.25rem; --pill: 999px;
+  --button-height: 3.25rem; --field-height: 3.5rem; --row-height: 4rem; --fast: 180ms; --sheet: 260ms; --ease: cubic-bezier(.2, .7, .2, 1);
+}
+/* The dark palette: the same roles, checked for contrast on their own (text at least 4.5:1, controls 3:1). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #121212; --surface: #1e1e1e; --track: #2c2c2c; --card: #1a1a1a; --ink: #ededed; --soft: #a8a8a8;
+    --line: #2f2f2f; --edge: #8d8d8d; --link: #ededed; --ribbon: #191919;
+    --ok: #7fd49a; --ok-bg: #12291a; --bad: #ff9d93; --bad-bg: #3a1714; --warn: #ffd27a; --warn-bg: #352705;
+    --unknown-bg: #1e1e1e; --busy-bg: #1e1e1e; --day-bg: #1e1e1e; --warn-ink: #ffd27a;
+  }
+}
+@media (max-width: 22.5rem) { :root { --gutter: 1rem; } }
+
+* { box-sizing: border-box; }
+html { font: 16px/1.5 var(--sans); background: var(--page); color: var(--ink); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); }
+[hidden] { display: none !important; }
+a { color: var(--link); text-underline-offset: .2em; }
+a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible, [tabindex]:focus-visible, pre:focus-visible, .scroll:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+/* The view and its headings take the focus when the view changes, for a screen reader; they are not controls. */
+[tabindex="-1"]:focus, [tabindex="-1"]:focus-visible { outline: none; }
+h1 { font-size: 1.625rem; line-height: 1.2; letter-spacing: -.01em; margin: 0 0 var(--s3); overflow-wrap: anywhere; }
+h2 { font-size: 1.1875rem; line-height: 1.3; margin: 0 0 var(--s2); }
+h3 { font-size: 1.0625rem; line-height: 1.35; margin: var(--s5) 0 var(--s2); }
+p { margin: var(--s2) 0; }
+ol, ul { margin: var(--s2) 0; }
+
+.skip { position: absolute; left: -999rem; top: 0; z-index: 10; display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 var(--s4); border-radius: var(--pill); background: var(--ink); color: var(--page); font-weight: 600; }
+.skip:focus { left: var(--s2); top: var(--s2); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Which network this is: always in view, in quiet amber, never in the colours of a confirmation. */
+.warning-strip { position: sticky; top: 0; z-index: 5; margin: 0; padding: var(--s2) var(--gutter); background: var(--warn-bg); color: var(--warn); text-align: center; font-size: .875rem; line-height: 1.4; }
+
+/* The top: the name of the page, the network it reads, two places; then the search field and two switches. */
+.top, main, .bottom { max-width: 60rem; margin: 0 auto; }
+.top { padding: var(--s3) var(--gutter) 0; }
+.top-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+.brand { display: inline-flex; align-items: center; gap: var(--s2); min-height: 2.75rem; font-size: 1.375rem; font-weight: 800; letter-spacing: -.02em; color: var(--ink); text-decoration: none; }
+.brand-mark { width: 1.75rem; height: 1.75rem; flex: none; }
+.brand-mark circle { fill: var(--ink); }
+.brand-mark path { fill: none; stroke: var(--page); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.network-name { min-width: 0; font-size: .8125rem; color: var(--soft); }
+.network-name:empty { display: none; }
+.top-nav { margin-left: auto; display: flex; gap: var(--s1); }
+.top-nav a { display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 var(--s4); border: 1px solid transparent; border-radius: var(--pill); color: var(--ink); font-size: .9375rem; font-weight: 600; text-decoration: none; transition: background-color var(--fast) var(--ease); }
+.top-nav a[aria-current="page"] { background: var(--surface); border-color: var(--edge); font-weight: 800; }
+@media (hover: hover) { .top-nav a:not([aria-current="page"]):hover { background: var(--surface); } }
+@media (max-width: 47.99rem) { .network-name { order: 3; flex-basis: 100%; } }
+/* On a phone the two places are the two halves of one control, under the name. */
+@media (max-width: 34rem) {
+  .top-nav { order: 4; flex-basis: 100%; margin: var(--s1) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s1); padding: var(--s1); border-radius: var(--pill); background: var(--surface); }
+  .top-nav a { justify-content: center; color: var(--soft); }
+  .top-nav a[aria-current="page"] { background: var(--card); border-color: var(--edge); color: var(--ink); }
+}
+
+/* Look up: one field of 56 px, a pill, with its sign; the button beside it. */
+.search { margin: var(--s4) 0 0; }
+.search label { display: block; margin: 0 0 var(--s2); font-size: .875rem; font-weight: 500; color: var(--soft); }
+.search-row { display: flex; gap: var(--s2); }
+.search-field { position: relative; flex: 1 1 auto; min-width: 0; }
+.search-sign { position: absolute; left: 1.125rem; top: 50%; width: 1.25rem; height: 1.25rem; transform: translateY(-50%); color: var(--soft); pointer-events: none; }
+.search-sign path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+input { width: 100%; min-width: 0; min-height: var(--field-height); font: inherit; font-family: var(--mono); font-size: 1rem; padding: .75rem var(--s5) .75rem 3rem; border: 1px solid var(--edge); border-radius: var(--pill); background: var(--card); color: var(--ink); }
+.search-row button { flex: none; min-height: var(--field-height); }
+.search-error { margin: var(--s2) 0 0; color: var(--bad); font-weight: 600; }
+@media (max-width: 22.5rem) { .search-row { flex-direction: column; } .search-row button { width: 100%; } }
+
+/* Buttons: pills. The switches are quiet pills that are filled, with a tick, while they are on. */
+button { font: inherit; font-weight: 600; line-height: 1.25; min-height: var(--button-height); padding: .75rem 1.5rem; border: 1px solid var(--ink); border-radius: var(--pill); background: var(--ink); color: var(--page); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); text-align: center; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), border-color var(--fast) var(--ease); }
+button.quiet { min-height: 2.75rem; padding: .375rem 1rem; background: transparent; color: var(--ink); border-color: var(--edge); font-size: .875rem; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--page); border-color: var(--ink); }
+button[aria-pressed="true"]::before { content: ""; flex: none; width: .375rem; height: .75rem; margin: -.1875rem .125rem 0 0; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+button[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+button[aria-busy="true"] { opacity: .6; cursor: progress; }
+@media (hover: hover) {
+  button.quiet:not([aria-pressed="true"]):not([aria-disabled="true"]):hover { background: var(--surface); }
+  button:not(.quiet):not([aria-disabled="true"]):hover, button[aria-pressed="true"]:hover { opacity: .88; }
+}
+.switches { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
+.index-note { margin-top: var(--s4); padding: var(--s3) var(--s4); border-left: 4px solid var(--warn); border-radius: .5rem; background: var(--warn-bg); color: var(--ink); }
+.index-note p { margin: 0; }
+.index-note p + p { margin-top: var(--s2); }
+
+/* The view. Its parts are flat: spacing and headings group them, a hairline separates them. */
+main { padding: var(--s6) var(--gutter) var(--s6); }
+.part { margin: var(--s5) 0 0; padding: var(--s5) 0 0; border-top: 1px solid var(--line); }
+.part-body > :first-child { margin-top: 0; }
+.rows, .keys, .legend { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-direction: column; justify-content: center; min-height: var(--row-height); padding: var(--s3) 0; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row > p { margin: 0; }
+.row > p + p { margin-top: var(--s1); }
+.sentence { margin: 0; overflow-wrap: anywhere; }
+.sentence.lead { font-size: 1.125rem; line-height: 1.45; }
+.meta, .source, .retrying { color: var(--soft); font-size: .8125rem; }
+.source { display: block; margin: var(--s1) 0; }
+dd .source, .sentence .source { display: inline; }
+.status { font-weight: 600; }
+.amount, .number { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+.missing { color: var(--soft); font-style: italic; }
+.hex, code { font-family: var(--mono); font-size: .875rem; overflow-wrap: anywhere; }
+/* A hash or a key starts on its own line when it does not fit after its label, and wraps inside its own box. */
+.hex { display: inline-block; max-width: 100%; vertical-align: top; letter-spacing: .02em; word-break: break-all; }
+.legend li { margin: var(--s2) 0; }
+.keys li { margin: var(--s2) 0; overflow-wrap: anywhere; }
+.live { color: var(--soft); font-size: .875rem; }
+
+/* Facts: a label and its value on each line, separated by hairlines; one under the other on a phone. */
+.facts { display: grid; grid-template-columns: minmax(8rem, 13rem) minmax(0, 1fr); gap: 0 var(--s5); margin: var(--s2) 0; }
+.facts > dt, .facts > dd { padding: var(--s3) 0; border-top: 1px solid var(--line); }
+.facts > dt:first-of-type, .facts > dd:first-of-type { border-top: 0; }
+.facts > dt { color: var(--soft); font-size: .875rem; padding-top: calc(var(--s3) + .125rem); }
+.facts > dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 34rem) {
+  .facts { grid-template-columns: minmax(0, 1fr); }
+  .facts > dt { padding-bottom: 0; }
+  .facts > dd { border-top: 0; padding-top: var(--s1); }
+}
+
+/* Text that came from the chain or the service: in a dotted box, so it cannot pass for the page's own words. */
+.chain-text { display: inline-block; max-width: 100%; vertical-align: top; font-family: var(--mono); font-size: .875rem; background: var(--surface); border: 1px dotted var(--edge); border-radius: .25rem; padding: 0 .3rem; overflow-wrap: anywhere; word-break: break-all; }
+pre.chain-text { display: block; }
+.chain-text bdi::before { content: "\201C"; }
+.chain-text bdi::after { content: "\201D"; }
+pre.raw { white-space: pre-wrap; max-height: 22rem; overflow: auto; margin: var(--s2) 0; padding: var(--s3) var(--s4); border-radius: var(--radius-field); line-height: 1.6; }
+
+/* Run a validator: the page's own instructions, with the commands to type set apart. */
+.join ol, .join ul:not(.keys) { padding-left: 1.5rem; }
+.join li { margin: var(--s2) 0; overflow-wrap: anywhere; }
+.join > ol > li::marker { font-weight: 700; font-variant-numeric: tabular-nums; }
+pre.commands { font-family: var(--mono); font-size: .875rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s2) 0; padding: var(--s3) var(--s4); border-radius: var(--radius-field); background: var(--surface); color: var(--ink); }
+
+/* States of a part, and what the page checked. Each says what it is in words; the colour only repeats it. */
+.state { margin: var(--s2) 0; padding: var(--s3) var(--s4); border-radius: var(--radius-field); overflow-wrap: anywhere; }
+.state p { margin: 0; }
+.state > * + * { margin-top: var(--s2); }
+.state.loading { padding-left: 0; color: var(--soft); }
+.state.empty { background: var(--surface); }
+.state.failed { border-left: 4px solid var(--bad); border-radius: .5rem; background: var(--bad-bg); }
+.check { margin: var(--s3) 0; padding: var(--s3) var(--s4); border-left: 4px solid var(--edge); border-radius: .5rem; background: var(--surface); overflow-wrap: anywhere; }
+.check.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+.check.bad { border-left-color: var(--bad); background: var(--bad-bg); }
+.check .check { margin: var(--s2) 0 0; }
+.check ul { padding-left: 1.25rem; }
+.check h3 { margin-top: var(--s4); }
+.check > p:first-child, .check > details:first-child { margin-top: 0; }
+.verdict { font-weight: 700; }
+.check.ok > .verdict { color: var(--ok); }
+.check.bad .verdict, .verdict.bad { color: var(--bad); }
+.check-part > button { margin: var(--s2) 0; }
+/* Where figures come from stands before them. Figures the page did not check are marked one by one, in words, and
+   set in a dashed frame: the difference is not one of colour alone. */
+.origin { margin: 0; font-weight: 600; }
+.tag.unchecked { display: inline-block; padding: 0 .375rem; border: 1px dashed var(--warn); border-radius: .25rem; background: var(--warn-bg); color: var(--warn); font-size: .8125rem; font-weight: 700; line-height: 1.5; }
+.unchecked-note { border-left-style: dashed; border-left-color: var(--warn); background: var(--warn-bg); }
+.facts.unchecked, .scroll.unchecked { border: 2px dashed var(--edge); border-radius: var(--radius-field); padding: var(--s1) var(--s4); }
+.facts.unchecked .amount, .facts.unchecked .number { font-weight: 400; font-style: italic; }
+details { margin: var(--s2) 0; }
+summary { min-height: 2.75rem; padding: .625rem 0; cursor: pointer; font-weight: 600; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin: var(--s4) 0 var(--s1); font-variant-numeric: tabular-nums; }
+
+/* Tables keep their columns; on a narrow screen they scroll sideways inside their own box, never the page. */
+.scroll { overflow-x: auto; margin: var(--s3) 0; }
+table { border-collapse: collapse; width: 100%; min-width: 34rem; font-variant-numeric: tabular-nums; }
+caption { text-align: left; color: var(--soft); font-size: .875rem; padding: 0 0 var(--s2); }
+th, td { text-align: left; padding: var(--s3) var(--s4) var(--s3) 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { white-space: nowrap; }
+td:last-child { min-width: 15rem; }
+th:last-child, td:last-child { padding-right: 0; }
+thead th { border-top: 0; padding-top: 0; color: var(--soft); font-size: .8125rem; font-weight: 600; }
+tbody th { font-weight: 600; }
+td .hex { font-size: .8125rem; }
+
+/* The foot of the page: how to read it, and what it trusts. Side by side on a wide screen. */
+.bottom { padding: var(--s2) var(--gutter) var(--s7); color: var(--soft); font-size: .9375rem; }
+.bottom h2 { color: var(--ink); font-size: 1.0625rem; }
+.bottom .facts > dd { color: var(--ink); }
+@media (min-width: 64rem) { .bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 var(--s7); } }
+
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* The network menu (web-v4/shared/network-menu.js and .css), drawn in this page's palette and in the dark one too, with
+   targets a thumb can hit. Its own stylesheet is loaded after this one; these rules are more specific than its own. */
+[data-network-menu] .tn-menu { --tn-text: var(--ink); --tn-soft: var(--soft); --tn-back: var(--page); --tn-line: var(--edge); --tn-hover: var(--surface); --tn-focus: var(--link); --tn-testnet: var(--warn); --tn-mainnet: var(--ok); --tn-other: var(--edge); }
+[data-network-menu] .tn-button { min-height: 2.75rem; padding: .375rem .875rem; }
+[data-network-menu] .tn-button:focus-visible, [data-network-menu] .tn-item:focus-visible { outline-width: 3px; }
+[data-network-menu] .tn-item { min-height: 2.75rem; }
+[data-network-menu] .tn-list { border-radius: .875rem; }
+[data-network-menu] details.tn-menu { margin: 0; padding: 0; border: 0; background: none; }

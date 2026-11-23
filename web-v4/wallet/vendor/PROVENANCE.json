@@ -1,0 +1,11 @@
+{
+  "package": "hash-wasm",
+  "version": "4.12.0",
+  "registryTarball": "https://registry.npmjs.org/hash-wasm/-/hash-wasm-4.12.0.tgz",
+  "registryIntegrity": "sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==",
+  "vendoredFile": "argon2-4.12.0.umd.min.js",
+  "vendoredSHA256": "dcec617a2e1b700fa132d1583a186cb70611113395e869f2dd6cc82b415d3094",
+  "license": "MIT; see LICENSE.hash-wasm",
+  "source": "https://github.com/Daninet/hash-wasm",
+  "note": "Argon2 WASM is embedded in the UMD asset. Runtime has no CDN or npm dependency. Provenance and cross-implementation tests are not an independent security audit of this package."
+}

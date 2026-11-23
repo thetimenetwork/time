@@ -1,0 +1,2740 @@
+{
+  "note": "Texts from outside, and whether a library under the engine and the verifier panics on them: `base64` for the base64 decoder, `date` for the date reader. The rules are in pos/src/untrusted.rs (the same file as verifier-v4/src/untrusted.rs), which holds them against the libraries; pos/tests/untrusted_text.rs writes this file from them. client-v4/proof-verifier.mjs keeps the same rules in JavaScript and is tested against this file.",
+  "vectors": [
+    {
+      "base64": false,
+      "date": false,
+      "text": ""
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA=A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A==A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A==="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AAA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A=="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "===A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAAA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAAA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA=AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA=A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=AAA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=AA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A==AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A==A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A===A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AAAA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AAA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A=AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A=A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==AAA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==AA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "===AA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "===A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "====A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "====="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAAAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAAA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAAA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAAA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAA=AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAA=A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAA==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAA==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA=AAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA=AA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA=A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA=A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA==AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA==A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA===A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AA===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=AAAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=AAA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=AA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=AA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=A=AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A=A=A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=A==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A=A==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A==AAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A==AA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A==A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A==A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A===AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A===A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A====A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A====="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AAAAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AAAA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AAA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AAA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AA=AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=AA=A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AA==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=AA==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A=AAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A=AA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A=A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A=A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A==AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A==A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A===A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=A===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==AAAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==AAA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==AA=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==AA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==A=AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "==A=A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==A==A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "==A==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "===AAA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "===AA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "===A=A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "===A=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "====AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "====A="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=====A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "======"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "= "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " ="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "  "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AA "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A= "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A ="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "A  "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=A "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "== "
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "= A"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "= ="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=  "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " AA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " A "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " =A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " =="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " = "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "  A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "  ="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "   "
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "A========"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAAA===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "QUJD"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "QUJDRA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "QUJDRA="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "QUJDRA"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "QUJD=QUJD==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "é="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "=é"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "Aé=="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "éééé=A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAA "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "AAAA= "
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "AAAA=…"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "====\n"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "=\t"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "not base64!"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "-"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "{}"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq==A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqA"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq===A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq=A"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq==A="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqA="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq======"
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq===="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq==A==="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqA==="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq==AA=="
+    },
+    {
+      "base64": true,
+      "date": false,
+      "text": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqAA=="
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T00:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T00:00:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:00:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T00:01:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T00:01:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T00:01:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T12:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T12:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T12:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T12:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60-00:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:60-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60+00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:60-12:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:60-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T23:59:60-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:60−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T24:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T24:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T24:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T24:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T24:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T24:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T24:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31T24:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T24:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T24:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:00:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T00:01:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T12:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T23:59:60−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-30T24:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:00:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T00:01:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T12:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T23:59:60−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9998-12-31T24:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:00:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T00:01:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T12:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T23:59:60−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "2026-11-22T24:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:00:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T00:01:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T12:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:59−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T23:59:60−00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-00:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00+00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-12:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00+23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-24:00"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00-0001"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "0000-01-01T24:00:00−00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31 23:59:59.5-00:01"
+    },
+    {
+      "base64": false,
+      "date": true,
+      "text": "9999-12-31t23:59:59.123456789-23:59"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59-00:01 "
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": " 9999-12-31T23:59:59-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:59-00:01Z"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23:59:5é-00:01"
+    },
+    {
+      "base64": false,
+      "date": false,
+      "text": "9999-12-31T23-59-59-00:01"
+    }
+  ]
+}

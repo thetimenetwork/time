@@ -1,0 +1,11 @@
+# Paid sponsored registration
+
+A signed existing account sponsors a commitment; the new Ed25519 device independently signs consent covering network, sponsor, new public key, commitment and expiry. The sponsor pays 10,000 Time microseconds by default, plus the engine's ordinary 1,000-microsecond action fee. Both fees move to the bank and preserve supply. The sponsor receives no device, recovery or account authority.
+
+Commitments are `registration/commit/<raw-new-public-key32>` rows. Queue entries are independent `registration/entry/<raw-entry-hash32>` rows. Metadata contains exactly 25 FIFO queues and counters. A queue can hold older and later expiry cycles without expanding metadata. Cleanup removes at most 128 expired entries per block, with at most 25 extra head examinations. A consumed commitment's queue node remains until expiry; replacement of an expired commitment uses a fresh entry ID, so cleanup of an older node cannot delete the replacement.
+
+The consent message is `TIME-REGISTER-SPONSOR-V1` followed by a zero byte, network32, sponsor u64 big endian, new key32, commitment32, expiry u64 big endian. Hexadecimal fields are canonical lowercase and every u64 JSON amount/coordinate is a decimal string. Weak keys, incorrect consent, registered identities, active duplicate commitments and expirations outside one day are rejected. The reveal uses the existing new-device signature and name/salt commitment rules, in a later block, and consumes only its own entry ID atomically with account creation.
+
+The `Host` interface is a transaction boundary: all row writes, debit and bank credit must be staged together and discarded on any error. No clock, randomness, network request, account-wide iteration, validator dependency or sponsor allowlist occurs in this crate. The independent audit walks the linked queues with monotonic sequence checks and checks the full row directory for orphan or unknown entries.
+
+Payment changes the cost of creating registry state. It does not make spam impossible or prove that 0.01 seconds is an adequate long-term state-storage price. Sustainable fee pricing, queue-backlog capacity and state growth require further economic and operational review; there is no global 256-commit array or ten-million-account counter limit in this mechanism.

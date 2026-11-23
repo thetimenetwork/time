@@ -1,0 +1,18 @@
+[package]
+name = "timecurrency-bitcoin-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+description = "Deterministic Bitcoin header and auction receipt verification; mainnet acceptance disabled by default"
+
+[dependencies]
+anyhow = "=1.0.104"
+bitcoin = { version = "=0.32.102", features = ["serde"] }
+hex = "=0.4.3"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+
+[profile.release]
+overflow-checks = true
+lto = "thin"

@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark"><title>Time wallet · test network</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/vendor/argon2-4.12.0.umd.min.js"></script>
+  <script defer src="/sdk/time-sdk.js"></script>
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/web-v4/shared/network-menu.js"></script>
+</head>
+<body>
+  <p class="net-strip"><strong>Time test network.</strong> Test money with no value. The network may be reset at any time.</p>
+  <header class="topbar"><a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time</a><span class="network"><i id="network-dot" aria-hidden="true"></i><span id="network-status">Connecting…</span></span><span data-network-menu data-app="wallet" data-inline></span><button id="lock-button" class="quiet" type="button" hidden>Lock</button></header>
+  <main>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="upgrade-banner" class="notice" role="status" hidden></div>
+    <section id="upgrade-required" class="card" role="alert" hidden><h2 id="upgrade-required-title">Update this app</h2><div id="upgrade-required-text"></div></section>
+
+    <section id="approval-panel" class="card approval" hidden>
+      <p class="eyebrow">A website asks</p>
+      <p id="approval-origin" class="origin"></p>
+      <h2 id="approval-title">Waiting for the website…</h2>
+      <div id="approval-details"></div>
+      <p id="approval-account" class="subtle" hidden></p>
+      <div id="approval-payment-wrap" hidden><label for="approval-payment">Payment password</label><input id="approval-payment" type="password" autocomplete="off" maxlength="2048"></div>
+      <div class="button-row"><button id="approve-request" type="button" disabled>Approve</button><button id="deny-request" type="button" class="secondary">Decline</button></div>
+      <p class="subtle">Your password stays in this browser. The website never sees it.</p>
+    </section>
+
+    <section id="auth-panel" class="start">
+      <div class="start-hero">
+        <p class="hero-line">Send seconds to anyone by their @name. Your key is made in this browser and stays in it.</p>
+      </div>
+      <div class="start-body">
+      <div class="card start-card">
+        <div id="reset-note" role="status" hidden><p id="reset-text" class="warning"></p><div class="button-row"><button id="reset-forget" type="button" class="secondary">Remove the old account from this browser</button></div></div>
+        <div class="segmented" role="group" aria-label="Create or open"><button id="mode-create" class="active" type="button">Create an account</button><button id="mode-unlock" type="button">Open my account</button></div>
+        <h1 id="auth-heading">Create your account</h1>
+        <p id="auth-copy" class="subtle">Pick a name that others can send seconds to, and a password.</p>
+        <form id="auth-form">
+          <label for="username">Name</label><div class="input-prefix"><span aria-hidden="true">@</span><input id="username" autocomplete="username" placeholder="your_name" minlength="2" maxlength="15" required spellcheck="false" autocapitalize="none"></div>
+          <p class="field-note" id="username-note">2 to 15 small letters, digits or _. Everyone on the network can see it.</p>
+          <label id="password-label" for="password">Password</label><input id="password" type="password" autocomplete="new-password" minlength="15" maxlength="2048" placeholder="At least 15 characters" required>
+          <p class="field-note" id="password-note">Your password unlocks the key that this browser keeps for your account. It is never sent anywhere, and nobody can reset it.</p>
+          <p class="field-note" id="signup-login-note" hidden><span class="tag day">Every day</span> Opens this wallet and signs you in to websites. It cannot pay. Nobody can reset it.</p>
+          <label id="confirm-label" for="password-confirm">Password again</label><input id="password-confirm" type="password" autocomplete="new-password" minlength="15" maxlength="2048" required>
+          <div id="signup-protected" hidden>
+            <label for="signup-payment">Payment password</label><input id="signup-payment" type="password" autocomplete="off" maxlength="2048">
+            <p class="field-note"><span class="tag day">When you pay</span> Pays up to your daily limit. It must differ from your login password. Do not let the browser save it.</p>
+            <label for="signup-payment-confirm">Payment password again</label><input id="signup-payment-confirm" type="password" autocomplete="off" maxlength="2048">
+            <label for="signup-limit">Daily limit, in seconds</label><input id="signup-limit" inputmode="decimal" autocomplete="off">
+            <p class="field-note"><span id="signup-limit-suggested"></span> What your payment password alone can pay in a day, fees included. More waits, or needs a recovery paper.</p>
+          </div>
+          <button id="auth-submit" class="wide" type="submit" disabled>Create my account</button><p id="auth-progress" class="field-note" aria-live="polite"></p>
+        </form>
+        <p id="signup-letgo-row" class="field-note" hidden>Forgot the login password you chose for this sign-up? <button id="signup-letgo" type="button" class="secondary">Let this sign-up go</button></p>
+        <div id="signup-sheet-step" hidden><h2>Your recovery sheet <span class="tag safe">Keep safe</span></h2><p>Write these groups on paper, or print them. Keep the paper somewhere safe, away from this device. It is stored nowhere.</p><div class="sheet-print"><p class="sheet-title" id="signup-sheet-title"></p><p class="sheet" id="signup-sheet"></p><p class="sheet-note">With your recovery passphrase, this sheet recovers the account in a new browser. Anyone who has both can take it. Keep them apart.</p></div><div class="button-row"><button id="signup-print" type="button" class="secondary">Print the sheet</button></div><h2>Your recovery passphrase <span class="tag safe">Keep safe</span></h2><p>Four words that the wallet made for you. Write them on another paper, kept in another place than the sheet. They are not printed and not stored.</p><p class="sheet" id="signup-phrase-shown"></p><p class="subtle">Only these two papers will work for your account. If you start over, you get new ones.</p><div class="button-row"><button id="signup-sheet-done" type="button">I wrote both down</button></div></div>
+        <div id="signup-confirm-step" hidden><h2>Check your papers</h2><p class="subtle">Type two groups of the sheet, and the passphrase. Then your account is created, protected from its first moment.</p><label id="signup-confirm-a-label" for="signup-confirm-a">Group</label><input id="signup-confirm-a" autocomplete="off" spellcheck="false" maxlength="16"><label id="signup-confirm-b-label" for="signup-confirm-b">Group</label><input id="signup-confirm-b" autocomplete="off" spellcheck="false" maxlength="16"><label for="signup-confirm-phrase">Your recovery passphrase</label><input id="signup-confirm-phrase" type="password" autocomplete="off" spellcheck="false" maxlength="128"><div class="button-row"><button id="signup-submit" type="button">Create my account</button><button id="signup-cancel" type="button" class="secondary">Start over</button></div></div>
+      </div>
+      <div class="other-ways">
+        <h2>Other ways in</h2>
+        <details id="way-link"><summary>Add this browser to an account I have</summary><p class="subtle">This browser makes a key of its own. A browser where your account is open then approves it.</p><button id="mode-link" type="button" class="secondary">Start</button></details>
+        <details class="backup-import"><summary>Restore from a backup file</summary><p class="subtle">Your backup file and its password bring back the same key in this browser. Neither works alone. A key that was removed from the account cannot come back.</p><form id="backup-import-form"><label for="backup-file">Backup file</label><input id="backup-file" type="file" accept="application/json,.json" required><label for="backup-password">The password of that file</label><input id="backup-password" type="password" autocomplete="current-password" maxlength="2048" required><button id="backup-import-submit" class="secondary" type="submit" disabled>Restore</button></form></details>
+        <details id="way-sheet"><summary>Recover with my recovery sheet</summary><p class="subtle">For a protected account whose passwords or browser are lost. You need both papers: the recovery sheet and the recovery passphrase. The account waits for its waiting period, frozen, before this browser takes over.</p><button id="lost-open" type="button" class="secondary">Recover with my recovery sheet</button></details>
+        <details id="way-guardians"><summary>Recover with my guardians</summary><p class="subtle">For an account that chose guardians earlier. Use a new browser: it makes a new key and asks your guardians to approve it.</p><button id="mode-recover" type="button" class="secondary">Start</button></details>
+      </div>
+      </div>
+    </section>
+
+    <section id="dashboard" hidden>
+      <nav class="nav" aria-label="Wallet"><button type="button" data-panel="home" id="tab-home" class="active" aria-current="page">Home</button><button type="button" data-panel="send">Payments</button><button type="button" data-panel="activity">Activity</button><button type="button" data-panel="security" id="tab-security">Keys</button><button type="button" data-panel="more">More</button></nav>
+
+      <section class="workspace-panel" id="panel-home">
+       <div class="home-grid">
+        <div class="home-main">
+        <div class="card balance-card">
+          <svg class="ribbon" viewBox="0 0 400 240" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M-20 170C60 110 120 200 210 150S330 40 420 70V140C340 120 300 230 200 236S70 220-20 260Z"/></svg>
+          <p class="who"><span id="account-initial" class="avatar" aria-hidden="true"></span><strong id="account-name">@—</strong> <button id="copy-name" type="button" class="quiet">Copy</button></p>
+          <p class="balance-label">Balance</p>
+          <p class="balance"><span id="balance">—</span> <span class="unit">seconds</span></p>
+          <p class="checked"><span id="account-verification" class="badge">Not checked yet</span> <span id="proof-height"></span></p>
+          <p class="small-print"><span id="account-number"></span> · <button id="refresh" type="button" class="link">Check again</button></p>
+        </div>
+        <div class="actions">
+          <button type="button" class="action" data-panel="send" id="home-send">Send</button>
+          <button type="button" class="action" data-panel="receive" id="home-receive">Receive</button>
+          <button type="button" class="action" id="faucet-button" hidden>Get test time</button>
+        </div>
+        <button type="button" class="holding" id="home-staked-row"><span class="holding-name">Staked<small>Lent to validators, not in your balance</small></span><span class="holding-value" id="home-staked">—</span></button>
+        <p id="home-pending" class="warning" hidden>A signed action is waiting for its receipt. <button type="button" class="link" data-panel="activity">See it in Activity</button></p>
+        <p id="home-backup" class="nudge" hidden>Keep your account safe: <button type="button" class="link" data-panel="security">download your backup file</button>.</p>
+        <section class="card protect" id="protect-card" aria-labelledby="protect-title" hidden>
+          <h2 id="protect-title">Protection</h2>
+          <div id="protect-none" hidden>
+            <p class="protect-status"><strong>Not protected yet</strong></p>
+            <p>One key can move everything, and a forgotten password cannot be replaced.</p>
+            <div class="button-row"><button type="button" id="protect-start">Protect my account</button></div>
+          </div>
+          <div id="protect-on" hidden>
+            <p id="protect-status" class="protect-status"></p>
+            <div class="protect-item">
+              <label class="switch-row" for="freeze-switch"><span class="switch-name">Freeze</span><span class="switch-state" id="freeze-switch-state" aria-hidden="true">Off</span><input id="freeze-switch" class="switch" type="checkbox" role="switch" autocomplete="off" aria-describedby="freeze-note"></label>
+              <p id="freeze-note" class="field-note"></p>
+              <div id="freeze-more" class="button-row" hidden><button id="freeze-again" type="button" class="secondary">Freeze again</button><button id="unfreeze-open" type="button" class="secondary">End the freeze</button></div>
+              <form id="freeze-form" class="step" hidden><p id="freeze-step-note" class="subtle"></p><label for="freeze-method">Freeze with</label><select id="freeze-method"><option value="payment">Payment password</option><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="freeze-secret" type="password" autocomplete="off" spellcheck="false" maxlength="2048" aria-label="Password, sheet or passphrase" required><div class="button-row"><button type="submit">Freeze account</button><button id="freeze-cancel" type="button" class="secondary">Not now</button></div></form>
+              <form id="unfreeze-form" class="step" hidden><h3>End the freeze</h3><p class="subtle">Needs your payment password and one recovery paper.</p><label for="unfreeze-payment">Payment password</label><input id="unfreeze-payment" type="password" autocomplete="off" maxlength="2048" required><label for="unfreeze-method">Recovery paper</label><select id="unfreeze-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="unfreeze-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Recovery sheet or passphrase" required><div class="button-row"><button type="submit">Unfreeze</button><button id="unfreeze-cancel" type="button" class="secondary">Not now</button></div></form>
+            </div>
+            <div class="protect-item">
+              <h3 id="limit-title">Daily limit</h3>
+              <progress id="limit-bar" class="bar" max="1000" value="0" aria-labelledby="limit-title" aria-describedby="limit-text"></progress>
+              <p id="limit-text"></p>
+              <div class="button-row"><button id="limit-open" type="button" class="secondary" aria-label="Change the daily limit">Change</button></div>
+              <form id="limit-form" class="step" hidden><label for="limit-amount">New daily limit, in seconds</label><input id="limit-amount" inputmode="decimal" autocomplete="off" required><p id="limit-when" class="field-note" role="status"></p><label for="limit-payment">Payment password</label><input id="limit-payment" type="password" autocomplete="off" maxlength="2048" required><label for="limit-method">Recovery paper, only to raise the limit at once</label><select id="limit-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="limit-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Recovery sheet or passphrase, only to raise the limit at once"><div class="button-row"><button type="submit">Change daily limit</button><button id="limit-cancel" type="button" class="secondary">Not now</button></div></form>
+            </div>
+            <div class="protect-item">
+              <label class="switch-row" for="pause-switch"><span class="switch-name">Pause payments</span><span class="switch-state" id="pause-switch-state" aria-hidden="true">Off</span><input id="pause-switch" class="switch" type="checkbox" role="switch" autocomplete="off" aria-describedby="pause-note"></label>
+              <p id="pause-note" class="field-note"></p>
+              <form id="pause-form" class="step" hidden><p id="pause-step-note" class="subtle"></p><label for="pause-payment">Payment password</label><input id="pause-payment" type="password" autocomplete="off" maxlength="2048" required><div class="button-row"><button type="submit">Pause payments</button><button id="pause-cancel" type="button" class="secondary">Not now</button></div></form>
+              <div id="resume-step" class="step" hidden><h3>End the pause</h3><label for="resume-amount">Daily limit to go back to, in seconds</label><input id="resume-amount" inputmode="decimal" autocomplete="off"><p id="resume-amount-note" class="field-note"></p><label for="resume-payment">Payment password</label><input id="resume-payment" type="password" autocomplete="off" maxlength="2048"><h4>After the waiting period</h4><p id="resume-wait-note" class="field-note"></p><div class="button-row"><button id="resume-wait" type="button" class="secondary">End the pause after the waiting period</button></div><h4>Or now, with a recovery paper</h4><p class="subtle">Your payment password and one recovery paper together end the pause at once. What is waiting is cancelled, and what you can pay at once fills up again over 24 hours.</p><label for="resume-method">Recovery paper</label><select id="resume-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="resume-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Recovery sheet or passphrase"><div class="button-row"><button id="resume-now" type="button">End the pause now</button><button id="resume-cancel" type="button" class="secondary">Not now</button></div></div>
+            </div>
+            <div class="protect-item"><h3>Waiting</h3><p id="protect-waiting"></p></div>
+            <p id="protect-rule" class="protect-rule">Switching protection on is immediate; switching it off waits, or needs a recovery paper, because nobody can reverse a theft here, so a thief who has your payment password must not be able to undo the protection.</p>
+          </div>
+        </section>
+        </div>
+        <div class="home-side">
+        <div class="card" id="security-inbox-card" hidden>
+          <h2>Waiting on your account</h2>
+          <p class="warning">Anything here that you did not start means that someone has one of your keys. Freeze the account, cancel the item, then replace that key.</p>
+          <div id="security-inbox"></div>
+          <div id="inbox-keys" hidden><p class="field-note">To send or cancel an item, enter your payment password, or a recovery paper, or both.</p><label for="inbox-payment">Payment password</label><input id="inbox-payment" type="password" autocomplete="off" maxlength="2048"><label for="inbox-method">Recovery paper</label><select id="inbox-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="inbox-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Recovery sheet or passphrase"></div>
+          <div id="security-pending"></div><div id="notification-list"></div>
+          <p class="field-note">Alerts are collected only while this wallet is open. They do not replace a watch of your account while your devices are off.</p>
+        </div>
+        <div class="card recent">
+          <div class="section-head"><h2>Your recent actions</h2><button type="button" class="link" data-panel="activity">All activity</button></div>
+          <div id="home-activity"></div>
+        </div>
+        </div>
+       </div>
+      </section>
+
+      <section class="workspace-panel" id="panel-send" hidden>
+        <div class="pay-switch" role="group" aria-label="Send or receive"><button type="button" class="active" aria-current="page" data-panel="send">Send</button><button type="button" data-panel="receive">Receive</button></div>
+        <div class="card">
+          <h2>Send seconds</h2>
+          <form id="send-form">
+            <label for="recipient">To</label><div class="input-prefix"><span aria-hidden="true">@</span><input id="recipient" placeholder="their_name" required spellcheck="false" autocapitalize="none" autocomplete="off"></div>
+            <div id="paid-names-wrap" class="paid-names" hidden><p class="field-note" id="paid-names-label">Names you paid from this browser</p><div id="paid-names" class="chips" role="group" aria-labelledby="paid-names-label"></div><p id="paid-names-alike" class="field-note alike-note" hidden>Names marked with a dashed line look like another name here. Check every letter before you send.</p></div>
+            <label for="amount">Amount, in seconds</label><input id="amount" class="money" inputmode="decimal" placeholder="1.5" required autocomplete="off">
+            <p class="field-note">Fee: <span id="fee-label">…</span> seconds. You see everything once more before it is sent.</p>
+            <div id="send-payment-wrap" hidden><label for="send-payment">Payment password</label><input id="send-payment" type="password" autocomplete="off" maxlength="2048"><p id="send-allowance" class="field-note"></p></div>
+            <button id="send-submit" type="submit">Review</button>
+          </form>
+          <div id="send-over-limit" class="over-limit" hidden><h3>This is more than you can pay today.</h3><p id="send-over-detail" class="subtle"></p><div class="button-row"><button id="send-wait" type="button" class="secondary">Pay after the waiting period</button></div><p id="send-wait-note" class="field-note"></p><h3>Or pay now with a recovery paper</h3><p class="subtle">Your payment password and one recovery paper together can pay any amount at once.</p><label for="send-recovery-method">Recovery paper</label><select id="send-recovery-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="send-recovery-secret" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="512" aria-label="Recovery sheet or passphrase"><div class="button-row"><button id="send-now" type="button">Pay now with a recovery paper</button><button id="send-over-cancel" type="button" class="secondary">Cancel</button></div></div>
+          <div id="send-result" class="result" role="status" hidden><h3>Sent</h3><p id="send-result-text"></p></div>
+        </div>
+      </section>
+
+      <section class="workspace-panel" id="panel-receive" hidden>
+        <div class="pay-switch" role="group" aria-label="Send or receive"><button type="button" data-panel="send">Send</button><button type="button" class="active" aria-current="page" data-panel="receive">Receive</button></div>
+        <div class="card receive">
+          <svg class="art art-small" viewBox="0 0 220 170" aria-hidden="true" focusable="false">
+            <path class="art-ribbon" d="M-10 122C50 84 92 134 140 104S196 34 230 52V98C196 82 172 150 122 152S40 142-10 172Z"/>
+            <path class="art-solid" d="M64 172C64 130 84 110 110 110S156 130 156 172Z"/>
+            <path class="art-solid" d="M145 127c12-14 19-32 21-54l12 2c-1 25-10 46-25 62Z"/>
+            <ellipse class="art-paper" cx="172" cy="63" rx="9" ry="11.5" transform="rotate(8 172 63)"/>
+            <path class="art-line" d="M188 50l8-6M190 63h9M188 76l7 5"/>
+            <path class="art-paper" d="M101 92h18v19c-5 4-13 4-18 0Z"/>
+            <circle class="art-paper" cx="110" cy="74" r="20"/>
+            <path class="art-solid" d="M90 77C86 53 101 45 113 46C128 47 134 60 132 75C131 87 128 95 124 101C126 89 125 79 120 71C112 66 98 68 92 76Z"/>
+            <circle class="art-solid" cx="102" cy="79" r="1.5"/><circle class="art-solid" cx="114" cy="79" r="1.5"/>
+            <path class="art-line" d="M104 87q5 4 10 0"/>
+            <path class="art-paper" d="M30 30h42a9 9 0 0 1 9 9v18a9 9 0 0 1-9 9H50l-10 9v-9H30a9 9 0 0 1-9-9V39a9 9 0 0 1 9-9Z"/>
+            <text class="art-text" x="51" y="55" text-anchor="middle">@</text>
+          </svg>
+          <h2>Receive seconds</h2>
+          <p>Give this name to whoever sends you seconds:</p>
+          <p class="big-name" id="receive-name">@name</p>
+          <button id="copy-name-receive" type="button">Copy my name</button>
+          <p class="subtle">Seconds sent to you arrive by themselves, also while this wallet is closed. You do not need to do anything.</p>
+          <p class="subtle">Some websites ask for your account number instead: <span id="receive-number"></span>. Payments on the network can be seen by anyone.</p>
+        </div>
+      </section>
+
+      <section class="workspace-panel" id="panel-security" hidden>
+        <div id="security-dashboard" hidden>
+          <div class="card">
+            <h2 id="security-title">Your account is protected.</h2>
+            <p id="security-detail" class="subtle"></p>
+            <dl class="metrics"><div><dt>Left to pay today</dt><dd id="security-allowance">—</dd></div><div><dt>Daily limit</dt><dd id="security-limit">—</dd></div><div><dt>Waiting period</dt><dd id="security-delay">—</dd></div><div><dt>Freeze length</dt><dd id="security-freeze-length">—</dd></div></dl>
+            <p class="subtle">Freeze, daily limit, pause and what is waiting are on <button type="button" id="keys-protect-open" class="link" data-panel="home">Home, under Protection</button>.</p>
+          </div>
+        </div>
+        <div class="card keys" id="keys-card">
+          <h2>Your keys</h2>
+          <p id="keys-lede" class="subtle">What you need every day, and what to keep safe.</p>
+          <div id="keys-cards" class="key-cards"></div>
+          <p id="keys-note" class="subtle" hidden></p>
+          <div class="button-row no-print"><button id="keys-print" type="button" class="secondary">Print this page</button></div>
+        </div>
+        <div class="card no-print" id="backup-card">
+          <h2>Download your backup file</h2>
+          <p id="backup-note">Download it now and keep it somewhere other than this device. Anyone who finds it still needs your password, so choose a password nobody can guess.</p>
+          <p id="backup-secured-note" hidden>Your account is protected, so this file holds only this browser's login key. Another browser can sign in with it, but not pay: your payment key is not in it, and neither are your recovery papers.</p>
+          <form id="backup-export-form"><label id="backup-export-label" for="backup-export-password">Your password, to unlock the file once</label><input id="backup-export-password" type="password" autocomplete="current-password" maxlength="2048" required><button id="backup-export-submit" type="submit" disabled>Download my backup file</button></form>
+        </div>
+        <div class="card no-print" id="security-adopt">
+          <h2>Protect my account</h2>
+          <p>Today one password and this browser open everything. Protecting the account splits that into four things, so that no single one of them is enough to take the account from you. The most that someone with this browser and your payment password can do is pay up to your daily limit, until you freeze the account.</p>
+          <ul class="plain-list">
+            <li><strong>Login password</strong> <span class="tag day">Every day</span> Opens this wallet and signs you in to websites. It cannot pay.</li>
+            <li><strong>Payment password</strong> <span class="tag day">When you pay</span> Pays up to a daily limit that you choose. A larger payment waits, or needs a recovery paper too.</li>
+            <li><strong>Recovery sheet</strong> and <strong>recovery passphrase</strong> <span class="tag safe">Keep safe</span> Two papers, kept in two places, never needed day to day. Together they replace lost passwords after a waiting period. Either one alone can freeze the account if something looks wrong.</li>
+          </ul>
+          <p class="subtle">Your backup file of today stops working: the account gets new keys. Your login password may be the one you use now.</p>
+          <p id="secure-blocked" class="warning" hidden></p>
+          <details id="secure-open" class="reveal"><summary>Protect my account</summary>
+            <form id="secure-form"><label for="secure-login">Login password</label><input id="secure-login" type="password" autocomplete="new-password" maxlength="2048" required><p class="field-note">Every day: opens this wallet and signs you in to websites.</p><label for="secure-login-confirm">Login password again</label><input id="secure-login-confirm" type="password" autocomplete="new-password" maxlength="2048" required>
+              <label for="secure-payment">Payment password</label><input id="secure-payment" type="password" autocomplete="off" maxlength="2048" required><p class="field-note">When you pay. It must differ from the login password. Do not let the browser save it: it would sit next to the payment key.</p><label for="secure-payment-confirm">Payment password again</label><input id="secure-payment-confirm" type="password" autocomplete="off" maxlength="2048" required>
+              <label for="secure-limit">Daily limit, in seconds</label><input id="secure-limit" inputmode="decimal" autocomplete="off" required><p class="field-note"><span id="secure-limit-suggested"></span> What your payment password alone can pay at once, fees included. It refills over 24 hours, so up to about twice this can leave in any 24 hours. Larger payments wait, or need a recovery paper.</p>
+              <details><summary>Waiting period and freeze length</summary><label for="secure-delay">Waiting period, in hours</label><input id="secure-delay" inputmode="numeric" value="48" required><p class="field-note">How long a large payment, a higher limit or a recovery waits before it happens. You can cancel it meanwhile.</p><label for="secure-freeze">Freeze length, in hours</label><input id="secure-freeze" inputmode="numeric" value="48" required><label for="secure-threshold">Keys needed for big changes</label><input id="secure-threshold" inputmode="numeric" value="2" required><p class="field-note" id="secure-minimum"></p></details>
+              <p class="field-note">Next, the wallet makes your recovery sheet and your recovery passphrase. Have paper and a pen ready.</p>
+              <button type="submit">Make my recovery papers</button></form>
+            <div id="secure-sheet-step" hidden><h3>Your recovery sheet</h3><p>Write these groups on paper, or print them. Keep the paper somewhere safe, away from this device. It is stored nowhere.</p><div class="sheet-print"><p class="sheet-title" id="secure-sheet-title"></p><p class="sheet" id="secure-sheet"></p><p class="sheet-note">With your recovery passphrase, this sheet recovers the account in a new browser. Anyone who has both can take it. Keep them apart.</p></div><div class="button-row"><button id="secure-print" type="button" class="secondary">Print the sheet</button></div><h3>Your recovery passphrase</h3><p>Four words that the wallet made for you. Write them on another paper, kept in another place than the sheet. They are not printed and not stored.</p><p class="sheet" id="secure-phrase-shown"></p><div class="button-row"><button id="secure-sheet-done" type="button">I wrote both down</button></div></div>
+            <div id="secure-confirm-step" hidden><h3>Check your papers</h3><p class="subtle">Type two groups of the sheet, and the passphrase.</p><label id="secure-confirm-a-label" for="secure-confirm-a">Group</label><input id="secure-confirm-a" autocomplete="off" spellcheck="false" maxlength="16"><label id="secure-confirm-b-label" for="secure-confirm-b">Group</label><input id="secure-confirm-b" autocomplete="off" spellcheck="false" maxlength="16"><label for="secure-confirm-phrase">Your recovery passphrase</label><input id="secure-confirm-phrase" type="password" autocomplete="off" spellcheck="false" maxlength="128"><div class="button-row"><button id="secure-submit" type="button">Review and protect</button><button id="secure-cancel" type="button" class="secondary">Start over</button></div></div>
+          </details>
+        </div>
+        <details class="card change no-print" id="keys-change" hidden><summary>Change something</summary>
+          <section class="change-item"><h3>New login password</h3><p class="subtle">If someone may know your login password, or to change it. Makes a new login key for this browser and removes every other login key at once. Needs your payment password.</p><form id="replace-login-form"><label for="replace-login-new">New login password</label><input id="replace-login-new" type="password" autocomplete="new-password" maxlength="2048" required><label for="replace-login-confirm">New login password again</label><input id="replace-login-confirm" type="password" autocomplete="new-password" maxlength="2048" required><label for="replace-login-payment">Payment password</label><input id="replace-login-payment" type="password" autocomplete="off" maxlength="2048" required><button type="submit">Replace my login</button></form></section>
+          <section class="change-item" id="rr-card"><h3>New recovery papers</h3><p class="subtle">If a paper is lost, or someone may have seen it. Makes a new recovery sheet and a new recovery passphrase, and the old ones stop working at once. It also ends a change of keys that is waiting, and a freeze. Needs your payment password and one of your current papers.</p><div class="button-row"><button id="rr-start" type="button" class="secondary">Make new papers</button></div><div id="rr-show" hidden><div class="sheet-print"><p class="sheet-title" id="rr-sheet-title"></p><p class="sheet" id="rr-sheet"></p><p class="sheet-note">With your new recovery passphrase, this sheet recovers the account in a new browser. Keep them apart.</p></div><div class="button-row"><button id="rr-print" type="button" class="secondary">Print the sheet</button></div><h3>Your new recovery passphrase</h3><p>Write it on another paper, kept in another place than the sheet.</p><p class="sheet" id="rr-phrase-shown"></p><div class="button-row"><button id="rr-shown-done" type="button">I wrote both down</button></div></div><form id="rr-form" hidden><p class="subtle">Type two groups of the new sheet and the new passphrase, then approve with your current keys.</p><label id="rr-confirm-a-label" for="rr-confirm-a">Group</label><input id="rr-confirm-a" autocomplete="off" spellcheck="false" maxlength="16"><label id="rr-confirm-b-label" for="rr-confirm-b">Group</label><input id="rr-confirm-b" autocomplete="off" spellcheck="false" maxlength="16"><label for="rr-confirm-phrase">New recovery passphrase</label><input id="rr-confirm-phrase" type="password" autocomplete="off" spellcheck="false" maxlength="128"><label for="rr-payment">Payment password</label><input id="rr-payment" type="password" autocomplete="off" maxlength="2048"><label for="rr-method">A current recovery paper</label><select id="rr-method"><option value="sheet">Current recovery sheet</option><option value="phrase">Current recovery passphrase</option></select><input id="rr-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Current recovery sheet or passphrase"><div class="button-row"><button type="submit">Review and replace</button><button id="rr-cancel" type="button" class="secondary">Discard</button></div></form></section>
+          <section class="change-item"><h3>New payment password</h3><p class="subtle">If someone may have your payment password. Makes a new payment key and a new login key on this browser at once, and removes every other payment and login key, including any a thief added. Needs your current payment password and one recovery paper. Choose new passwords.</p><form id="replace-spend-form"><label for="replace-spend-payment">Current payment password</label><input id="replace-spend-payment" type="password" autocomplete="off" maxlength="2048" required><label for="replace-spend-new">New payment password</label><input id="replace-spend-new" type="password" autocomplete="off" maxlength="2048" required><p class="field-note">Do not let the browser save it: it would sit next to the payment key.</p><label for="replace-spend-confirm">New payment password again</label><input id="replace-spend-confirm" type="password" autocomplete="off" maxlength="2048" required><label for="replace-spend-login">New login password</label><input id="replace-spend-login" type="password" autocomplete="new-password" maxlength="2048" required><label for="replace-spend-login-confirm">New login password again</label><input id="replace-spend-login-confirm" type="password" autocomplete="new-password" maxlength="2048" required><label for="replace-spend-method">Recovery paper</label><select id="replace-spend-method"><option value="sheet">Recovery sheet</option><option value="phrase">Recovery passphrase</option></select><input id="replace-spend-secret" type="text" autocomplete="off" spellcheck="false" maxlength="512" aria-label="Recovery sheet or passphrase" required><button type="submit">Replace my payment key</button></form></section>
+        </details>
+      </section>
+
+      <section class="workspace-panel" id="panel-more" hidden>
+        <div class="card">
+          <div class="profile"><span id="more-initial" class="avatar avatar-large" aria-hidden="true"></span><div><h2>More</h2><p id="more-name" class="subtle"></p></div></div>
+          <div class="more-list">
+            <button type="button" data-panel="earn">Staking<small>Lend seconds to a validator and share its reward</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="devices">Devices<small>The browsers and keys of this account</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="recovery">Guardian recovery<small>People you trust to help you recover</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="upgrade" id="tab-upgrade" hidden>Validator signal<small>For the owner of a validator</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="integrate">Use in your app<small>Sign in and pay on websites</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="validator">Validator operator<small>Register and run a validator</small><span class="sign" aria-hidden="true"></span></button>
+          </div>
+          <p class="subtle">Offline trust refresh is at the bottom of the page, also while the wallet is locked.</p>
+        </div>
+      </section>
+
+      <section class="workspace-panel" id="panel-activity" hidden>
+        <div class="card"><h2>Activity</h2><p class="subtle">What this browser signed or checked, newest first. "Checked" means this browser verified the network's receipt itself. The list is kept in this browser only.</p>
+          <div class="search"><label for="activity-search" class="visually-hidden">Search your activity</label><input id="activity-search" type="search" placeholder="Search your activity" autocomplete="off" spellcheck="false" maxlength="64"></div>
+          <div id="pending-panel"></div><div id="activity-list"></div><p id="activity-none" class="subtle" hidden>Nothing here matches your search.</p>
+          <svg class="art art-small art-empty" viewBox="0 0 220 170" aria-hidden="true" focusable="false">
+            <path class="art-ribbon" d="M-10 120C50 82 92 132 140 102S196 32 230 50V96C196 80 172 148 122 150S40 140-10 170Z"/>
+            <path class="art-solid" d="M60 172C60 130 82 110 110 110S160 130 160 172Z"/>
+            <path class="art-line" d="M102 120c-4-6 4-9 0-15M118 120c-4-6 4-9 0-15"/>
+            <path class="art-paper" d="M94 126h32v20c0 7-5 11-11 11h-10c-6 0-11-4-11-11Z"/>
+            <ellipse class="art-paper" cx="90" cy="142" rx="8" ry="10"/><ellipse class="art-paper" cx="130" cy="142" rx="8" ry="10"/>
+            <path class="art-paper" d="M101 92h18v19c-5 4-13 4-18 0Z"/>
+            <circle class="art-paper" cx="110" cy="74" r="20"/>
+            <path class="art-solid" d="M90 77C86 53 101 45 113 46C128 47 134 60 132 75C131 87 128 95 124 101C126 89 125 79 120 71C112 66 98 68 92 76Z"/>
+            <path class="art-line" d="M99 79q3 2.5 6 0M111 79q3 2.5 6 0"/>
+            <path class="art-line" d="M104 88q5 3.5 10 0"/>
+          </svg>
+          <p class="field-note">A pending action can be cancelled by signing another one in its place; until that is in a block, the first one may still win.</p></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-earn" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card" id="auction-card"><p class="eyebrow">Bitcoin regtest auction</p><p id="auction-secured-note" class="subtle" hidden>Auction bids and claims cannot be signed from a protected account in this wallet yet. Staking below works with your payment password.</p><h2>Earn seconds in the auction.</h2><p>The auction distributes the existing bank pot. Your bid uses a mined Bitcoin regtest payment. No real Bitcoin or money is requested.</p><dl class="metrics"><div><dt>Current bank pot</dt><dd id="bank-pot">—</dd></div><div><dt>Auction epoch</dt><dd id="auction-epoch">—</dd></div></dl><form id="bid-form"><label for="bid-weight">Bitcoin regtest earning</label><input id="bid-weight" value="Local mined regtest BTC" readonly><p class="field-note">A real local Bitcoin Core transaction is proved and bound to your account, epoch and treasury policy. REGTEST BTC only; fee zero.</p><button type="submit">Review regtest bid</button></form><div id="earning-claims"></div></div>
+        <div class="card"><p class="eyebrow" id="stake-eyebrow">Staking</p><h2 id="stake-title">Put some seconds to work.</h2><p>Staked now: <strong id="bonded">—</strong></p><p id="stake-intro" hidden>On this network all new seconds, up to 86,400 a day, go to the validators who sign blocks, by voting power, and through them to the people who stake with them. Stake with a validator below and your part of its reward is added to your stake as it arrives; the validator keeps a commission of at most 20% of it. <span id="stake-intro-bonding">While the network is starting up, most of what its starting validators earn is staked for them, so few seconds circulate yet: your first seconds come from someone who already has some.</span><span id="stake-intro-handover" hidden>Your first seconds come from someone who already has some: on a test network, from the faucet.</span></p><form id="stake-form"><label for="operator">Validator</label><select id="operator" required></select><label for="stake-amount">Seconds to stake</label><input id="stake-amount" inputmode="decimal" placeholder="0.5" required><p id="stake-allowance" class="field-note" hidden></p><p class="field-note">Staked seconds cannot be sent. Rewards change the value of your share of the validator's pool. Taking seconds back out takes 14 days, during which they can still be cut if the validator misbehaves.</p><div id="stake-payment-wrap" hidden><label for="stake-payment">Payment password</label><input id="stake-payment" type="password" autocomplete="off" maxlength="2048"><p class="field-note">Asked to stake, unbond or withdraw, and used for that one action.</p></div><button type="submit">Review the stake</button></form><p id="stake-frozen-note" class="warning" hidden>Your account is frozen, so staking, unbonding and withdrawing are refused until the freeze ends. See Home.</p><div id="stake-over-limit" class="over-limit" hidden><h3>This is more than your daily limit allows today.</h3><p id="stake-over-detail" class="subtle"></p><div class="button-row"><button id="stake-fit-today" type="button" class="secondary">Stake what fits today</button><button id="stake-raise-limit" type="button" class="secondary">Raise my daily limit</button><button id="stake-over-cancel" type="button" class="secondary">Cancel</button></div></div><p id="pos-status" class="field-note"></p><div id="delegations"></div><div id="unbonding"></div></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-devices" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card"><h2 id="devices-title">Browsers that can open this account</h2><p id="devices-secured-intro" class="subtle" hidden>Your account is protected. Each key has one job. Nothing here can be removed one by one: under Keys, “Change something” replaces a login key or a payment key.</p><div id="device-list"></div><p class="subtle">A device is known by its key, not by its address. Your backup file is under Keys.</p></div>
+        <div class="card" id="devices-secured-card" hidden><h2>Use another browser</h2><p>In the other browser, choose <strong>Add this browser to an account I have</strong> with your name, then <strong>Ask for a login</strong>. Paste its request here within a few hours. Your payment key adds it as a login key: it can sign in, not pay.</p><form id="add-login-form"><label for="add-login-request">Login request from the other browser</label><textarea id="add-login-request" rows="4" spellcheck="false"></textarea><label for="add-login-payment">Payment password</label><input id="add-login-payment" type="password" autocomplete="off" maxlength="2048"><button type="submit">Review the new login</button></form><p class="subtle">Compare the fingerprint shown in the review with the one in the other browser. If a device is lost, freeze the account on Home; in a new browser, use <strong>Recover with my recovery sheet</strong>.</p></div>
+        <div class="card" id="add-device-card"><h2>Add another browser</h2><p>In the new browser, choose <strong>Add this browser to an account I have</strong> and pick a password for it there. Paste its request here.</p><form id="approve-device-form"><label for="device-request">Request from the new browser</label><textarea id="device-request" rows="5" placeholder="Paste the request" required></textarea><button type="submit">Review the new browser</button></form><p class="subtle">The request holds a public key and a proof, never a private key. Compare it with the new browser over a channel you trust.</p><h3>Lost every browser?</h3><p class="subtle">Choose guardians under Guardian recovery before that happens, or protect the account under Keys.</p></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-recovery" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card" id="recovery-secured-card" hidden><h2>Your recovery papers</h2><p>Your account is protected, so guardian recovery is not used. Your recovery sheet and recovery passphrase replace lost keys after your waiting period. See Keys.</p><p class="subtle">If you agreed earlier to be someone else's guardian, withdrawing that needs one of your recovery papers. This wallet cannot do that yet, and it cannot approve recoveries for other accounts from a protected account.</p></div>
+        <div class="card" id="guardian-card"><h2>Choose people you trust</h2><p>Guardians can replace every approved device of your account after enough of them approve a recovery. If enough of them work together against you, they can take your account.</p><form id="recovery-policy-form"><label for="recovery-guardians">Guardian @names, separated by commas</label><input id="recovery-guardians" placeholder="friend_one, friend_two, friend_three" required><label for="recovery-threshold">Approvals needed</label><input id="recovery-threshold" type="number" min="2" max="5" value="2" required><p class="field-note">Two to five guardians, with a strict majority and at least two approvals. Each one must agree separately, from their own wallet.</p><button type="submit">Review guardians</button></form><div id="recovery-policy-summary"></div><div id="recovery-owner-cases"></div></div>
+        <div class="card" id="guardian-help-card"><h2>Help someone recover</h2><div id="recovery-consent-list"></div><form id="recovery-approve-form"><label for="recovery-request">Recovery request from their new browser</label><textarea id="recovery-request" rows="6" required placeholder="Paste the recovery request"></textarea><button type="submit">Review the approval</button></form><p class="subtle">Check the person and the full new public key over a channel you trust. When enough guardians approve, their account is frozen while the waiting period runs; their own device can still cancel it.</p></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-upgrade" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card"><p class="eyebrow">Validator signal</p><h2>Your validator and the network's rules.</h2><p>The rules of this network change only when validators with four fifths of the votes signal support for the same plan: the next version, the hash of its specification, and a start time. This tab sends your validator's signal. What it shows is read from proven state, never taken from the gateway's word.</p><div id="signal-status"><p class="subtle">Not read yet.</p></div><div class="button-row"><button id="signal-refresh" type="button" class="secondary">Read again from proven state</button></div></div>
+        <div class="card"><h3>What validators have signalled</h3><p class="subtle">Proven, but not a recommendation: every owner of a validator can signal any plan. Hashes are shown in groups for comparing.</p><div id="signal-plans"></div><details><summary>Every validator</summary><div id="signal-validators"></div></details></div>
+        <div class="card"><h3>Support a plan</h3><p class="warning">Take the version, the specification hash and the start time from the release announcement of the software your validator runs, and type or paste them here yourself. Do not take them from this page, from a chat, or from a website that asks you to signal. The hash decides which rules the network will run.</p>
+          <form id="signal-form"><label for="signal-version">Version</label><input id="signal-version" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="24" required>
+            <label for="signal-spec">Specification hash</label><input id="signal-spec" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="96" required><p class="field-note">64 characters, 0 to 9 and a to f, in one run without spaces.</p>
+            <label for="signal-start">Start time</label><input id="signal-start" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="24" required><p class="field-note">The number the announcement gives: microseconds of network time. The review shows it as a date in UTC. Compare that date with the announcement too.</p>
+            <p class="check-line"><input id="signal-node-ready" type="checkbox" autocomplete="off"> <label for="signal-node-ready">I have checked my validator's node: it runs a release that lists this version with this hash.</label></p><p class="field-note">The node's own status lists the versions its program implements, each with its hash (the field upgrade.implemented; the wallet's README says how to read it on the validator's host). A node that does not implement the version stops when it starts.</p>
+            <div id="signal-payment-wrap" hidden><label for="signal-payment">Payment password</label><input id="signal-payment" type="password" autocomplete="off" maxlength="2048"><p class="field-note">Your payment key signs the signal. Asked for this one action, also when you withdraw below.</p></div>
+            <button id="signal-submit" type="submit">Check and review</button></form><p id="signal-check" class="field-note" role="status"></p></div>
+        <div class="card"><h3>Withdraw your support</h3><p id="signal-withdraw-note" class="subtle"></p><div class="button-row"><button id="signal-withdraw" type="button" class="secondary">Review the withdrawal</button></div></div>
+        <div class="card" id="signal-pending-card" hidden><h3>A signed signal is waiting</h3><p id="signal-pending-text"></p><div class="button-row"><button id="signal-discard" type="button" class="secondary">Discard the signed signal</button></div></div>
+        <div class="card" id="signal-result-card" hidden><h3>Result</h3><div id="signal-result" role="status"></div></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-integrate" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card"><h2>Use Time on a website</h2><p>A website, such as a blog or a shop, opens this wallet in a small window. Signing in tells the website your account and nothing more. A payment is asked separately, for an exact amount to an exact account, and you approve it here. The website never gets a password or a key.</p><a id="merchant-link" class="button-link" href="#" target="_blank" rel="noopener">Open the demo blog</a><p class="subtle">Each sign-in request is used once and is tied to the website's address. Signing in gives no permission to pay.</p></div>
+        <div class="card"><h3>For developers</h3><p>The wallet checks short proofs for the accounts and validators it looks at. It does not recount every account of the network. This is a test network: real use needs HTTPS, reviewed code and secure hosting.</p></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-validator" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card"><h2>Validator operator</h2><p>A validator is a computer you run that signs blocks. Its key stays on that machine. Here your account registers it, adds to its bond or takes the bond out. The explorer's Validators page says how to set one up.</p><p id="validator-summary"></p><div id="validator-payment-wrap" hidden><label for="validator-payment">Payment password</label><input id="validator-payment" type="password" autocomplete="off" maxlength="2048"><p class="field-note">Your account is protected, so its payment key registers the validator, adds to its bond, takes the bond out, retires it and withdraws, each with this password, for that one action. The bond and each fee count against your daily limit, and cannot wait or be paid with a recovery paper.</p></div><button type="button" id="validator-retire" class="secondary">Retire my empty validator</button><form id="validator-register-form"><label for="validator-enrollment">Registration text from the join script</label><textarea id="validator-enrollment" required placeholder="Paste the text the script printed"></textarea><button type="submit">Review registration</button></form><form id="self-bond-form"><label for="self-bond-amount">Add to my bond, in seconds</label><input id="self-bond-amount" inputmode="decimal" required><button type="submit">Review</button></form><form id="self-unbond-form"><label for="self-unbond-amount">Take out of my bond, in seconds</label><input id="self-unbond-amount" inputmode="decimal" required><button type="submit">Review</button></form><div id="validator-exits"></div></div>
+      </section>
+    </section>
+
+    <section id="enrollment-panel" class="card" hidden><h2>Approve this browser</h2><p>Copy this request to a browser where your account is open, and paste it there under More, Devices. It holds no secret.</p><textarea id="enrollment-code" rows="7" readonly aria-label="Request for this browser"></textarea><div class="button-row"><button id="copy-enrollment" type="button">Copy request</button><button id="check-enrollment" type="button" class="secondary">Check again</button></div></section>
+    <section id="recovery-claim-panel" class="card" hidden><h2>Ask your guardians to approve</h2><p>This is a request for this browser's new key. Send it to your guardians. It holds no private key and no password.</p><textarea id="recovery-claim-code" rows="8" readonly aria-label="Recovery request"></textarea><p id="recovery-claim-status" class="subtle"></p><div class="button-row"><button id="copy-recovery-claim" type="button" class="secondary">Copy request</button><button id="check-recovery-claim" type="button" class="secondary">Check approvals</button><button id="finalize-recovery" type="button" disabled>Finish recovery</button></div><p class="subtle">After enough approvals and the waiting period, finishing replaces every earlier device. An old device can cancel before that. Keep this browser's data and password until it is done.</p></section>
+    <section id="security-removed-panel" class="card" hidden><h2 id="removed-title">This browser's login key was removed from the account.</h2><p>A payment key removed it, or the keys were replaced from another device. If you did not do that, someone has your payment key or your recovery papers.</p><p id="removed-status" class="warning"></p>
+      <form id="removed-login-form" hidden><h3>I still have my payment password</h3><p class="subtle">Your payment key makes a new login key for this browser and removes every other login key. Then make a new payment password under Keys, in case it leaked.</p><label for="removed-login-new">New login password</label><input id="removed-login-new" type="password" autocomplete="new-password" maxlength="2048" required><label for="removed-login-confirm">New login password again</label><input id="removed-login-confirm" type="password" autocomplete="new-password" maxlength="2048" required><label for="removed-payment">Payment password</label><input id="removed-payment" type="password" autocomplete="off" maxlength="2048" required><button type="submit">Make a new login key</button></form>
+      <div id="newlogin-box"><h3>I can use a device that has my payment password</h3><p class="subtle">This browser makes a new login key under a login password you choose, and shows a request. Paste it on that device, under More, Devices.</p><form id="newlogin-form"><label for="newlogin-password">Login password for this browser</label><input id="newlogin-password" type="password" autocomplete="new-password" maxlength="2048"><label for="newlogin-confirm">Login password again</label><input id="newlogin-confirm" type="password" autocomplete="new-password" maxlength="2048"><button type="submit">Ask for a login</button></form><textarea id="newlogin-code" rows="4" readonly hidden aria-label="Login request"></textarea><p id="newlogin-fingerprint" class="field-note" hidden></p><div class="button-row"><button id="newlogin-withdraw" type="button" class="secondary" hidden>Withdraw request</button></div></div><h3>I have my recovery sheet and passphrase</h3><p class="subtle">Replace every key except the recovery papers. It waits for your waiting period, with the account frozen.</p><div class="button-row"><button id="removed-lost" type="button" class="secondary">Recover with my recovery sheet</button></div></section>
+    <section id="security-recover-panel" class="card" hidden><h2>Recover your account here</h2>
+      <form id="lost-form"><p>This browser gets a new login key and a new payment key. Your old devices lose access. The change waits for your waiting period, and the account stays frozen meanwhile.</p><label for="lost-name">Name</label><div class="input-prefix"><span aria-hidden="true">@</span><input id="lost-name" autocomplete="username" maxlength="16" spellcheck="false" autocapitalize="none" required></div><label for="lost-sheet">Recovery sheet</label><input id="lost-sheet" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="512" placeholder="ABCD EFGH ..." required><label for="lost-phrase">Recovery passphrase</label><input id="lost-phrase" type="password" autocomplete="off" maxlength="2048" required><label for="lost-login">New login password</label><input id="lost-login" type="password" autocomplete="new-password" maxlength="2048" required><label for="lost-login-confirm">New login password again</label><input id="lost-login-confirm" type="password" autocomplete="new-password" maxlength="2048" required><label for="lost-payment">New payment password</label><input id="lost-payment" type="password" autocomplete="off" maxlength="2048" required><p class="field-note">Do not let the browser save it: it would sit next to the payment key.</p><label for="lost-payment-confirm">New payment password again</label><input id="lost-payment-confirm" type="password" autocomplete="off" maxlength="2048" required><div class="button-row"><button id="lost-submit" type="submit">Review recovery</button><button id="lost-close" type="button" class="secondary">Back</button></div><h3>A change of keys you did not start is waiting?</h3><p class="subtle">Your recovery sheet and passphrase together can cancel it. Fill in the name, sheet and passphrase above; no new password is needed. Then make new recovery papers as soon as you can: whoever started it has them.</p><div class="button-row"><button id="lost-cancel-waiting" type="button" class="secondary">Cancel the waiting change</button></div></form>
+      <div id="lost-status" hidden><p id="lost-status-text"></p><div id="lost-pending"></div><form id="lost-finish-form" hidden><label for="lost-finish-payment">Payment password</label><input id="lost-finish-payment" type="password" autocomplete="off" maxlength="2048" required><button type="submit">Finish recovery</button></form><div class="button-row"><button id="lost-check" type="button" class="secondary">Check again</button><button id="lost-restart" type="button" class="secondary" hidden>Start again</button></div><p class="subtle">Nothing secret is kept while you wait: only your new keys, locked by your new passwords. Keep this browser's data until the recovery is finished.</p></div></section>
+
+    <details class="card trust no-print"><summary>Offline trust and checkpoint refresh</summary><p id="upgrade-forget-row" hidden>A node of this network once answered this wallet's question about scheduled upgrades, so the wallet now asks it with every read. If every read fails since the network's node was replaced by an older one, the wallet can forget that answer and ask on its own again. Your key and your checkpoint stay. <button type="button" id="upgrade-forget" class="secondary">Forget the answer about upgrades</button></p><p>After seven days offline, signing stays off until you bring in a current checkpoint of the network that you checked yourself. A checkpoint file alone cannot give trust: confirm the whole block hash through a channel of the network's operator that you trust.</p><form id="trust-refresh-form"><label for="trust-checkpoint-file">Checkpoint file (JSON)</label><input id="trust-checkpoint-file" type="file" accept="application/json" required><label for="trust-checkpoint-hash">The whole block hash, as you confirmed it</label><input id="trust-checkpoint-hash" pattern="[0-9a-fA-F]{64}" minlength="64" maxlength="64" required autocomplete="off" spellcheck="false"><button type="submit">Bring in the checkpoint</button></form></details>
+  </main>
+  <footer class="no-print"><p>Time wallet for the test network. Your keys are made in this browser and stay in it, locked by your passwords. <span id="protocol-badge"></span></p></footer>
+  <dialog id="review-dialog" aria-labelledby="review-title"><form method="dialog"><p class="eyebrow">Check before you sign</p><h2 id="review-title" tabindex="-1">Review</h2><div id="review-body"></div><label id="review-ack-wrap" for="review-ack" hidden><input id="review-ack" type="checkbox" autocomplete="off"> <span id="review-ack-text"></span></label><div class="button-row"><button id="review-confirm" value="confirm">Confirm &amp; sign</button><button class="secondary" value="cancel">Cancel</button></div></form></dialog>
+</body></html>

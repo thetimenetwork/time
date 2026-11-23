@@ -1,0 +1,40 @@
+/bin/
+/.local/
+/.tools/
+/target/
+/verifier/target/
+/v2/target/
+/verifier-v2/target/
+/treasury/target/
+/v4/target/
+/pos/target/
+/bitcoin-bridge/target/
+/verifier-v4/target/
+/history/target/
+/registration/target/
+/coverage.out
+*.db
+*.db.lock
+*.redb
+
+# Build outputs
+target/
+node_modules/
+__pycache__/
+*.exe
+*.tar.gz
+*.zip
+
+# Local networks, tools, measurements and release outputs: never published
+/releases/
+/results*/
+/campaign-results/
+/deploy/results/
+/ops-v4/results/
+/bench-v4/artifacts/
+/bench-v4/results*/
+
+# Fuzzing: what cargo-fuzz writes while it runs (docs/fuzzing.md). The inputs that are kept are in fuzz/inputs.
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/

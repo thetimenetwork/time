@@ -1,0 +1,116 @@
+# Continuous integration: the Rust suites, the Node suites, the compiled verifier and the licence check.
+# Linux only. No secrets, no deployment, read-only token.
+#
+# Every check is started through tools/ci-checks.mjs, the one list of the repository's checks:
+# `node tools/ci-checks.mjs --list` prints it, and `node tools/ci-checks.mjs NAME` runs one on any
+# machine. This file only installs Rust and Node and says which checks run in which job.
+# tools/ci-checks.test.mjs fails if a check is missing here or if a command is written here directly.
+#
+# Not verified on GitHub: this file was written without a runner to try it on. The checks themselves
+# are run on Linux by the project's own test run (see the notes in tools/ci-checks.mjs).
+# Actions are named by major version tag, not pinned to a commit.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per crate that has its own Cargo.lock, one for the engine's rehearsal build, and one that runs
+        # the fuzz targets as ordinary tests (skipped where the repository copy does not hold them).
+        check: [rust-v5, rust-v5-rehearsal, rust-fuzz-harness, rust-pos, rust-verifier-v4, rust-timecurrency-node, rust-history, rust-registration, rust-treasury, rust-bitcoin-bridge, rust-v4, rust-v2]
+    steps:
+      - uses: actions/checkout@v5
+      # v5/tests/production_genesis.rs runs tools/genesis-v5.mjs.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+      - name: Install the toolchain named in rust-toolchain.toml
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy
+          rustup default "$channel"
+          rustc --version
+      - name: Run the check
+        run: node tools/ci-checks.mjs ${{ matrix.check }}
+
+  node:
+    name: node --test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+      - name: Clients, servers, wallet, release tools, repository tools
+        run: node tools/ci-checks.mjs --group node --keep-going
+
+  # Rebuilds the compiled verifier from its source and compares it, byte for byte, with the copy
+  # committed in web-v4/shared/verifier (tools/build-verifier.mjs --check).
+  #
+  # The committed copy is the build of Linux x86-64. A build on another system gives a different
+  # .wasm file from the same source, so this job is where that file is checked. No runner of this
+  # service has run it yet: if its first run differs, find the cause before changing anything, and
+  # do not replace the committed copy with the runner's until the cause is known.
+  verifier-build:
+    name: compiled verifier matches its source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+      # The build runs in a staging folder that carries verifier-v4/rust-toolchain.toml.
+      - name: Install the verifier's toolchain
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' verifier-v4/rust-toolchain.toml)"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy
+          rustup default "$channel"
+          rustc --version
+      # --setup adds the WebAssembly target, installs wasm-bindgen at the version in
+      # verifier-v4/Cargo.lock and fetches the locked crates; the build itself runs offline.
+      - name: Rebuild and compare with the committed copy
+        run: node tools/ci-checks.mjs --setup verifier-build
+
+  licences:
+    name: licence check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26"
+      - name: Install the toolchain named in rust-toolchain.toml
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+      # --setup fetches every locked crate. Rust crates and the JavaScript vendored in the wallet
+      # are judged. There is no Go module cache on the runner, so the Go modules are listed as
+      # "to check" and are not judged here: run tools/licenses.mjs with --go-mod-cache for that.
+      - name: Licences against the allowlist
+        run: node tools/ci-checks.mjs --setup licences

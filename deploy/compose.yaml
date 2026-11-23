@@ -1,0 +1,75 @@
+name: time-v4-private-devnet
+# All images require digest pins in addition to the entry guard's verification.
+# ABCI/RPC/signer/metrics share the validator network namespace and bind loopback.
+services:
+  validator:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    command: ["run", "comet", "/operator/settings.json"]
+    environment:
+      TIME_IMAGE: ${TIME_IMAGE:?set NAME@sha256 digest}
+      REMOTE_SIGNER_IMAGE: ${REMOTE_SIGNER_IMAGE:?set fenced signer digest}
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+      - consensus:/data/comet
+    healthcheck:
+      test: ["CMD", "node", "/opt/time/deploy/operator.mjs", "probe", "/operator/settings.json"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    networks: [private_validator]
+  app:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    command: ["run", "app", "/operator/settings.json"]
+    environment:
+      TIME_IMAGE: ${TIME_IMAGE:?set NAME@sha256 digest}
+      REMOTE_SIGNER_IMAGE: ${REMOTE_SIGNER_IMAGE:?set fenced signer digest}
+    network_mode: service:validator
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:rw,noexec,nosuid,size=32m]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+      - ledger:/data/ledger
+    depends_on: [validator]
+  signer:
+    image: ${REMOTE_SIGNER_IMAGE:?set independently reviewed fenced signer NAME@sha256 digest}
+    network_mode: service:validator
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Signer image's own entrypoint MUST enforce fencing at EVERY signature.
+    # This bundle does not implement or certify an HSM or cross-host signer.
+    volumes:
+      - ${SIGNER_CONFIG:?set signer enrollment directory}:/signer:ro
+    depends_on: [validator]
+  monitor:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    entrypoint: ["node", "/opt/time/deploy/monitor.mjs"]
+    command: ["/operator/settings.json"]
+    network_mode: service:validator
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+    depends_on: [validator, app]
+networks:
+  private_validator:
+    # No host ports; outbound sentry connections require host firewall controls.
+    internal: false
+volumes:
+  consensus:
+  ledger:

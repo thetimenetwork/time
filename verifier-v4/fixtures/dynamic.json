@@ -1,0 +1,620 @@
+{
+  "blocks": [
+    {
+      "next_validators": [
+        {
+          "address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
+          }
+        },
+        {
+          "address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q="
+          }
+        },
+        {
+          "address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E="
+          }
+        },
+        {
+          "address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "ypOsFwUYcHHWe4PH/w7+gQjo7EUwV113JoeTM9vavnw="
+          }
+        }
+      ],
+      "signed_header": {
+        "commit": {
+          "block_id": {
+            "hash": "AA8CD246D34F181BA8D7027F162590D0257B22A747E38D91026D447BB33EFF1D",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "height": "1",
+          "round": 0,
+          "signatures": [
+            {
+              "block_id_flag": 2,
+              "signature": "iV3BM8DBOI6K4/YOD9KyI9feTSRYqK01SCd4uE6Y1aRz9fohuCjsqsIXFN6zS/qZ9QivjksSvhFagPkW+GH/DA==",
+              "timestamp": "1970-01-12T13:46:41Z",
+              "validator_address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "aVPADdFrlcdDB3DaezFROGwHFBMtKiw4S2/goC4lunxvh98TDvtHOF2hgZS4Kfqi551ITHO8S4jj84S/Uqk/Cg==",
+              "timestamp": "1970-01-12T13:46:41Z",
+              "validator_address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "VH1hGjx7/EuVpxMiVzwC58YJkghkIKbQ5m+UeqHhq4qcAv4EFUoUDru6HbKldlqGH62Q5ODXXhjWoY+wA0GFCg==",
+              "timestamp": "1970-01-12T13:46:41Z",
+              "validator_address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "mlUp14xKMh5WySSuTpDCEBLTs4KYAz46ncopo6M8l17PC0g8H4Jw9ueFiQNiqqyZSjEF8cl95qxtqTgiDGdQAw==",
+              "timestamp": "1970-01-12T13:46:41Z",
+              "validator_address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B"
+            }
+          ]
+        },
+        "header": {
+          "app_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "chain_id": "time-devnet-v4-fixture",
+          "consensus_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+          "data_hash": "",
+          "evidence_hash": "",
+          "height": "1",
+          "last_block_id": null,
+          "last_commit_hash": "",
+          "last_results_hash": "",
+          "next_validators_hash": "988CDEA842AB3B9F582749DC389C3297C61D8A00FC3C6EE77075DE178C83225E",
+          "proposer_address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+          "time": "1970-01-12T13:46:41Z",
+          "validators_hash": "988CDEA842AB3B9F582749DC389C3297C61D8A00FC3C6EE77075DE178C83225E",
+          "version": {
+            "app": "4",
+            "block": "11"
+          }
+        }
+      },
+      "validators": [
+        {
+          "address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
+          }
+        },
+        {
+          "address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q="
+          }
+        },
+        {
+          "address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E="
+          }
+        },
+        {
+          "address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "ypOsFwUYcHHWe4PH/w7+gQjo7EUwV113JoeTM9vavnw="
+          }
+        }
+      ]
+    },
+    {
+      "next_validators": [
+        {
+          "address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o="
+          }
+        },
+        {
+          "address": "72456720412037A6B339F884CE6D91BB4CC163A7",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iodf/x6zhFFXes1a/uQFRWVo3XyJ4JCGOgVXvHr0nxc="
+          }
+        },
+        {
+          "address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "bnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E="
+          }
+        },
+        {
+          "address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+          }
+        }
+      ],
+      "signed_header": {
+        "commit": {
+          "block_id": {
+            "hash": "9D46C4A856A3387A67E00C1B710A135880212205B8697C0E77F8753D7FF24C19",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "height": "2",
+          "round": 0,
+          "signatures": [
+            {
+              "block_id_flag": 2,
+              "signature": "6bvNX1dMqFjSNXiMCDMhdr6o+16R6T1EAHPYW1DJBaISEJ0SP4/TWnRtyCwl9s7hoXpbzcLWLu2DdJ8/YmS0Cw==",
+              "timestamp": "1970-01-12T13:46:42Z",
+              "validator_address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "XowoILX4vh3A9Z/2tG+Ja4f/JxnbAoOGQl0TXOm8QZpks2tnvil72I8HVBDH13arL2UyBpjtAougi5T3j/tdDg==",
+              "timestamp": "1970-01-12T13:46:42Z",
+              "validator_address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "kHpmosZFSfosphAx3CgoznmDM/y4KyiDwX/umuw5h9uc8TVEiAVMyEA5i5HJ5vmpN2yYj5zrtrUmlYJMPDwpAg==",
+              "timestamp": "1970-01-12T13:46:42Z",
+              "validator_address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "qWzpCzN921ZrpOa2gHcC2EYiCQ865dFgga0ZmeCtOQ8PDiZ1qbrMVMQ7XmNElMtLO/IOy9Wz+1GXPszZbtgpDA==",
+              "timestamp": "1970-01-12T13:46:42Z",
+              "validator_address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B"
+            }
+          ]
+        },
+        "header": {
+          "app_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "chain_id": "time-devnet-v4-fixture",
+          "consensus_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+          "data_hash": "",
+          "evidence_hash": "",
+          "height": "2",
+          "last_block_id": {
+            "hash": "AA8CD246D34F181BA8D7027F162590D0257B22A747E38D91026D447BB33EFF1D",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "last_commit_hash": "",
+          "last_results_hash": "",
+          "next_validators_hash": "8F52DCCFFA137ED7288215C226E41D246664AFC43414ABF625EA3E81B4B56BC0",
+          "proposer_address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+          "time": "1970-01-12T13:46:42Z",
+          "validators_hash": "988CDEA842AB3B9F582749DC389C3297C61D8A00FC3C6EE77075DE178C83225E",
+          "version": {
+            "app": "4",
+            "block": "11"
+          }
+        }
+      },
+      "validators": [
+        {
+          "address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
+          }
+        },
+        {
+          "address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q="
+          }
+        },
+        {
+          "address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E="
+          }
+        },
+        {
+          "address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "ypOsFwUYcHHWe4PH/w7+gQjo7EUwV113JoeTM9vavnw="
+          }
+        }
+      ]
+    },
+    {
+      "next_validators": [
+        {
+          "address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o="
+          }
+        },
+        {
+          "address": "72456720412037A6B339F884CE6D91BB4CC163A7",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iodf/x6zhFFXes1a/uQFRWVo3XyJ4JCGOgVXvHr0nxc="
+          }
+        },
+        {
+          "address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "bnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E="
+          }
+        },
+        {
+          "address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+          }
+        }
+      ],
+      "signed_header": {
+        "commit": {
+          "block_id": {
+            "hash": "AE4F1937FF98A6394B09399E520AD313200B08241EF369D24303ED46C57640ED",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "height": "3",
+          "round": 0,
+          "signatures": [
+            {
+              "block_id_flag": 2,
+              "signature": "lEvYz3OtQtr/4WdHwG+1Uv3snv8VQezgCJfztjbN8LWMgyatqhkTFh3pE6szLxaUhq24X2SBPVd1IMFiOmgfDQ==",
+              "timestamp": "1970-01-12T13:46:43Z",
+              "validator_address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "ofdOeqvf/kUKAwfdLH306sd2snkYzPpa8UCXw7208G604WyzoJBMliNPCGGHahOOKr4eNASijpMuWnIzdR4dCg==",
+              "timestamp": "1970-01-12T13:46:43Z",
+              "validator_address": "72456720412037A6B339F884CE6D91BB4CC163A7"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "IAAznkjBn38EhsL3re024iIYvC695DcPRM+GesoCMt9lKo8zhRheM4fXkQcWG3Bcij/zHMqTeMHKB/qKO3XhBQ==",
+              "timestamp": "1970-01-12T13:46:43Z",
+              "validator_address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "MXtWVaqwHRHavOIZtkajtwiCiNof/Uogcsy009vCSlBysdkIQ+jifLlEu3PbrkYeb/pZ+LqvQxT62N3L3VZhAA==",
+              "timestamp": "1970-01-12T13:46:43Z",
+              "validator_address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF"
+            }
+          ]
+        },
+        "header": {
+          "app_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "chain_id": "time-devnet-v4-fixture",
+          "consensus_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+          "data_hash": "",
+          "evidence_hash": "",
+          "height": "3",
+          "last_block_id": {
+            "hash": "9D46C4A856A3387A67E00C1B710A135880212205B8697C0E77F8753D7FF24C19",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "last_commit_hash": "",
+          "last_results_hash": "",
+          "next_validators_hash": "8F52DCCFFA137ED7288215C226E41D246664AFC43414ABF625EA3E81B4B56BC0",
+          "proposer_address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "time": "1970-01-12T13:46:43Z",
+          "validators_hash": "8F52DCCFFA137ED7288215C226E41D246664AFC43414ABF625EA3E81B4B56BC0",
+          "version": {
+            "app": "4",
+            "block": "11"
+          }
+        }
+      },
+      "validators": [
+        {
+          "address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o="
+          }
+        },
+        {
+          "address": "72456720412037A6B339F884CE6D91BB4CC163A7",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iodf/x6zhFFXes1a/uQFRWVo3XyJ4JCGOgVXvHr0nxc="
+          }
+        },
+        {
+          "address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "bnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E="
+          }
+        },
+        {
+          "address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+          }
+        }
+      ]
+    }
+  ],
+  "external_checkpoint": {
+    "block": {
+      "next_validators": [
+        {
+          "address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o="
+          }
+        },
+        {
+          "address": "72456720412037A6B339F884CE6D91BB4CC163A7",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iodf/x6zhFFXes1a/uQFRWVo3XyJ4JCGOgVXvHr0nxc="
+          }
+        },
+        {
+          "address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "bnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E="
+          }
+        },
+        {
+          "address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+          }
+        }
+      ],
+      "signed_header": {
+        "commit": {
+          "block_id": {
+            "hash": "833EC0366AC3C5C0B78925FC34E09586FC837505040C96C476AC745DD0951140",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "height": "4",
+          "round": 0,
+          "signatures": [
+            {
+              "block_id_flag": 2,
+              "signature": "Q24z8phYVCRdymX3beaPDcPzr45+Ns5AlHfNy0WmW0F6Rbmx3D9WRHUx3D4CtbSJVesuDCVlNN3/Zkjqe/NwCg==",
+              "timestamp": "1970-01-19T13:48:20Z",
+              "validator_address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "DA7/OcYeMPFufH3rlRgQKMSmMKAAGVdeFWsjVngNSH1lNo/sTBtqy+/sLB5wyUtCyOQqQIOsGteqMzazLfCRCg==",
+              "timestamp": "1970-01-19T13:48:20Z",
+              "validator_address": "72456720412037A6B339F884CE6D91BB4CC163A7"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "owgSzpPdpOZEiVOYYAo9DCwn4ocIvb42WPoEMBV6SBt/saEoHX/4iZXG8eMLKirqEUx7X2EVtK76qDiSl90pDQ==",
+              "timestamp": "1970-01-19T13:48:20Z",
+              "validator_address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6"
+            },
+            {
+              "block_id_flag": 2,
+              "signature": "FRrYBSwVIRdec6I8A0KRPSIVwToizrYsRQNqXm8Kx2WvRVV7pAFqV921MMp3s9fx+o6gvgqZ+0yaNMp2j09aAg==",
+              "timestamp": "1970-01-19T13:48:20Z",
+              "validator_address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF"
+            }
+          ]
+        },
+        "header": {
+          "app_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "chain_id": "time-devnet-v4-fixture",
+          "consensus_hash": "0404040404040404040404040404040404040404040404040404040404040404",
+          "data_hash": "",
+          "evidence_hash": "",
+          "height": "4",
+          "last_block_id": {
+            "hash": "AE4F1937FF98A6394B09399E520AD313200B08241EF369D24303ED46C57640ED",
+            "parts": {
+              "hash": "0909090909090909090909090909090909090909090909090909090909090909",
+              "total": 1
+            }
+          },
+          "last_commit_hash": "",
+          "last_results_hash": "",
+          "next_validators_hash": "8F52DCCFFA137ED7288215C226E41D246664AFC43414ABF625EA3E81B4B56BC0",
+          "proposer_address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "time": "1970-01-19T13:48:20Z",
+          "validators_hash": "8F52DCCFFA137ED7288215C226E41D246664AFC43414ABF625EA3E81B4B56BC0",
+          "version": {
+            "app": "4",
+            "block": "11"
+          }
+        }
+      },
+      "validators": [
+        {
+          "address": "5C29B78F10A35A49A6231D08EE840A04BCC3A37A",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "E5j2LG0aRXxRumpLXz29L2n8qTIWIY3ImX5Ba9F9k8o="
+          }
+        },
+        {
+          "address": "72456720412037A6B339F884CE6D91BB4CC163A7",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "iodf/x6zhFFXes1a/uQFRWVo3XyJ4JCGOgVXvHr0nxc="
+          }
+        },
+        {
+          "address": "7599776C3085E3F9DA0D13071EB0B4AB50FD2BF6",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "bnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E="
+          }
+        },
+        {
+          "address": "FE812C12F3AB4CE6AC5DB69AC352F906CB1B11EF",
+          "name": null,
+          "power": "10",
+          "pub_key": {
+            "type": "tendermint/PubKeyEd25519",
+            "value": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+          }
+        }
+      ]
+    },
+    "block_hash": "833ec0366ac3c5c0b78925fc34e09586fc837505040c96c476ac745dd0951140",
+    "height": "4",
+    "time_micros": "1604900000000"
+  },
+  "now_ms": 1000100000,
+  "refresh_now_ms": 1604901000,
+  "trust": {
+    "app_version": "4",
+    "chain_id": "time-devnet-v4-fixture",
+    "checkpoint": null,
+    "genesis_time_micros": "1000001000000",
+    "initial_validators": [
+      {
+        "address": "34750F98BD59FCFC946DA45AAABE933BE154A4B5",
+        "name": null,
+        "power": "10",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
+        }
+      },
+      {
+        "address": "6A3803D5F059902A1C6DAFBC9BA4729212F7CAAC",
+        "name": null,
+        "power": "10",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q="
+        }
+      },
+      {
+        "address": "B62E867FA2F33AFE62D5D6B1642E1621D5433078",
+        "name": null,
+        "power": "10",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E="
+        }
+      },
+      {
+        "address": "C5B940ED3F65C391965DE8295FC5D25F474FA57B",
+        "name": null,
+        "power": "10",
+        "pub_key": {
+          "type": "tendermint/PubKeyEd25519",
+          "value": "ypOsFwUYcHHWe4PH/w7+gQjo7EUwV113JoeTM9vavnw="
+        }
+      }
+    ],
+    "network_id": "abababababababababababababababababababababababababababababababab",
+    "trusting_period_seconds": "604800",
+    "unbonding_period_seconds": "1209600"
+  }
+}

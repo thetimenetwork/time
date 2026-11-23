@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <!-- The one setting of this page: the origin of the API it reads, such as https://api.example.
+       Empty: the origin this page is served from (the API serving its own explorer). -->
+  <meta name="time-api-origin" content="">
+  <title>Time explorer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="sdk/time-sdk.js"></script>
+  <script type="module" src="app.js"></script>
+  <script type="module" src="web-v4/shared/network-menu.js"></script>
+</head>
+<body>
+  <a id="skip-link" class="skip" href="#view">Skip to the content</a>
+  <p id="network-warning" class="warning-strip">Development network. Nothing shown here is money or has any value.</p>
+  <header class="top">
+    <div class="top-row">
+      <a class="brand" href="#/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg><span id="brand">Time explorer</span></a>
+      <span id="network-name" class="network-name"></span>
+      <span data-network-menu data-app="explorer" data-inline></span>
+      <nav class="top-nav" aria-label="Sections">
+        <a id="nav-home" href="#/">Home</a>
+        <a id="nav-validators" href="#/validators">Validators</a>
+      </nav>
+    </div>
+    <form id="search-form" class="search" role="search" autocomplete="off">
+      <label id="search-label" for="search-input">Block height, action hash, account number or account name</label>
+      <div class="search-row">
+        <div class="search-field">
+          <svg class="search-sign" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15.6 15.6 20 20M17 10.5a6.5 6.5 0 1 1-13 0a6.5 6.5 0 1 1 13 0Z"/></svg>
+          <input id="search-input" name="q" type="text" inputmode="text" maxlength="80" spellcheck="false" autocapitalize="none" autocorrect="off" aria-describedby="search-error">
+        </div>
+        <button id="search-button" type="submit">Look up</button>
+      </div>
+      <p id="search-error" class="search-error" role="alert" hidden></p>
+    </form>
+    <div class="switches">
+      <button id="toggle-exact" type="button" class="quiet" aria-pressed="false">Exact microseconds</button>
+      <button id="toggle-utc" type="button" class="quiet" aria-pressed="false">Times in UTC</button>
+    </div>
+    <div id="index-note" class="index-note" role="status" hidden></div>
+  </header>
+  <main id="view" tabindex="-1">
+    <p id="boot-note" class="state loading">The explorer is loading. If this text stays, the scripts of the page could not be loaded (the site may be limiting requests): load the page again in a minute.</p>
+    <noscript><p class="state failed">This page needs JavaScript: it reads the network through its public API and checks proofs in your browser.</p></noscript>
+  </main>
+  <footer class="bottom">
+    <section class="part">
+      <h2 id="legend-title">How to read this page</h2>
+      <ul class="legend">
+        <li id="legend-index">From the index: the service's own record of the chain. This page has not checked it, and says so before each list or group of such figures.</li>
+        <li id="legend-checked">Checked in your browser: verified here against validator signatures, starting from the block this page trusts (see "What this page trusts" for where that block comes from).</li>
+        <li id="legend-unchecked">Marked "Not checked, the service's word": what the service says about accounts, validators or the fee, where this page had nothing to check it with. Do not take such a figure for a checked one.</li>
+        <li id="legend-quoted">Text in a dotted box was written by someone on the network or by the service, not by this page.</li>
+      </ul>
+    </section>
+    <section class="part">
+      <h2 id="trust-title">What this page trusts</h2>
+      <div id="trust-body"></div>
+    </section>
+  </footer>
+</body>
+</html>

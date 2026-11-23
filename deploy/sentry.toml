@@ -1,0 +1,20 @@
+# Overlay these values onto a separate CometBFT sentry's generated default config.
+# Its genesis must exactly match the validator genesis. Never copy validator keys.
+# Sentries run on separate hosts with P2P TCP 26656 exposed; RPC/ABCI stay private.
+# Fill persistent_peers with independently verified validator P2P node IDs.
+[rpc]
+laddr = "tcp://127.0.0.1:26657"
+unsafe = false
+cors_allowed_origins = []
+[p2p]
+laddr = "tcp://0.0.0.0:26656"
+pex = true
+addr_book_strict = true
+allow_duplicate_ip = false
+private_peer_ids = "REPLACE_WITH_VALIDATOR_NODE_ID"
+unconditional_peer_ids = "REPLACE_WITH_VALIDATOR_NODE_ID"
+seeds = ""
+seed_mode = false
+[instrumentation]
+prometheus = true
+prometheus_listen_addr = "127.0.0.1:26660"

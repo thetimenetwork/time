@@ -1,0 +1,12 @@
+{
+  "release_manifest": "/operator/release.json",
+  "release_id": "REPLACE_WITH_PINNED_RELEASE_ID",
+  "genesis_file": "/operator/genesis.json",
+  "genesis_sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_GENESIS_SHA256",
+  "chain_id": "time-devnet-v4-REPLACE",
+  "validator_public_key_hex": "REPLACE_WITH_PUBLIC_OPERATOR_KEY",
+  "signer_identity": "REPLACE_WITH_EXTERNAL_SIGNER_IDENTITY",
+  "signer_lease_file": "/operator/signer-lease.json",
+  "trust_file": "/operator/trust.json",
+  "sentry_peers": []
+}

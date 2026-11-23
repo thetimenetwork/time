@@ -1,0 +1,2629 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Time network API",
+    "version": "1.2.0",
+    "description": "Look up blocks, actions and accounts of a Time network, detect deposits, submit signed actions and follow new blocks and payments.\n\nAmounts are decimal strings of microseconds. Heights, nonces and account numbers are decimal strings too.\n\nAnswers marked `\"source\": \"index\", \"proven\": false` come from this server's index: a convenience, not a proof. Each carries what is needed to verify it with the SDK and your own trust anchor. Account state is marked `\"source\": \"state_proof\"` and carries the proof this server checked.\n\nUnknown or repeated query parameters are refused with 400, so a misspelled filter never returns an unfiltered list. The address of a request is a plain path with an optional query: a fragment, another host, dot segments or backslashes are refused with 400.\n\nAnswers that do not depend on the route (an unknown route, another method, a refused origin) are listed under `x-any-request`."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8930",
+      "description": "The default listening address"
+    }
+  ],
+  "x-any-request": {
+    "description": "What a request can be answered with before any route is reached. 403, 414, 421 and 429 are also listed with every route.",
+    "responses": {
+      "400": {
+        "description": "The address is not a plain path with an optional query (`invalid_url`)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "403": {
+        "$ref": "#/components/responses/Error403"
+      },
+      "404": {
+        "description": "No such route (`unknown_route`)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "405": {
+        "description": "The route exists but does not take this method (`method_not_allowed`); the Allow header names the ones it takes",
+        "headers": {
+          "Allow": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "414": {
+        "$ref": "#/components/responses/Error414"
+      },
+      "421": {
+        "$ref": "#/components/responses/Error421"
+      },
+      "429": {
+        "$ref": "#/components/responses/Error429"
+      },
+      "431": {
+        "description": "The request headers are too large; the answer has no body"
+      }
+    }
+  },
+  "paths": {
+    "/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Network and indexer status",
+        "responses": {
+          "200": {
+            "description": "The network this server follows and how far its index is",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health, for monitoring",
+        "description": "200 while the index keeps up; 503 with reasons when it is behind, failing or stopped. Counts only.",
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "description": "Not healthy: see `reasons`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "summary": "This description",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI description of this API",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/blocks": {
+      "get": {
+        "operationId": "listBlocks",
+        "summary": "Recent blocks",
+        "description": "Newest first by default. The cursor of this list is a height.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "A height: blocks below it (order desc) or above it (order asc). A height more than one below the start height of this index is refused with 409 `cursor_below_index_start`.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,15}$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of blocks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given, so a poller keeps its place."
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Block"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "description": "How to verify the answer with the SDK and your own trust anchor",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/CursorBelowStart"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/blocks/{height}": {
+      "get": {
+        "operationId": "getBlock",
+        "summary": "A block by height",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/height"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "block": {
+                          "$ref": "#/components/schemas/Block"
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "height": {
+                              "type": "string"
+                            },
+                            "block_hash": {
+                              "type": "string"
+                            },
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotInIndex"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/blocks/{height}/actions": {
+      "get": {
+        "operationId": "listBlockActions",
+        "summary": "The actions of a block, in block order",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/height"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of actions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given, so a poller keeps its place."
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Action"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "description": "How to verify the answer with the SDK and your own trust anchor",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotInIndex"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/blocks/{height}/proof": {
+      "get": {
+        "operationId": "getBlockProof",
+        "summary": "What proves a block and its actions, however old",
+        "description": "The state of the network keeps a history of the hashes of its blocks. This reads the rows for this block and the next one with a proof against validator signatures, checks it, and passes it on with the two signed headers of the node. Together with the Merkle proof of `GET /v1/actions/{hash}` that is the receipt `verifyReceipt` of the installed verifier takes: an action of this block can be checked by anyone, against their own trust anchor. The age of a block is no obstacle: its history proof stays when the state drops the block's own rows after fourteen days. Two kinds of block are not provable here. The newest two, which the state does not reach yet: 404 `not_in_history` with a proof of the plain state, whose height shows how far the history reaches; a reader then follows the block by its own signed header (`GET /v1/light-blocks/{height}` and `verifyFastReceipt`), or asks again after two more blocks. And, when the service's node joined the network from a snapshot, blocks at or below the height it was restored at, for which it holds no history: 404 `history_not_held`. Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/height"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockProof"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "`not_in_history`: the state does not reach this block and the next one yet; the proof passed on is that of the plain state (`proof.query` names no block) and shows its height. `history_not_held`: the node of this service holds no history for the block (it joined from a snapshot of a later height); no proof. `not_found`: the node does not have the two signed headers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/StateNotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/light-blocks/{height}": {
+      "get": {
+        "operationId": "getLightBlock",
+        "summary": "A block as a light client takes it",
+        "description": "The signed header of a block with its validator set and the next one, as the node gives them. Nothing of it is checked here and none of it is this server's word: it is what a light client with its own trust anchor verifies, also when it has to step through older blocks. Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/height"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The light block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LightBlock"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "The node does not have this block",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/validators": {
+      "get": {
+        "operationId": "getValidators",
+        "summary": "Who validates now, and a scheduled upgrade",
+        "description": "The staking row of the current state, read with a proof against validator signatures and passed on with that proof: the validators in force with their voting power, and the sets already announced. `upgrade` is in the answer only when the state was asked about its upgrade row. Identical requests within a second share one read of the state. Costs 5 from the rate-limit budget.",
+        "responses": {
+          "200": {
+            "description": "The validators",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Validators"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/actions/{hash}": {
+      "get": {
+        "operationId": "getAction",
+        "summary": "An action by its hash",
+        "description": "The hash is the SHA-256 of the signed bytes, as the SDK computes it (`TimeSDK.transactionHash`). The answer holds the decoded action, its bytes (once, as `action.raw`) and the Merkle proof that ties them to the block header. Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/hash"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "action": {
+                          "$ref": "#/components/schemas/ActionDetail"
+                        },
+                        "verify": {
+                          "$ref": "#/components/schemas/ActionProof"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotInIndex"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account}": {
+      "get": {
+        "operationId": "getAccount",
+        "summary": "An account by number or name",
+        "description": "The current state is read with a proof against validator signatures and passed on with that proof. Totals come from the index. `state_height` and `indexed_height` stand side by side: the state can be ahead of the index. To conclude that an action is not on the chain, do not combine these two with a 404 received earlier: use the `index.indexed_height` of that 404 itself, or look the hash up after reading the account. And an index says nothing about heights below its start (`index.start_height`). `indexed.state_is_behind` tells when the index already holds an action the account sent in a block above `state_height`, which the proven state does not count: the proven nonce may then be used, and the proof is asked for again. A signer keeps its own count of the nonces it has signed (docs/integration-guide.md, step 3): neither the proof nor the index shows an action that waits for a block. Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "name": "account",
+            "in": "path",
+            "required": true,
+            "description": "The account number, or its name (digits alone are a number; a leading @ forces a name)",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19}|@?[a-z0-9_]{2,15})$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "No such account: the proof shows its absence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountNotFound"
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{id}/state": {
+      "get": {
+        "operationId": "getAccountState",
+        "summary": "An account with its security settings and stake",
+        "description": "One proof for the account row, its security row (or the proof that it has none), the recoveries under way, its stake and the validator it runs, with the clock the moments of the security row are on (`security_clock`): on a network whose waits survive a stop, compare them with `security_clock.now_elapsed_micros`, not with the time of the state. `GET /v1/accounts/{account}` gives the account row alone, also by name, with the indexed totals. Identical requests within a second share one read of the state. Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountState"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "No such account: the proof shows its absence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateNotFound"
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{id}/activity": {
+      "get": {
+        "operationId": "listAccountActivity",
+        "summary": "What an account sent and received",
+        "description": "Actions the account signed (`role` sender), payments it received (`recipient`), and requests for a payment above the daily limit that name it (`pending`: nothing has moved; `request_status` says how the request ended as far as the index knows, and anyone can make such a request for one fee). Newest first by default.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "account": {
+                          "type": "string"
+                        },
+                        "order": {
+                          "type": "string"
+                        },
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given, so a poller keeps its place."
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Action"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "description": "How to verify the answer with the SDK and your own trust anchor",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/CursorBelowStart"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{id}/payments": {
+      "get": {
+        "operationId": "listAccountPayments",
+        "summary": "Payments to an account (deposit detection)",
+        "description": "Payments that moved time to this account when they were included: transfers (kind 3), payments to shops (kind 10, with a reference), payments approved by several keys (kind 73) and completed payments above the daily limit (kind 75) that the index could tie to their request. Oldest first by default, so a poller keeps `next_cursor` and asks again.\n\nA reference does not name its payer: any account whose next nonce matches can pay with it, so more than one payment can carry the same reference. Filter by `from` as well, and credit each hash once.\n\nThe list begins at the start height of this index (`index.start_height`) and only grows at its end, so a reader that keeps `next_cursor` misses nothing this index holds. It does miss what lies below the start: a cursor from an index that started earlier is refused (409 `cursor_below_index_start`) and never answered from a later height without a word.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          },
+          {
+            "name": "reference",
+            "in": "query",
+            "description": "Only payments with this reference",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Only payments from this account number",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of payments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromIndex"
+                    },
+                    {
+                      "type": "object",
+                      "required": [],
+                      "properties": {
+                        "account": {
+                          "type": "string"
+                        },
+                        "order": {
+                          "type": "string"
+                        },
+                        "filters": {
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "from": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          }
+                        },
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given, so a poller keeps its place."
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Action"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "description": "How to verify the answer with the SDK and your own trust anchor",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/CursorBelowStart"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          }
+        }
+      }
+    },
+    "/v1/transactions": {
+      "post": {
+        "operationId": "submitTransaction",
+        "summary": "Submit a signed action",
+        "description": "Checks the signature and passes the bytes to the node. Nothing is signed here. 202 means the node took it into its waiting list, not that it is in a block.\n\nBefore the node is asked, and again whenever it did not take the bytes, the index is asked two things. Are these bytes in a block already? Then the answer is 200 `already_included`. Is another action of this account with the same nonce in a block? Then the answer is 409 `nonce_used` with that action: the same payment signed a second time has another hash, and the node would only say \"incorrect nonce\". Both look no further than the index has reached.\n\nThe signature check proves that the key named in the action signed these bytes, not that the key is one of the account's: that is the node's check. The unsigned relay of bitcoin headers (kind 40) is taken in its one form only, and the kinds of the bitcoin auction (40 to 42, 60 to 62) are refused with 400 `not_on_this_network` on a network whose proven configuration has no auction. Costs 10 from the rate-limit budget.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tx"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "tx": {
+                    "type": "string",
+                    "description": "The signed action, base64",
+                    "maxLength": 700000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "These bytes are in an indexed block already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "hash",
+                    "status",
+                    "height"
+                  ],
+                  "properties": {
+                    "hash": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "already_included"
+                      ]
+                    },
+                    "height": {
+                      "type": "string"
+                    },
+                    "index": {
+                      "type": "integer"
+                    },
+                    "results_checked": {
+                      "type": "boolean"
+                    },
+                    "kind": {
+                      "type": "integer"
+                    },
+                    "sender": {
+                      "type": "string"
+                    },
+                    "nonce": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "hash",
+                    "status"
+                  ],
+                  "properties": {
+                    "hash": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "submitted"
+                      ]
+                    },
+                    "kind": {
+                      "type": "integer"
+                    },
+                    "sender": {
+                      "type": "string"
+                    },
+                    "nonce": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/NotTaken409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "422": {
+            "$ref": "#/components/responses/NotTaken422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "502": {
+            "$ref": "#/components/responses/NotTaken502"
+          }
+        }
+      }
+    },
+    "/v1/stream": {
+      "get": {
+        "operationId": "stream",
+        "summary": "Server-sent events: new blocks and payments",
+        "description": "Events, each with JSON in `data` (shapes under `x-events`): `hello` (once), `payment` (id \"<height>.<index>\"), `block` (id \"<height>\", after the payments of that block), `gap` (the heights it names are not sent: too much was missed to send again, or the reader resumes below the start height of this index, which does not hold them; read the lists, from an index that has those heights), `bye` (the server ends the stream: reconnect).\n\nWith `account`, only payments to that account are sent (`direction=in`, the default), or from it (`out`), or both. Blocks are always sent.\n\nReconnect with the Last-Event-ID header or `after` to receive what was missed, up to 256 blocks and 2,000 payments. A stream is ended after a time (15 minutes by default) and when its place is needed; the reader reconnects and loses nothing. Places are counted per IPv4 address or IPv6 /56. When all are taken, a holder with more streams than the one asking gives up its oldest; a stream is not put out in its first seconds, and one that follows an account goes last and never for one that follows none. Only addresses the operator has reserved are never put out. Costs 10 from the rate-limit budget.",
+        "parameters": [
+          {
+            "name": "account",
+            "in": "query",
+            "description": "Only payments of this account number (blocks are always sent)",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "With `account`: payments to it (in, the default), from it (out), or both",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "in",
+                "out",
+                "both"
+              ]
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The id of the last event received",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,15}(\\.(0|[1-9][0-9]{0,5}))?$"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "The id of the last event received, as browsers send it when they reconnect; `after` takes precedence",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,15}(\\.(0|[1-9][0-9]{0,5}))?$"
+            }
+          }
+        ],
+        "x-events": {
+          "hello": {
+            "$ref": "#/components/schemas/HelloEvent"
+          },
+          "payment": {
+            "$ref": "#/components/schemas/PaymentEvent"
+          },
+          "block": {
+            "$ref": "#/components/schemas/BlockEvent"
+          },
+          "gap": {
+            "$ref": "#/components/schemas/GapEvent"
+          },
+          "bye": {
+            "$ref": "#/components/schemas/ByeEvent"
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An event stream; the data of each event is described under `x-events`",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "height": {
+        "name": "height",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,15}$"
+        }
+      },
+      "hash": {
+        "name": "hash",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9A-Fa-f]{64}$"
+        }
+      },
+      "id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "An account number",
+        "schema": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$"
+        }
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Page size, 1 to 200 (default 50)",
+        "schema": {
+          "type": "string",
+          "pattern": "^([1-9][0-9]?|1[0-9]{2}|200)$"
+        }
+      },
+      "cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "A `next_cursor` of an earlier answer (\"<height>.<index>\"). A cursor below the start height of this index is refused with 409 `cursor_below_index_start`: it comes from an index that started earlier, and what lies in between is not here.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,15}\\.(0|[1-9][0-9]{0,5})$"
+        }
+      },
+      "order": {
+        "name": "order",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        }
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "A parameter, the address or the body is not in its accepted form",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "The request carries an Origin that is not configured (`origin_not_allowed`)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error413": {
+        "description": "The body is too large",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error414": {
+        "description": "The address is too long",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error415": {
+        "description": "The body is not JSON",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error421": {
+        "description": "The Host header names a host this server does not answer under (`unknown_host`)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error429": {
+        "description": "Too many requests from this address; see Retry-After",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error503": {
+        "description": "Not available now; see Retry-After",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotInIndex": {
+        "description": "Not in the index; `index` says how far the index was",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotInIndex"
+            }
+          }
+        }
+      },
+      "NotTaken409": {
+        "description": "The node already has this action in its waiting list (`already_submitted`), or another action of this account that carries the same nonce is in a block already (`nonce_used`, with `used_by`: `same_content` is true when that action has the same kind and payload: the same payment under another signature, or another payment of the same amount to the same recipient. One hash is one payment: the sender's own records tell which. Verify `used_by.hash` before acting on either answer: it is the index's word)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotTaken"
+            }
+          }
+        }
+      },
+      "NotTaken422": {
+        "description": "The node refused the action (`rejected`). If these bytes were sent before, look the hash up before signing anything new",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotTaken"
+            }
+          }
+        }
+      },
+      "NotTaken502": {
+        "description": "The node did not take the action (`node_unavailable`), or answered for another one (`node_mismatch`)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotTaken"
+            }
+          }
+        }
+      },
+      "CursorBelowStart": {
+        "description": "The cursor names a height below the start of this index (`cursor_below_index_start`): the index was rebuilt with a later start height, or the cursor comes from another index. What the chain holds between the cursor and `index.start_height` is not in this index, and the list is not continued from its start without a word. Read those heights from an index that holds them, then go on here without a cursor.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NotInIndex"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable, for programs"
+          },
+          "message": {
+            "type": "string",
+            "description": "For people"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "NotInIndex": {
+        "type": "object",
+        "required": [
+          "error",
+          "index"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexNote"
+          }
+        }
+      },
+      "NotTaken": {
+        "type": "object",
+        "required": [
+          "error",
+          "hash"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "hash": {
+            "type": "string",
+            "description": "The hash of the submitted bytes"
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexNote"
+          },
+          "used_by": {
+            "$ref": "#/components/schemas/UsedBy"
+          }
+        }
+      },
+      "IndexNote": {
+        "type": "object",
+        "description": "How far the index was when it answered",
+        "properties": {
+          "network_id": {
+            "type": "string"
+          },
+          "chain_id": {
+            "type": "string"
+          },
+          "start_height": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indexed_block_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds_behind": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "FromIndex": {
+        "type": "object",
+        "required": [
+          "source",
+          "proven",
+          "index"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "index"
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexNote"
+          }
+        }
+      },
+      "Block": {
+        "type": "object",
+        "properties": {
+          "height": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "previous_hash": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "time_micros": {
+            "type": "string"
+          },
+          "proposer": {
+            "type": "string"
+          },
+          "app_hash": {
+            "type": "string"
+          },
+          "data_hash": {
+            "type": "string"
+          },
+          "tx_count": {
+            "type": "integer"
+          },
+          "payment_count": {
+            "type": "integer"
+          },
+          "results_checked": {
+            "type": "boolean",
+            "description": "True once the next verified header committed to a successful result for every action of the block"
+          }
+        }
+      },
+      "KindName": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "The name the service's SDK gives the kind (`TimeSDK.KINDS`); null for a kind it does not name, which is stored opaque. 45, `register_protected`, is a registration that creates its account with its keys in their roles and a daily limit (on a network whose genesis has `protected_registration`); like a reveal (2) it has no sender and pays nothing.",
+        "enum": [
+          "commit",
+          "reveal",
+          "transfer",
+          "bid",
+          "delegate",
+          "undelegate",
+          "withdraw",
+          "add_device",
+          "revoke_device",
+          "merchant_payment",
+          "set_recovery",
+          "consent_recovery",
+          "approve_recovery",
+          "cancel_recovery",
+          "finalize_recovery",
+          "cancel_pending",
+          "register_validator",
+          "self_bond",
+          "self_unbond",
+          "double_vote",
+          "withdraw_stake",
+          "retire_validator",
+          "bitcoin_headers",
+          "bitcoin_bid",
+          "claim_auction",
+          "sponsor_registration",
+          "register_protected",
+          "treasury_propose",
+          "treasury_activate",
+          "treasury_control",
+          "secure_account",
+          "signin_keys",
+          "freeze_account",
+          "root_operation",
+          "finalize_replacement",
+          "waiting_payment",
+          "cancel_waiting",
+          "daily_limit",
+          "upgrade_signal",
+          null
+        ]
+      },
+      "Action": {
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind_name": {
+            "$ref": "#/components/schemas/KindName"
+          },
+          "sender": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nonce": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Microseconds, decimal"
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transfers": {
+            "type": "boolean",
+            "description": "True when including the action moved `amount` to `recipient`"
+          },
+          "request_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a completed payment above the daily limit (kind 75 execute) that the index could tie to its request: the hash of that request"
+          },
+          "results_checked": {
+            "type": "boolean",
+            "description": "True once the next verified header committed to a successful result for every action of the block"
+          },
+          "opaque": {
+            "type": "boolean",
+            "description": "True for a kind the SDK does not decode: only the envelope is known"
+          },
+          "fee_rule": {
+            "type": "string",
+            "enum": [
+              "network_fee",
+              "none",
+              "at_most_network_fee",
+              "unknown"
+            ]
+          },
+          "fee_micros": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The fee paid, when the rule and the network fee determine it"
+          },
+          "unattributed": {
+            "type": "boolean",
+            "description": "True for a completed payment above the daily limit (kind 75 execute) that the index could not tie to its request: it moved a payment whose recipient and amount the index does not know"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "sender",
+              "recipient",
+              "pending"
+            ],
+            "description": "In an account's activity: what the account is to the action. `pending`: a request for a payment above the daily limit names the account; nothing has moved"
+          },
+          "request_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "waiting",
+              "completed",
+              "cancelled",
+              "dropped",
+              "ended",
+              "unknown",
+              null
+            ],
+            "description": "For a request for a payment above the daily limit (kind 75 request), how it ended as far as the index knows; null for every other action. waiting: nothing has ended it yet. completed, cancelled: by a later action of the sender. dropped: a freeze or a replacement of the sender's keys took it. ended: settled together with other requests, so that it is not known whether it was completed or cancelled. unknown: the index does not follow this sender. The one field of an indexed action that changes after the action is stored. A request costs its sender one fee and moves nothing: never credit one."
+          }
+        }
+      },
+      "ActionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Action"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "public_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "auth_epoch": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "payload": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "raw": {
+                "type": "string",
+                "description": "The signed bytes, base64"
+              },
+              "repeated": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "ActionProof": {
+        "type": "object",
+        "description": "The Merkle proof that `action.raw` is action `index` of the block, as the node's own lookup gives it. `how` says how to put it in the form the verifier takes.",
+        "properties": {
+          "how": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "type": "string"
+          },
+          "block_hash": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "string",
+            "description": "The number of actions in the block"
+          },
+          "root_hash": {
+            "type": "string",
+            "description": "The data hash of the block header, hex"
+          },
+          "leaf_hash": {
+            "type": "string",
+            "description": "base64"
+          },
+          "aunts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "base64"
+            }
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "required": [
+          "source",
+          "account",
+          "proof",
+          "indexed",
+          "state_height",
+          "indexed_height"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The height the index had reached when this account was answered. It says nothing about a lookup made earlier: to conclude that an action is not on the chain, use the index.indexed_height of that 404 itself (it must be at or above state_height), or look the hash up after reading the account."
+          },
+          "account": {
+            "type": "object",
+            "description": "The account row of the verified state: id, name, balance, nonce, auth_epoch, devices"
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          },
+          "indexed": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FromIndex"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "state_is_behind",
+                  "newer_actions",
+                  "last_sent",
+                  "totals"
+                ],
+                "properties": {
+                  "state_is_behind": {
+                    "type": "boolean",
+                    "description": "True when the index holds an action that this account sent in a block above `state_height`: the proven state does not count it. The proven nonce may then be used already: do not sign with it plus one; ask again (the proof follows the chain by one block). Every action the account sent counts, also one that carries no nonce (kinds 72, 73, 74 and 76). False says only that the index, up to `indexed_height`, holds no such action: an action that waits for a block, or one in a block the index has not reached, is in neither. This is the index's word, not part of the proof."
+                  },
+                  "newer_actions": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "description": "Those actions, oldest first. At most 16: when the account has more of them above `state_height`, the list holds the oldest 16, and `last_sent` is still the newest of all.",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "hash",
+                        "height",
+                        "nonce",
+                        "kind"
+                      ],
+                      "properties": {
+                        "hash": {
+                          "type": "string"
+                        },
+                        "height": {
+                          "type": "string"
+                        },
+                        "nonce": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "last_sent": {
+                    "description": "The newest action this account sent in a block above `state_height`, also when `newer_actions` does not reach it. When there is none: the action that carries the proven nonce (`account.nonce`). Null if the index holds neither: the account has sent nothing, that action is below the start height of the index or in a block the index has not reached yet (`indexed_height` is below `state_height`), or the nonce was used without an action that carries it (a replacement of the account's keys).",
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "hash",
+                          "height",
+                          "nonce",
+                          "kind"
+                        ],
+                        "properties": {
+                          "hash": {
+                            "type": "string"
+                          },
+                          "height": {
+                            "type": "string"
+                          },
+                          "nonce": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "totals": {
+                    "type": "object"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "AccountNotFound": {
+        "type": "object",
+        "required": [
+          "error",
+          "source",
+          "proof"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          }
+        }
+      },
+      "StateProof": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "object"
+          },
+          "view_proof": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "how": {
+            "type": "string"
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "api": {
+            "type": "string"
+          },
+          "service_started_at": {
+            "type": "string"
+          },
+          "network": {
+            "type": "object"
+          },
+          "indexer": {
+            "type": "object"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "notice": {
+            "type": "string"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "ok",
+          "reasons"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds_behind": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "blocks_behind_reported": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "headers_to_verify": {
+            "type": "integer"
+          },
+          "consecutive_failures": {
+            "type": "integer"
+          },
+          "last_error": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "fault": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "streams": {
+            "type": "integer"
+          },
+          "webhooks": {
+            "type": "object"
+          }
+        }
+      },
+      "HelloEvent": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "index"
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexNote"
+          },
+          "account": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaymentEvent": {
+        "type": "object",
+        "description": "One payment, on the stream and in a webhook: the fields of a list item under the same names",
+        "required": [
+          "id",
+          "type",
+          "hash",
+          "recipient",
+          "amount"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "\"payment:<hash>\": the same wherever and however often it is delivered"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "payment"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "index"
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind_name": {
+            "$ref": "#/components/schemas/KindName"
+          },
+          "sender": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nonce": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "amount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Microseconds, decimal"
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transfers": {
+            "type": "boolean",
+            "description": "True when including the action moved `amount` to `recipient`"
+          },
+          "request_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a completed payment above the daily limit (kind 75 execute) that the index could tie to its request: the hash of that request"
+          },
+          "results_checked": {
+            "type": "boolean",
+            "description": "True once the next verified header committed to a successful result for every action of the block"
+          }
+        }
+      },
+      "BlockEvent": {
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "index"
+                ]
+              },
+              "proven": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/Block"
+          }
+        ]
+      },
+      "GapEvent": {
+        "type": "object",
+        "properties": {
+          "from_height": {
+            "type": "string"
+          },
+          "to_height": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ByeEvent": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "lifetime",
+              "evicted"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "UsedBy": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Action"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "same_content": {
+                "type": "boolean",
+                "description": "True when the action that used the nonce has the same kind and payload as the submitted one. That is the same payment signed a second time (a second key, a signer asked twice), or another payment of the same amount to the same recipient: this answer cannot tell the two apart. One hash is one payment: if `used_by.hash` is already the hash of another payment in the sender's records, the submitted one is not made."
+              }
+            }
+          }
+        ]
+      },
+      "BlockProof": {
+        "type": "object",
+        "required": [
+          "source",
+          "proof",
+          "state_height",
+          "block",
+          "next_block",
+          "signed_header",
+          "next_signed_header"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          },
+          "block": {
+            "type": "object",
+            "required": [
+              "height",
+              "hash",
+              "time_micros"
+            ],
+            "properties": {
+              "height": {
+                "type": "string"
+              },
+              "hash": {
+                "type": "string",
+                "description": "From the proven history of the state"
+              },
+              "time_micros": {
+                "type": "string"
+              }
+            }
+          },
+          "next_block": {
+            "type": "object",
+            "required": [
+              "height",
+              "hash",
+              "time_micros"
+            ],
+            "properties": {
+              "height": {
+                "type": "string"
+              },
+              "hash": {
+                "type": "string",
+                "description": "From the proven history of the state"
+              },
+              "time_micros": {
+                "type": "string"
+              }
+            }
+          },
+          "signed_header": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The signed header of the block as the node gives it, unchecked: the verifier compares it with the proven hash"
+          },
+          "next_signed_header": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The signed header of the next block, unchecked in the same way: it commits to the results of this block"
+          },
+          "verify": {
+            "type": "object",
+            "properties": {
+              "how": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "StateNotFound": {
+        "type": "object",
+        "required": [
+          "error",
+          "source",
+          "proof"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          }
+        }
+      },
+      "LightBlock": {
+        "type": "object",
+        "required": [
+          "source",
+          "proven",
+          "height",
+          "light_block"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "node"
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "height": {
+            "type": "string"
+          },
+          "light_block": {
+            "type": "object",
+            "description": "signed_header, validators and next_validators of the block, as the node gives them: what a light client verifies",
+            "required": [
+              "signed_header",
+              "validators",
+              "next_validators"
+            ],
+            "properties": {
+              "signed_header": {
+                "type": "object"
+              },
+              "validators": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "next_validators": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "verify": {
+            "type": "object",
+            "properties": {
+              "how": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Validators": {
+        "type": "object",
+        "required": [
+          "source",
+          "proof",
+          "state_height",
+          "pos"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          },
+          "protocol_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pos": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The staking row of the verified state: `active` lists who validates now ({owner, consensus_key, power}), `scheduled` the sets already announced for coming blocks"
+          },
+          "upgrade": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The upgrade row of the verified state: a scheduled plan if there is one, null if the proof shows that the state holds none. Present only when the state was asked about the row, which the service does with every state read when its trust manifest says `nodes_report_upgrades: true` (the question in `proof.query` then has `include_upgrade`). When the field is absent the row was not read: that is not \"no plan\"."
+          }
+        }
+      },
+      "AccountState": {
+        "type": "object",
+        "required": [
+          "source",
+          "proof",
+          "state_height",
+          "account",
+          "security",
+          "recovery_cases",
+          "stake",
+          "validator",
+          "security_clock"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          },
+          "account": {
+            "type": "object",
+            "description": "The account row of the verified state: id, name, balance, nonce, auth_epoch, devices (its keys, each with can_manage and can_spend)"
+          },
+          "security": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The security row of an account that adopted the security rules: policy, frozen_until_elapsed_micros, pending_root, pending_payments, pending_limit. Null: the proof shows it has none"
+          },
+          "recovery_cases": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Recoveries by guardians that are under way for this account"
+          },
+          "stake": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "What the account has staked: positions ({candidate, shares}) and exits that are waiting"
+          },
+          "validator": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The validator the account runs, if it is one"
+          },
+          "genesis_time_micros": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start of the network: times in the security row count from it, on the clock `security_clock` gives"
+          },
+          "security_clock": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The clock the moments of `security` are on (`ready_elapsed_micros` of what waits, `expires_elapsed_micros` of a waiting replacement, `frozen_until_elapsed_micros`, `allowance_elapsed_micros`), from the same proof. `waits_survive_stops`: whether the network's genesis has that setting. `stopped_micros`: the total of the chain's stops so far, \"0\" without the setting. `now_elapsed_micros`: the clock at this state, the chain's time since genesis less that total. Compare the moments with it, never with the time of the state: after a stop of the chain they lie before that time and are still to come. A moment as a date is the moment plus `stopped_micros` plus `genesis_time_micros`; with the setting, that is the earliest it can come while it has not come, since a later stop moves it. What keys sign (the expiry of a freeze or of approvals) stays on the chain's time. Null when the state does not carry what the clock is read from.",
+            "required": [
+              "waits_survive_stops",
+              "stopped_micros",
+              "now_elapsed_micros"
+            ],
+            "properties": {
+              "waits_survive_stops": {
+                "type": "boolean"
+              },
+              "stopped_micros": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              },
+              "now_elapsed_micros": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

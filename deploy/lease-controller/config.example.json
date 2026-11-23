@@ -1,0 +1,23 @@
+{
+  "data_directory": "/var/lib/time-lease-controller",
+  "host": "127.0.0.1",
+  "port": 8960,
+  "authority_key_file": "/etc/time-lease-controller/authority.json",
+  "fence_domain": "REPLACE_WITH_A_NAME_FOR_THIS_CONTROLLERS_FENCE_TOKENS",
+  "network": {
+    "chain_id": "time-devnet-v4-REPLACE",
+    "genesis_sha256": "REPLACE_WITH_THE_GENESIS_SHA256_YOU_COMPUTED",
+    "engine": "REPLACE_WITH_v4_OR_v5"
+  },
+  "hosts": [
+    {
+      "id": "REPLACE_WITH_HOST_ID",
+      "public_key_hex": "REPLACE_WITH_THE_PUBLIC_KEY_THE_HOSTS_AGENT_PRINTED",
+      "signer_identity": "REPLACE_WITH_SIGNER_IDENTITY_OF_THAT_HOSTS_OPERATOR_SETTINGS",
+      "signer_fencing": "REPLACE_AFTER_READING_THE_README"
+    }
+  ],
+  "lease_seconds": 240,
+  "clock_skew_seconds": 10,
+  "stop_seconds": 40
+}

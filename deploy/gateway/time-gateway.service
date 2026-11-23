@@ -1,0 +1,27 @@
+[Unit]
+Description=Time v4 separate private HTTPS gateway upstreams
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=timegateway
+Group=timegateway
+WorkingDirectory=/opt/time-v4-gateway/gateway-context
+ExecStart=/usr/bin/node deploy/gateway/start.mjs /etc/time-v4/gateway.json
+StateDirectory=time-v4-gateway
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/time-v4-gateway
+Restart=no
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

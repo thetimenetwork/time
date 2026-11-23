@@ -1,0 +1,27 @@
+{
+  "rpc_url": "http://127.0.0.1:26657/",
+  "trust": {
+    "app_version": "4",
+    "network_id": "REPLACE_WITH_THE_NETWORK_ID_OF_THE_INDEPENDENTLY_VERIFIED_MANIFEST",
+    "chain_id": "time-devnet-v4-REPLACE",
+    "nodes_report_upgrades": true,
+    "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
+  },
+  "data_directory": "/var/lib/time-api",
+  "start_height": 1,
+  "host": "127.0.0.1",
+  "port": 8930,
+  "hosts": [],
+  "cors_origins": [],
+  "rate_limit": { "per_second": 20, "burst": 60 },
+  "trusted_proxies": [],
+  "webhooks": [
+    { "account": "5", "url": "https://hooks.example/time-deposits", "secret": "REPLACE_WITH_A_LONG_RANDOM_SECRET_PER_WEBHOOK" }
+  ],
+  "max_lag_seconds": 120,
+  "rpc_timeout_seconds": 10,
+  "max_streams": 100,
+  "max_stream_seconds": 900,
+  "reserved_stream_clients": [],
+  "serve_explorer": false
+}

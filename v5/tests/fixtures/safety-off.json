@@ -1,0 +1,650 @@
+{
+  "everything": {
+    "network_id": "67b661b5e02be39debb50f18491218da0fe203b74f9420e933f4f4e410a11321",
+    "blocks": [
+      {
+        "height": "1",
+        "kept": 0,
+        "root": "11da2cc3d30c2a40d18400d26f3d7490c9940b3d2002c103a3e6123d3f441939",
+        "meta_sha256": "58df24ed987fdd153a5ec05d19da117a847432b4c2c2c0e4f60a8abf7a8020ff"
+      },
+      {
+        "height": "2",
+        "kept": 0,
+        "root": "6043f641bd9a00de477764c0df2e6597b86c61ca6739ed7bd4645cf0e9587727",
+        "meta_sha256": "87a104bc9ce0eec88aeab5e43a1604efba67497c85d8a80e053f912738a03859"
+      },
+      {
+        "height": "3",
+        "kept": 0,
+        "root": "8ec4202911f2cbdbd1819c7f5778f881727946daf26dad6a7ac8194c9a550da1",
+        "meta_sha256": "dce1de08193af9a721dfa33384f5093b0664ae5b4d22b2e21b8f5de73eab720b"
+      },
+      {
+        "height": "4",
+        "kept": 0,
+        "root": "570cb33a46aa92bd71e98d4bd4a6f1657ee692d31811e7fae2852e6e6a09b76c",
+        "meta_sha256": "602a622533b9cc384698da291c93beeb94c6734a23eceac94f6649466a572a4d"
+      },
+      {
+        "height": "5",
+        "kept": 0,
+        "root": "da18401f0dfe0ce1a2104fec1d61ff5b1a8fd75ee140eb99cce10662e8a8c13b",
+        "meta_sha256": "f2670fccc7c4eae5e9bd04393ddae4b09d7352ee2b873182bede6cd3ca103da9"
+      },
+      {
+        "height": "6",
+        "kept": 0,
+        "root": "1bbb3f7a7b06bcf8ddcf57923e840f2dfbe5e8aae5e8c3e6daaa3cd1a6985ea0",
+        "meta_sha256": "072f5f671157d07dc54c2436a8a5fef3112e2474e488f209450d19698b7ff10f"
+      },
+      {
+        "height": "7",
+        "kept": 0,
+        "root": "df268e08baeb5c86cfe4e47793f08435f8afe220e5a90c07e41761dc6b7df2dd",
+        "meta_sha256": "d984e2f6ddb1b665cdcdab357b947b498627ae8875580566637597c5edd278c1"
+      },
+      {
+        "height": "8",
+        "kept": 0,
+        "root": "6143bf9ba5535a92c647f5ff98ffb92a8681b7ea943cd76791a8345cb3ac0df2",
+        "meta_sha256": "f06decfdc5f417a0c3b83001aa5c3fa034120f8a7d12614cf2c919f7642d03a6"
+      },
+      {
+        "height": "9",
+        "kept": 0,
+        "root": "fbf9b2951ec6a70a6573a35319b03dabdc877a052e17a5a9f4e1980e7afc879e",
+        "meta_sha256": "a007d248f38afe49032737fdd60033ac38142ae9b7abd4a9026a62b76b6ee9b5"
+      },
+      {
+        "height": "10",
+        "kept": 0,
+        "root": "d1147b6f91f43eb2530a693deb7af1f6e4736513521a5f7f33c0fc71c88cc7d5",
+        "meta_sha256": "efd87c96de8f6277befb7a7845e742818cb2b2e7c6685758e37e2ee285e8cb59"
+      },
+      {
+        "height": "11",
+        "kept": 0,
+        "root": "ac5a4fb6d621792db20882aa583d242d5dd78594124f46a4bc866d0a26a6fb9e",
+        "meta_sha256": "564a2f77c278a52283f902f8688cd8f15ff74faa8510e1040f51934f05977c28"
+      },
+      {
+        "height": "12",
+        "kept": 0,
+        "root": "a69db4158a7b0c22bbf592c4f9ed9e9ca9ba08aacac3d6b5227a7cdfe8e4420c",
+        "meta_sha256": "ea9b9bb582ebfcf8902ad4ef9bc53d8dcaa8a7531c8b0328303ae6f7acb7a787"
+      },
+      {
+        "height": "13",
+        "kept": 0,
+        "root": "c98e365963f200b3255c1fa200c97d5c80c85073329cb591bd36e0aa28e46890",
+        "meta_sha256": "9f228d98225de5b2344dc585fb3bbddfe72ff322b36cdd3c7acd4932a56fe9bd"
+      },
+      {
+        "height": "14",
+        "kept": 0,
+        "root": "616efc85f68175999b1d442697bd6dbbc3edd667d53a54cd5c09066834984fdb",
+        "meta_sha256": "fe9b648e3ff58d34f8a577c04a901e0c74924c70cf88b429ee2e18ffd7984b79"
+      },
+      {
+        "height": "15",
+        "kept": 0,
+        "root": "0970ebc283861500230d5d6cfc01b7596b8539db98d039225b017332deb668dc",
+        "meta_sha256": "d55532b3c2f42e2b0a8f1b2c8ae024e5aeaf51ffd7a7178d621a999ea13694a7"
+      },
+      {
+        "height": "16",
+        "kept": 0,
+        "root": "064557d75dfd0aad8d88f8e07685e6290bc22a3b6fb3d56a5aa03bdbe35b5131",
+        "meta_sha256": "1d3d7fd20ed8a393dba454b65031790ee1a106c2466dcdf05d50d237b5bfe089"
+      },
+      {
+        "height": "17",
+        "kept": 0,
+        "root": "79a0b25e2827c2c168e4ecd3a77095eba2335a73b1ef1ac86dad6a2ef5386a4a",
+        "meta_sha256": "74eeeebc31bcd5ff939c7ffbed248c90d3336cc7fc0020aef5c37fc623c71443"
+      },
+      {
+        "height": "18",
+        "kept": 0,
+        "root": "5b1f0567122fe843e85ed19c7d703fcf982cfef0cb98f699d25da83e056537b7",
+        "meta_sha256": "2fdcc27f111b0c0d9d8570481ea3296b09c7457b9916049bbf301bba5823e88f"
+      },
+      {
+        "height": "19",
+        "kept": 0,
+        "root": "85a42b84c472cc39f7c47c4abcf5715bff3214066af117716d7b3d025c3dab29",
+        "meta_sha256": "e0519d71c3ad10a04900780ec346c83b7d58bea01c25dedbcd3cda3903d7b2d9"
+      },
+      {
+        "height": "20",
+        "kept": 0,
+        "root": "1b306a498a972e60cd70b3651bc37a7b11fa44fcc3e38debc7533d26166f58cc",
+        "meta_sha256": "8ea208469f1cf050fee4631880c54836add7b8c286f144ecb091e323be2344e1"
+      },
+      {
+        "height": "21",
+        "kept": 4,
+        "root": "e66d3bb0eca87a38616bee270071d1ed1b01cb3e92f4506bff621ec5549950c6",
+        "meta_sha256": "13846a7f994d0aa8aaf7272d404116ade3a52f09bd61b5d4d5050619c6c33152"
+      },
+      {
+        "height": "22",
+        "kept": 1,
+        "root": "f2ef1aeadb3e0535a8c2cc72f44dfa924ee54a78602fe296005a447f6299ff6c",
+        "meta_sha256": "274b1d4bd0d89f11e53c72ea09bc077dd612cb9500ac21a55f37aa08d2581c41"
+      },
+      {
+        "height": "23",
+        "kept": 3,
+        "root": "6db717d5f915b32152e32c2b214c6a6f12c52f1c8caa24599be370e748416117",
+        "meta_sha256": "72bdec443ce954e505171a80f8ea1b1dc75671331f13c1d4499fb3024c1aba99"
+      },
+      {
+        "height": "24",
+        "kept": 3,
+        "root": "2515c9ec024b76171d6c776f889347d1861c60e9537edf42f73741acbe11d612",
+        "meta_sha256": "31a130fd0c15ad9c846fa9a44dca229419927742ad80a0634fa0c61d8d733f90"
+      },
+      {
+        "height": "25",
+        "kept": 0,
+        "root": "67a35ee034d3abb4388081be24ad46973b99cb5d6a19efcff7a0e87401836f7d",
+        "meta_sha256": "b2373f2dbe4c86a701c3e83b59e5e294ef81a92ab1ce2099215326f704aac7b2"
+      },
+      {
+        "height": "26",
+        "kept": 0,
+        "root": "831136b784b46b97f7ad5141c60d50d772b3c436826d81b83793ffa3be30afd3",
+        "meta_sha256": "52f638a16912c8fffdc5578a3f245104b659fd7be05d3593ac634220c2545d34"
+      },
+      {
+        "height": "27",
+        "kept": 0,
+        "root": "d18e0ce65e0f701a35eadf4423c051a47c9905e31bb12b00c0e88a8487d21da3",
+        "meta_sha256": "7a0c3a4c426e1a8d1e365a2ade713808f80a5607af3646dbc09347a3ee904f6e"
+      },
+      {
+        "height": "28",
+        "kept": 1,
+        "root": "b5a9135850c471eca4e42aec0d6f349f5b12025833dcfcc7d3bd5e4e4a50c5db",
+        "meta_sha256": "76711f5083aebe30da39353d0c8c3a4037567bad921b05fb6963dbb1b0c0b424"
+      },
+      {
+        "height": "29",
+        "kept": 1,
+        "root": "8210a51355c14bd78712241c33f8d33c59859ffd93617567658fced7b79993f7",
+        "meta_sha256": "fa25884ede8587b30737d65a9990484d942e661f3995cb33ad7561ad93101718"
+      },
+      {
+        "height": "30",
+        "kept": 0,
+        "root": "91671c136eb8fda5985293cc3f98803a2030b90d79f92428e82b18c8f7223315",
+        "meta_sha256": "101a955a16fbf7f0cd9eb6dcf7df0da242cee6901d9b4b76d69029b507ce2f96"
+      },
+      {
+        "height": "31",
+        "kept": 0,
+        "root": "6155bf9d511fda80cbeb63a48942cda66f290d6fda03f55e4c9f0a8d22e47108",
+        "meta_sha256": "39f22b99edf4bdccec5dbb80fa3e36202f0eda447244754f032d9020f4468cec"
+      },
+      {
+        "height": "32",
+        "kept": 1,
+        "root": "4cec0775745291a2cd38cffdb5743befabbf45be6698454e63fc2d27d29fb349",
+        "meta_sha256": "a884935a5fc2b923f68cbd3aa3742f7b32524fe5ee8f8eead32123b47a50bbf6"
+      },
+      {
+        "height": "33",
+        "kept": 1,
+        "root": "58dde64bebf13078a8ed897cb563b8d6cb7498283db3e741255403dc11fcff2c",
+        "meta_sha256": "8da5a966af94a93c215793032d67f2b56daa6cf0d08476e8fc1df3ed56a16186"
+      },
+      {
+        "height": "34",
+        "kept": 0,
+        "root": "7830c3dd2f22b8a1a934a8c54ed1ddce5ca1fde915fd1bf1a4eed03319d8fb79",
+        "meta_sha256": "7b8f1eccc9a0b44930deb5da1af24a15e68ef107d91aa1b5ee679aa932a32d29"
+      },
+      {
+        "height": "35",
+        "kept": 1,
+        "root": "b0a78b7b6bb290fbcd4cb10718ae0a2016aa3a780794e792940b1039b40e165e",
+        "meta_sha256": "8c2b12a8935b657348ffc401407f5a58cee0a4df9a52ffb18a76479c3e96c4e7"
+      },
+      {
+        "height": "36",
+        "kept": 1,
+        "root": "01cbce728ebfbf1ebe99334fd5cc6d485bd264f7af302abe424eecd694aa3a46",
+        "meta_sha256": "3478f05bf3f30de25051bce37caed6831fc7319a9ecef510b5a80163034fa1db"
+      },
+      {
+        "height": "37",
+        "kept": 0,
+        "root": "65ef9be1d9eae506a1b23f44426f3d02e5a9bd8304afcbe240abb3361bdeb349",
+        "meta_sha256": "264230de47a1e02713a77c46cac5ee0b92a5e570646b3b29ffe13d316878106c"
+      },
+      {
+        "height": "38",
+        "kept": 0,
+        "root": "525b3c3d62993195c7a7ca8e8b9bc6aa1df044404c7a10e04b2620f8e5a53cdc",
+        "meta_sha256": "475a168e492e459e2e5f1b40054bd8285d995416c681474d930f48261db0806b"
+      },
+      {
+        "height": "39",
+        "kept": 1,
+        "root": "7b2104f4afc1d7cf49e8ba8793d12231b70c39f8c0b22d00cbdff4d88946f207",
+        "meta_sha256": "2489467d5fd4858620d71fe538ee315807fa7e722fdcda833f8ea5831fe7c639"
+      },
+      {
+        "height": "40",
+        "kept": 1,
+        "root": "b0a4d43e99c83c46a57fba7a8fbaf923cf241fab6eb381449fb3ec83f7c6a778",
+        "meta_sha256": "dec2122bc9405ee0324f918a6d09f34b90d568c6e3f6910b32a2a35422d41cf0"
+      },
+      {
+        "height": "41",
+        "kept": 0,
+        "root": "8ad020b57ac718bf77170a717dd7e7d018623690470493e7e35d7b615c83fca9",
+        "meta_sha256": "fb9bda96652ea7c68f46ed3a01a1717de94b38752fd7e0f6514ae500c01708ee"
+      },
+      {
+        "height": "42",
+        "kept": 0,
+        "root": "f4e5a58278f95c77927079f06a1a14fcb00c6c35e2bb58c0f5d1bdcb17ec1a46",
+        "meta_sha256": "1c9abb1965b176b88fd99a5c51cf34af9ee0c6202404c0da9ad4eea899c608d7"
+      },
+      {
+        "height": "43",
+        "kept": 1,
+        "root": "4473f836f6fcb27b79762548fca85832e8c90e03c4a412c6f01d889fd6674397",
+        "meta_sha256": "fbbda5f006baad02537cb3f08cc05c6c107a0fc2d6503617c83bd441434af1a1"
+      },
+      {
+        "height": "44",
+        "kept": 1,
+        "root": "4d0a86678d950718abb2305542be6d2089204cfee982111201e23a5f9437d8aa",
+        "meta_sha256": "5b97e6e4e349e423e0a7af04935d49ddb95b95ff059e4a091dcee842979e6490"
+      },
+      {
+        "height": "45",
+        "kept": 0,
+        "root": "f2bd958813b7f49aeb47816a7d9eabeaa8fc456c3a3ce9107c6815758cb679a3",
+        "meta_sha256": "75cbe9c3c33273300d9905fd2719d2e3be9d4801181c57f0d66a7cea59ec77bf"
+      },
+      {
+        "height": "46",
+        "kept": 0,
+        "root": "7c2105bcfba126382b0742e871f245c6bd0a9734b3b51e9880007134d3573ca1",
+        "meta_sha256": "41a55de39b0ef3ba0dc8b5ad1d3f65e4d8d8d88878aa02f999a656d347cc8996"
+      },
+      {
+        "height": "47",
+        "kept": 0,
+        "root": "bdc5e8412d3ce9546ccb9f2b3e3c8cce8cde9a24bf9a1fb823e64a9e5c73dd42",
+        "meta_sha256": "8a8944a1573429dbbfe84cbc96dc0ff1cfc62a86b4b2ab7838d0e1e2a4e9ae37"
+      },
+      {
+        "height": "48",
+        "kept": 0,
+        "root": "859b1dcd4f8e464554a9ab9fa8ebc2832e3d63b5d2f97e6d65762be869ca81f4",
+        "meta_sha256": "33e2354b4ee59a96e3fddf00a386b9a50d94174657c77113781d377dc86f40a8"
+      },
+      {
+        "height": "49",
+        "kept": 0,
+        "root": "3f024a24ea94ceb9836dcbaa5b28598d60dc0705538bb4002bd3f22b3d483904",
+        "meta_sha256": "a2ab44eddfcbb53e8f4ba3c28d0712d7ad98dd354f899be4c8be877dd1d5f037"
+      },
+      {
+        "height": "50",
+        "kept": 0,
+        "root": "5d32d92ebcd51e6dc32f50b2bdfb505e45aa0254f05d91645f2cdd76d8789cd1",
+        "meta_sha256": "0685a9cad083a03457721e748a14a21819599ea09f0aa2e11f5d81f1739a40dd"
+      },
+      {
+        "height": "51",
+        "kept": 0,
+        "root": "ff3ae3ad2d308a6d21cd6136df9238c519035c99696f588dceed484b401e243a",
+        "meta_sha256": "6b1da19bd4fa275d642d8b8e086c3a258a5977cb2025f29338f033052c2ddadc"
+      },
+      {
+        "height": "52",
+        "kept": 0,
+        "root": "aa4f479bf397b00006e5416e5dd9f2b1f7cac869cbdf27bd32fe702431e3b0dd",
+        "meta_sha256": "ba4fc8e9115892cda0d880e7bc33b11c53e6cc65b3f2de4bf92561eaa573f154"
+      }
+    ],
+    "audited_leaves": "326",
+    "audited_accounts": "14",
+    "security_row_sha256": "fbdba489b541653665aafb46c14676b0014ff00b2a1b5073c335148454287f18",
+    "balances": [
+      "293648843",
+      "3350000"
+    ]
+  },
+  "plain": {
+    "network_id": "c69920bbb6a4b90337920cb65d3d7f96548897143ad4589c3c2444078881de2c",
+    "blocks": [
+      {
+        "height": "1",
+        "kept": 0,
+        "root": "bcefb831423b474d38d09bb696a440d06965b09863ea2d9c6d216d13c733999a",
+        "meta_sha256": "079274f869b30ffb33228e1ce5a3b8da3b1b14688f328f32056f2f35d701600b"
+      },
+      {
+        "height": "2",
+        "kept": 0,
+        "root": "6468d22bd850d1b25bce015e690735b1c2bb6b9e030a65667a89c98fc030ecce",
+        "meta_sha256": "51312ec808f12816ebfe1fc638a5295e0acd9d72f4b8cfce541c4f6137213034"
+      },
+      {
+        "height": "3",
+        "kept": 0,
+        "root": "76a2f791d1ef46d70ae14c91439868ee86cf74aca02686c9fc2c31c4a78580af",
+        "meta_sha256": "31a8d40ee7bf7f868a85ed532f8a686685ae07cc94931ef2debc1d8c8ae580e3"
+      },
+      {
+        "height": "4",
+        "kept": 0,
+        "root": "52df604dbe407c690d1a10b61d5103954152372ce7ad4250c6856ece1b862e8c",
+        "meta_sha256": "6c8d0ef750dd8d28b2becd141ab42036c0aa5e56d82d1cbe123bcfdcc934e253"
+      },
+      {
+        "height": "5",
+        "kept": 0,
+        "root": "bbfdc982b194c292b0d62067d25c19ab2eae5963fbb43955896c0fa3bb170b6c",
+        "meta_sha256": "6830648461e93167095459100a4f19bac09a252f41dc7ba2fab88bc031d44322"
+      },
+      {
+        "height": "6",
+        "kept": 0,
+        "root": "c3628d1b6b6eccdb3b89ae830f7d0f19485d58ae615b4dbe6f96e22407ac1cf7",
+        "meta_sha256": "3128def15ea6eb1749ca6506c12397c4e69acb3f111a9d72f5bee130ee7d6107"
+      },
+      {
+        "height": "7",
+        "kept": 0,
+        "root": "eabf0c6cfc390ef0f7f2f9c99787886cf1df92cbef5f099adbe9bc3d95c92cb9",
+        "meta_sha256": "0b8c422877c82e23b8561914a2d578582e9ac28c2c35e24331826137d45ffd14"
+      },
+      {
+        "height": "8",
+        "kept": 0,
+        "root": "eb74244801aa9f4e338f5901241663d8b17a9cad1b48942dce35910e03d112dd",
+        "meta_sha256": "9ec5ebcf961b540f4cdd72606f401775314b77f6c7d784b3b7e70641e0394464"
+      },
+      {
+        "height": "9",
+        "kept": 0,
+        "root": "62e706fbc9d457feddcb6611eb486e73494bb32d381440067f9746d1cdee0b87",
+        "meta_sha256": "11d7abc84b58240458897a9d128e0396017de9d917dc63ee935bfbdd08c9bd4e"
+      },
+      {
+        "height": "10",
+        "kept": 0,
+        "root": "4213d2d5288600f7d573306ca46d4e411f7962e1fea384e6f7f46035bd13206b",
+        "meta_sha256": "a29b9644220c01c6dc8da13994889365778e5af3331536b648e49e2a476d3c54"
+      },
+      {
+        "height": "11",
+        "kept": 0,
+        "root": "770729522c440c8109a758245fd8f7b59c838676e36a836bb7f9b530835481e3",
+        "meta_sha256": "9e6f3bc83dbcb52899ce45c3f597f9866158f12d13a5ee92b03733dc12b20c04"
+      },
+      {
+        "height": "12",
+        "kept": 0,
+        "root": "1dd03a86395c34c86e3427f50eb8f3c0d57da3b387c86ec013bc1e46e3075c45",
+        "meta_sha256": "fd94e43064034ae671a5b490e055189d22ddf1c0cb908edb675f2edffb5d2f20"
+      },
+      {
+        "height": "13",
+        "kept": 0,
+        "root": "234c115428fb39d879d91d827905efcd5546e2742c3eaaef09a2c1f8201eea02",
+        "meta_sha256": "00988819ece8bd4d7a0d813cc9b226fbd6031d1634da456688de98024f2c8d1b"
+      },
+      {
+        "height": "14",
+        "kept": 0,
+        "root": "44b9cda08d42c834b42a09080bdabc7a625212b4c0299bebaf931e174597012f",
+        "meta_sha256": "cac1955d5a6d1a23d45822382cfd37bba33a098b8f24188788aa24f30c587b16"
+      },
+      {
+        "height": "15",
+        "kept": 0,
+        "root": "3c6a341be60974808a360eac53b78fa905ab98d19b2aabf5ed12ccfd03d97493",
+        "meta_sha256": "c0f2c909b28a7cbeee3c3386f3a69258c01899b195a37886eae1db6d437295b2"
+      },
+      {
+        "height": "16",
+        "kept": 0,
+        "root": "d2069f70040ea11ccbd273623b62a747f0b1f0d6ab649b7051fb861cc3a2a52b",
+        "meta_sha256": "9521983dead7e5026461a864f488b6bf5c3cbccdaa0aaa8640010773ba104c77"
+      },
+      {
+        "height": "17",
+        "kept": 0,
+        "root": "01c81481cc3ce2e5ec25a7be4400c61452a0c1b43b3e0dc0dc27c67f1eb87320",
+        "meta_sha256": "c958f1dbd7604be97d62f66b960724def06bcac56e89ebcd752d126a02fd6004"
+      },
+      {
+        "height": "18",
+        "kept": 0,
+        "root": "fade1dc0571f5035acb097cd66d3476fa68d9211921c8ee8e857277b55aef880",
+        "meta_sha256": "4046ad3d273900b972fb8c94bcaa9e8876eb6636ecddef452ff497634673305a"
+      },
+      {
+        "height": "19",
+        "kept": 0,
+        "root": "cb8f71b4ad3fc254f7cb8af0d3b3bd57be6f80af6a8374d1727865f692f0af0b",
+        "meta_sha256": "52929796510ce2434233393e19e1d6112218f268d9f7ec0ea710fd3dc8523ced"
+      },
+      {
+        "height": "20",
+        "kept": 0,
+        "root": "2ef211de468b8e703a26cc61e89f07250cf7cb6369227b5eeb5dc4b671a19f03",
+        "meta_sha256": "a71e7246562e8fb45bdfcbf0f7c9f80256b9aaebfd083f8eb3378b34d3a4415e"
+      },
+      {
+        "height": "21",
+        "kept": 4,
+        "root": "ae9b742c4d9385813a8a67e07a1270939c796740a1915f7f820582b127770c05",
+        "meta_sha256": "a29e7ac3bcc8f701dd0bf157d84bc4a47f8ece0ed3a5304c1b96ef096f62487c"
+      },
+      {
+        "height": "22",
+        "kept": 1,
+        "root": "4c431b177ff0abaaea5651f5eceead6470c8da41e12b47be17b25b1bb8df853e",
+        "meta_sha256": "327cacff2a0c3ef2259c9e31f15d824f4e28acd0618a46e80bed2e8cf00e1b4b"
+      },
+      {
+        "height": "23",
+        "kept": 3,
+        "root": "db069a7943746c962699942c03aaa6653158d7565dadd38334780312728e6057",
+        "meta_sha256": "3e747510cef5a96880df152ea9def80fd7b7f0bba8bd091d202de65f14819c30"
+      },
+      {
+        "height": "24",
+        "kept": 3,
+        "root": "7fbca5131307c7804b1f691121d76bcbd241f613bc035ad40a25a80517223f8e",
+        "meta_sha256": "2fd3b278eca999a2fd096d7cb21c892d15afe0cd556cf8dcb05a54e6fccf0fa7"
+      },
+      {
+        "height": "25",
+        "kept": 0,
+        "root": "b5534a363e27240d1924cc36463e52323719f47b4e4a87eb3e0d91480cca2b07",
+        "meta_sha256": "db38d7f0cd15a128d32a2bbb316495ae56f1c545d2d228a944fdff862007d0d1"
+      },
+      {
+        "height": "26",
+        "kept": 0,
+        "root": "e1289272c7637033581ddbdfe0b95471205318de259fc9f4ec2924d255dc25b2",
+        "meta_sha256": "6ead6d6405a2cfeca3a6f7649eab8f09cfeb85e1d955e5ba522e84d8d545e009"
+      },
+      {
+        "height": "27",
+        "kept": 0,
+        "root": "fb835a250d4dc5c0a0e4ddc55d60dba1cb4b6587c628780132a4a9bfa2d14fb6",
+        "meta_sha256": "2ac3c0b3715068505ea7d71d911346d2888e123348e5898e84d407b4988ccd5e"
+      },
+      {
+        "height": "28",
+        "kept": 1,
+        "root": "b5edda163130811ef0a8dc630da19ca9c62821dd7bd029c55a7cde4d86fdb282",
+        "meta_sha256": "be116c205adfbc759440730353dc827aff1da4bb346ef220d3c42ee68c21a3d5"
+      },
+      {
+        "height": "29",
+        "kept": 1,
+        "root": "6f26107929bfed515e187bf07ea4850232dadb969594d0f1a83bb5940c7493d2",
+        "meta_sha256": "896238d63be3f59facaa2df6af6eb8e98da083a8fe5fe913858bef3d789cca68"
+      },
+      {
+        "height": "30",
+        "kept": 0,
+        "root": "904ea5f8c3ae88e6aa39cc3211610f9b094408f0b2649e362663b412f841d85e",
+        "meta_sha256": "a8560ed30519921618fc62ffd81edd45d6e9cad12ede4f3bfbb64faa2ef61142"
+      },
+      {
+        "height": "31",
+        "kept": 0,
+        "root": "d5cb5d714b80b717af5732a884abd3ff2058f90b98ac2125c92f2d1ddf00cd62",
+        "meta_sha256": "1f97be16da59e3925543e9a28dbb0feb0ae88826cc08a3cc6613b1c366b6a4e4"
+      },
+      {
+        "height": "32",
+        "kept": 1,
+        "root": "2e4c81ecdc694d296e00f1a28022bb3bc6b26029345c1cf301912aa4ede96c88",
+        "meta_sha256": "6b522bb6927b82f02707304b3dda9f60727e989da5411d15793e6d5eac8e3221"
+      },
+      {
+        "height": "33",
+        "kept": 1,
+        "root": "0b4d9983ac83e961050e425b8bcea7a8a24f2af7693c42f288936113de29f677",
+        "meta_sha256": "9c692c04a05ecd670972336f3be86fc3a8291f5944c04da9ec1882b81c608016"
+      },
+      {
+        "height": "34",
+        "kept": 0,
+        "root": "03baf2cb9501b4080cf6fb8ae4732a6773657f5ad05c9ea84d200c5b353084df",
+        "meta_sha256": "24df3f31e2facc5883ba93595709bb27dcd1683719a8726f4b8c802e82dfb4a8"
+      },
+      {
+        "height": "35",
+        "kept": 1,
+        "root": "b6415a94f48bb875be45fabc2db8a1af9a728cbd115ad8f7355a6c14447f4aa1",
+        "meta_sha256": "d9baaa7d1d643c7fb8043a6959182490de8cb7f01c68397d0a56724d59d3f78f"
+      },
+      {
+        "height": "36",
+        "kept": 1,
+        "root": "be5735aa49fb9e863f5d0a06d0259df3360807275be3c490eddad2398dc7d775",
+        "meta_sha256": "da2e61fa02fdc768b621da193ab771903eea9827d37809d91dcae0c7bca36c9e"
+      },
+      {
+        "height": "37",
+        "kept": 0,
+        "root": "ef07954d22173e641d6a416b30318e370d6bc1e9fdffc185ada72cb338655fe5",
+        "meta_sha256": "fa87115edabf3c9d602ce85a145f0da2e81ba9fcd90d7ae16236e81f8883cfc2"
+      },
+      {
+        "height": "38",
+        "kept": 0,
+        "root": "71fea34a1d4a154cda0ee2e08472a0f62b5d3b12254fdf3747ad693dcf47858d",
+        "meta_sha256": "98b6007be680d20353e07931b8c86aaf68b66c50ed62e3462ea44781b2c47875"
+      },
+      {
+        "height": "39",
+        "kept": 1,
+        "root": "d435586e00b9ef21a1c37b0034f443300794f7676390864433ab7b433b9bad9a",
+        "meta_sha256": "323a2069997bf20479d3ff85dc678b806115c13fd18c8b4710dbf92cbb6a92d8"
+      },
+      {
+        "height": "40",
+        "kept": 1,
+        "root": "ccc65eed0a9c3e41347f50cd14459e25fb014571301238f45217c889cb23aced",
+        "meta_sha256": "6e66be944f2890bcd67210185aa7488cbcbebb95f1dcaab5634084b5131b5c9e"
+      },
+      {
+        "height": "41",
+        "kept": 0,
+        "root": "94d53edc6b8fdec0773709b0d2c13d8b6ca9a0582c4cfc42ff9e76a2475008ca",
+        "meta_sha256": "667f837df4170808bd0ff103dd0208101b2bfb1b1d1649fb7bcf0164a0d52d1e"
+      },
+      {
+        "height": "42",
+        "kept": 0,
+        "root": "ecdfc7055ff8ca798bd29464229dfb92efcc7286e20bdff8fffcd421e6f6e99a",
+        "meta_sha256": "8c15ec7baef7db460c34fb67a3c6370fbeb49e8a7e99df81338e3b59a06ae96d"
+      },
+      {
+        "height": "43",
+        "kept": 1,
+        "root": "f629575850fd228930c2dd4bfc8341bebbf32d0967d531ef8ff5869f8e3f1bbc",
+        "meta_sha256": "85f6aee4913c98569b2a5373d260ed6f483c157f21ce24793660ba9e8c2df3b6"
+      },
+      {
+        "height": "44",
+        "kept": 1,
+        "root": "ebccaa13e5f897b3c4ca9b1cc85429d5caac2a7813de34fee24ecc15ef83c024",
+        "meta_sha256": "b48699a2e81ff800e8868e2a956cef468f85d96c2af846c3c382f41b49e87621"
+      },
+      {
+        "height": "45",
+        "kept": 0,
+        "root": "fb83702d48474db88135621ac3fd12adc813a0d8d5788e977ac4c6b9e9a6c54c",
+        "meta_sha256": "a169967f1a9bf3b06e371b8d95e39ebd5cee4af742e80b178da3d468eb0b75d7"
+      },
+      {
+        "height": "46",
+        "kept": 0,
+        "root": "7027937b17eeaf6836888011854c3e009ed946dab098377a738d3c442e6176fc",
+        "meta_sha256": "7d30e93f40e86ed390fa5b93c46d93efe93000444ffa9d180901868968328fb2"
+      },
+      {
+        "height": "47",
+        "kept": 0,
+        "root": "dd803164ff02cd917aa4ef68d03a03a5b1b470ac846b49831d986fe660f56868",
+        "meta_sha256": "9e47bcc783ae405b32431654450bbbd39e21ad1a6c06bea7239c99a7590056df"
+      },
+      {
+        "height": "48",
+        "kept": 0,
+        "root": "ff5b304325de679ec4d8cf4fda7eee09879e995f9ec3d8973da2cafb0f9fd21a",
+        "meta_sha256": "b6e3d1656a3475b441af0e98fb58d06e686eba7cd4139a4251a7ab3670cc2bf1"
+      },
+      {
+        "height": "49",
+        "kept": 0,
+        "root": "9fbd09ba30768838945ca463f993c385ec0109d0312b0033d8f505db136c82f4",
+        "meta_sha256": "e7d882b36a69512fbfe9335ceee24896d1f3d0e5a0cb93ebf6edd7b4714ebf21"
+      },
+      {
+        "height": "50",
+        "kept": 0,
+        "root": "eae8c3dbf54cc4c1f7276af6c361be2f6212f83d9b7f2810e89e24b620c884d7",
+        "meta_sha256": "9a266cfb91855eceee3cd0a3eadf66341eac98fcd005dca6124dc119f5b59c97"
+      },
+      {
+        "height": "51",
+        "kept": 0,
+        "root": "1e1234355b24e624cdecd6d19491b24f3d41cd8ecdbe0bdba61438c6ed718f86",
+        "meta_sha256": "97336be220e0dccdc4cfbdda95d20a7243ba4c278a9cbbf51d899d6063c4c3db"
+      },
+      {
+        "height": "52",
+        "kept": 0,
+        "root": "abd810a382e49ea7e509679dfc6ba5ed6794927846a0fa499de52a70fa709559",
+        "meta_sha256": "f536bb65bc412d7de0f7d7055f633f0b7776968e6b023031b0cd02bc7fba2b9c"
+      }
+    ],
+    "audited_leaves": "273",
+    "audited_accounts": "14",
+    "security_row_sha256": "378247973939112ce6afe4c37fe27f1ab5c82f8336c45bf0ef6bf3f895b04844",
+    "balances": [
+      "16638000",
+      "3350000"
+    ]
+  }
+}

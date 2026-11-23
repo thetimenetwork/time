@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark"><title>Time test network faucet</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/web-v4/shared/network-menu.js"></script>
+</head>
+<body>
+  <div class="strip"><strong>Test network.</strong> <span>This is test money. It has no value and cannot be exchanged for anything.</span></div>
+  <header class="topbar"><span class="brand"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time</span><span class="where">Faucet</span><span data-network-menu data-app="faucet" data-inline></span></header>
+  <main>
+    <div class="hero">
+      <svg class="ribbon" viewBox="0 0 400 240" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0 214C70 152 130 206 206 160S330 58 400 66C352 98 312 214 210 226S62 232 0 214Z"/></svg>
+      <h1>Get test time</h1>
+      <p class="lede">For developers on the Time test network. Enter your account and the faucet sends it a fixed amount of test time.</p>
+    </div>
+    <form id="ask" autocomplete="off">
+      <label for="account">Your account number or name</label>
+      <div class="row">
+        <input id="account" name="account" type="text" inputmode="text" maxlength="21" spellcheck="false" autocapitalize="off" required placeholder="for example 42 or alice">
+        <button id="send" type="submit">Send test time</button>
+      </div>
+    </form>
+    <section id="result" class="result" role="status" aria-live="polite" hidden>
+      <p id="result-title" class="result-title"></p>
+      <p id="result-text"></p>
+      <p id="result-hash-line" hidden>Hash of the action: <code id="result-hash"></code></p>
+    </section>
+    <section class="limits">
+      <h2>What the faucet gives</h2>
+      <p id="status">Asking the faucet…</p>
+      <dl id="facts" hidden>
+        <dt>Each grant</dt><dd id="fact-grant"></dd>
+        <dt>Per account in 24 hours</dt><dd id="fact-account"></dd>
+        <dt>Per address in 24 hours</dt><dd id="fact-address"></dd>
+        <dt>Left in the current 24 hours</dt><dd id="fact-left"></dd>
+        <dt>Not given to accounts holding more than</dt><dd id="fact-rich"></dd>
+        <dt>Network</dt><dd id="fact-network"></dd>
+      </dl>
+    </section>
+    <p id="registration-note" class="small" hidden>No account yet? A wallet or the SDK can ask this faucet to sponsor a registration; see the faucet's README.</p>
+  </main>
+</body>
+</html>

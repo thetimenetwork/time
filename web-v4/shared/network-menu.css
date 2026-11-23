@@ -1,0 +1,43 @@
+/* The network menu of the Time pages (network-menu.js). Its own colours, light and dark, so that it reads the
+   same on every page; a page can set --tn-* on the element that holds it. */
+[data-network-menu] { display: flex; justify-content: flex-end; margin: 0.5rem 0; }
+[data-network-menu][data-inline] { display: inline-flex; margin: 0 0.5rem; vertical-align: middle; }
+.tn-menu {
+  --tn-text: #1d1d1f; --tn-soft: #5f6368; --tn-back: #ffffff; --tn-line: #d7d9dd; --tn-hover: #f1f3f4; --tn-focus: #1a73e8;
+  --tn-testnet: #e8a317; --tn-mainnet: #1e8e3e; --tn-other: #8a8d91;
+  position: relative; font-size: 0.875rem; line-height: 1.3; color: var(--tn-text);
+}
+@media (prefers-color-scheme: dark) {
+  .tn-menu { --tn-text: #e8eaed; --tn-soft: #a8abaf; --tn-back: #202124; --tn-line: #3c4043; --tn-hover: #2d2e31; --tn-focus: #8ab4f8; }
+}
+.tn-button {
+  display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.3rem 0.65rem; cursor: pointer; list-style: none;
+  border: 1px solid var(--tn-line); border-radius: 999px; background: var(--tn-back); color: var(--tn-text); font-weight: 600; white-space: nowrap; user-select: none;
+}
+.tn-button::-webkit-details-marker { display: none; }
+.tn-button:hover { background: var(--tn-hover); }
+.tn-button:focus-visible, .tn-item:focus-visible { outline: 2px solid var(--tn-focus); outline-offset: 2px; }
+.tn-caret { width: 0.45rem; height: 0.45rem; border-right: 2px solid var(--tn-soft); border-bottom: 2px solid var(--tn-soft); transform: translateY(-2px) rotate(45deg); }
+.tn-menu[open] .tn-caret { transform: translateY(2px) rotate(-135deg); }
+.tn-dot { flex: none; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--tn-other); }
+.tn-dot.tn-testnet { background: var(--tn-testnet); }
+.tn-dot.tn-mainnet { background: var(--tn-mainnet); }
+.tn-list {
+  position: absolute; right: 0; top: calc(100% + 0.35rem); z-index: 1000; min-width: 15rem; max-width: calc(100vw - 2rem); margin: 0; padding: 0.35rem; list-style: none;
+  border: 1px solid var(--tn-line); border-radius: 0.75rem; background: var(--tn-back); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.tn-list li { margin: 0; padding: 0; }
+.tn-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.6rem; border-radius: 0.5rem; color: var(--tn-text); text-decoration: none; }
+a.tn-item:hover { background: var(--tn-hover); }
+.tn-current { background: var(--tn-hover); }
+.tn-off { opacity: 0.6; cursor: not-allowed; }
+.tn-words { display: flex; flex-direction: column; }
+.tn-name { font-weight: 600; }
+.tn-note { color: var(--tn-soft); font-size: 0.8rem; font-weight: 400; }
+.tn-foot { padding: 0.45rem 0.6rem 0.3rem; color: var(--tn-soft); font-size: 0.8rem; }
+.tn-moved { margin: 0; padding: 0.75rem 1rem; background: #fff4d6; color: #3d2c00; border-bottom: 1px solid #e8c75a; font-size: 0.95rem; }
+.tn-moved p { margin: 0.2rem auto; max-width: 60rem; }
+.tn-moved a { color: inherit; font-weight: 700; }
+@media (prefers-color-scheme: dark) {
+  .tn-moved { background: #3a2f12; color: #ffe8a8; border-bottom-color: #6b5520; }
+}

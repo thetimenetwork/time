@@ -1,0 +1,33 @@
+groups:
+  - name: private-devnet-operator
+    rules:
+      - alert: TimeOperatorNotReady
+        expr: time_private_devnet_ready == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Check signer lease, head freshness, protocol and GC backlog. If the node exited with code 4 it stopped on purpose (an upgrade this release does not implement, stop_after_height, or an emergency switch); its first log line says which, and deploy/README.md "Upgrades and exit code 4" says what to install
+      - alert: TimeBitcoinEarningPaused
+        expr: time_bitcoin_earning_paused == 1
+        for: 30s
+        labels: {severity: warning}
+        annotations:
+          summary: Bitcoin credited-anchor or deep-reorg pause requires review
+      - alert: TimeUpgradeNotImplemented
+        expr: time_upgrade_not_implemented == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: A protocol version this node does not implement is scheduled; it stops with exit code 4 at the activation unless the release that implements it is installed first. The value is the node's last report and stays set after the node has stopped
+      - alert: TimeStopAfterHeightSet
+        expr: time_stop_after_height_set == 1
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: This node runs with stop_after_height and will stop with exit code 4 after that block; remove the setting once the coordinated stop is over
+      - alert: TimeOperatorScrapeMissing
+        expr: up{job="time-private-operator"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Private operator monitor cannot be reached

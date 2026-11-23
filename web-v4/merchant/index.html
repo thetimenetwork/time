@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Time blog (demo)</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/sdk/time-sdk.js" defer></script>
+  <script src="/app.js" defer></script>
+  <script type="module" src="/web-v4/shared/network-menu.js"></script>
+</head>
+<body>
+  <p class="strip"><strong>Test network.</strong> The seconds here are test money without value. This demo may be wiped at any time.</p>
+  <main>
+    <header class="top">
+      <h1><svg class="blog-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect width="32" height="32" rx="8"/><path d="M16 6.5l6 7.5-4 11.5h-4l-4-11.5Z M16 15.5v10"/><circle cx="16" cy="15.5" r="1.6"/></svg><span>Time blog <span class="demo">(demo)</span></span></h1>
+      <a id="wallet-link" class="wallet-link" href="#" rel="noopener noreferrer">Open your wallet</a>
+      <span data-network-menu data-app="blog" data-inline></span>
+    </header>
+    <p class="lede">A small website that you sign in to with your Time wallet. Read the posts, sign in, write one.</p>
+
+    <section class="card" aria-labelledby="greeting">
+      <p id="connection" class="soft">Signed out</p>
+      <div class="who"><h2 id="greeting">Sign in to write a post</h2><span id="me-mark" class="mark" hidden>supporter</span></div>
+      <p id="account-copy">Your password stays in your wallet. This website only learns your name.</p>
+      <p id="support-copy" class="soft hidden">To see a website ask for a payment, support this blog. Your wallet shows the amount and the fee before you approve, and supporters get a mark next to their name.</p>
+      <div class="actions">
+        <button id="login" type="button"><svg class="time-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Sign in with Time</button>
+        <button id="pay" class="hidden" type="button" disabled>Support this blog: 0.1 seconds</button>
+        <button id="logout" class="quiet hidden" type="button">Sign out</button>
+      </div>
+      <p id="order-result"></p>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="composer" class="card hidden" aria-labelledby="composer-title">
+      <h2 id="composer-title"><label for="post-text">Write a post</label></h2>
+      <textarea id="post-text" rows="4" maxlength="2000" aria-describedby="counter composer-note"></textarea>
+      <div class="row"><span id="counter" class="soft">0 / 500</span><button id="publish" type="button" disabled>Publish</button></div>
+      <p id="composer-note" class="soft small">Posts are public: anyone can read them, with your @name.</p>
+    </section>
+
+    <section class="feed" aria-labelledby="posts-title">
+      <div class="row"><h2 id="posts-title">Newest posts</h2><button id="reload" class="quiet" type="button">Refresh</button></div>
+      <p class="soft small">Posts are public. This is a demo: they may be wiped at any time.</p>
+      <p id="posts-note">Loading the posts…</p>
+      <ol id="posts" class="posts"></ol>
+      <button id="older" class="quiet" type="button" hidden>Show older posts</button>
+    </section>
+
+    <details>
+      <summary>Add "Sign in with Time" to your own website</summary>
+      <p>Your server makes a one-time challenge. The browser SDK opens the wallet in a window on the click, the person approves, and your server checks the signed answer against the chain before it starts its own session. The website never sees a password or a key.</p>
+<pre><code>// On the click: the wallet window opens at once, the challenge follows.
+const request = post('/api/login/challenge', {})
+  .then(challenge => ({ type: 'login', challenge }));
+const proof = await TimeSDK.requestWallet({ walletOrigin, request });
+await post('/api/login/finish', proof);</code></pre>
+      <p>The server side of this page is <code>client-v4/server-auth.mjs</code> (the sign-in and the checks of a payment) and the routes in <code>client-v4/server.mjs</code>; <code>client-v4/README.md</code> says what they check. A payment works the same way, with a request of the type <code>payment</code>.</p>
+    </details>
+    <footer>Time test network: the seconds have no value. Signing in proves that you control the account; it gives this website no power to spend from it.</footer>
+  </main>
+</body>
+</html>

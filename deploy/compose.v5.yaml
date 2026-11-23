@@ -1,0 +1,99 @@
+name: time-v5-private-devnet
+# Version-5 engine (time-node-v5). Its own project name gives it its own
+# consensus and ledger volumes; it never runs on the v4 project's volumes.
+# All images require digest pins in addition to the entry guard's verification.
+# ABCI/RPC/signer/metrics share the validator network namespace and bind loopback.
+services:
+  validator:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    command: ["run", "comet", "/operator/settings.json"]
+    # Node launchers run under an init process so SIGTERM is delivered at once.
+    init: true
+    stop_grace_period: 30s
+    environment:
+      TIME_IMAGE: ${TIME_IMAGE:?set NAME@sha256 digest}
+      REMOTE_SIGNER_IMAGE: ${REMOTE_SIGNER_IMAGE:?set fenced signer digest}
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+      - consensus:/data/comet
+      # Read-only view of the application's volume: the launcher refuses blocks
+      # without a matching ledger binding or state, and a ledger of another network.
+      - ledger:/data/ledger-view:ro
+    healthcheck:
+      test: ["CMD", "node", "/opt/time/deploy/operator.mjs", "probe", "/operator/settings.json"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    networks: [private_validator]
+  app:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    command: ["run", "app", "/operator/settings.json"]
+    init: true
+    environment:
+      TIME_IMAGE: ${TIME_IMAGE:?set NAME@sha256 digest}
+      REMOTE_SIGNER_IMAGE: ${REMOTE_SIGNER_IMAGE:?set fenced signer digest}
+    network_mode: service:validator
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    # SIGTERM makes time-node-v5 write a full final snapshot before it exits.
+    stop_grace_period: 120s
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+      - ledger:/data/ledger
+    depends_on: [validator]
+  signer:
+    image: ${REMOTE_SIGNER_IMAGE:?set independently reviewed fenced signer NAME@sha256 digest}
+    network_mode: service:validator
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # A signer must end when it is told to. As process 1 of its container a program that installs no handler
+    # of its own ignores SIGTERM: in the kit rehearsal tmkms 0.15.0 went on for the whole stop_grace_period
+    # and signed 18 more heights before Docker killed it. With an init process the signal reaches it as it
+    # would outside a container.
+    init: true
+    stop_grace_period: 30s
+    # Signer image's own entrypoint MUST enforce fencing at EVERY signature.
+    # This bundle does not implement or certify an HSM or cross-host signer.
+    volumes:
+      - ${SIGNER_CONFIG:?set signer enrollment directory}:/signer:ro
+      # The signer's own record of what it last signed (height, round, step): its
+      # anti-double-sign state. The root file system is read-only and /signer too,
+      # so the signer image must keep that record here. Never discard this volume.
+      - signer-state:/signer-state
+    depends_on: [validator]
+  monitor:
+    image: ${TIME_IMAGE:?set NAME@sha256 digest}
+    entrypoint: ["node", "/opt/time/deploy/monitor.mjs"]
+    command: ["/operator/settings.json"]
+    init: true
+    stop_grace_period: 10s
+    network_mode: service:validator
+    user: "10001:10001"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ${OPERATOR_CONFIG:?set absolute operator config directory}:/operator:ro
+    depends_on: [validator, app]
+networks:
+  private_validator:
+    # No host ports; outbound sentry connections require host firewall controls.
+    internal: false
+volumes:
+  consensus:
+  ledger:
+  signer-state:

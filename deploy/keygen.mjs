@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// Enrollment only. Secret consensus key is handed to the independently fenced
+// remote signer, NEVER loaded into the CometBFT validator container.
+import {generateKeyPairSync,createHash} from 'node:crypto';
+import {mkdir,lstat,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath}from'node:url';
+import{safeOutput}from'./lib.mjs';
+function pair(){const keys=generateKeyPairSync('ed25519');const seed=keys.privateKey.export({format:'der',type:'pkcs8'}).subarray(-32),pub=keys.publicKey.export({format:'der',type:'spki'}).subarray(-32);return{pub,secret:Buffer.concat([seed,pub])};}
+export async function generateOperatorKeys(directory){directory=safeOutput(directory);try{await lstat(directory);throw new Error('Existing enrollment preserved; choose a NEW directory');}catch(e){if(e.code!=='ENOENT')throw e;}await mkdir(directory,{recursive:false,mode:0o700});const consensus=pair(),node=pair();const address=createHash('sha256').update(consensus.pub).digest().subarray(0,20).toString('hex').toUpperCase();const publicRecord={schema_version:1,consensus_address:address,consensus_public_key_hex:consensus.pub.toString('hex'),node_id:createHash('sha256').update(node.pub).digest().subarray(0,20).toString('hex'),key_source:'OS_CSPRNG_ED25519',public_funds_allowed:false};for(const[name,value]of Object.entries({'consensus-enrollment.json':{address,pub_key:{type:'tendermint/PubKeyEd25519',value:consensus.pub.toString('base64')},priv_key:{type:'tendermint/PrivKeyEd25519',value:consensus.secret.toString('base64')}},'node-identity.json':{priv_key:{type:'tendermint/PrivKeyEd25519',value:node.secret.toString('base64')}},'public-identity.json':publicRecord}))await writeFile(path.join(directory,name),JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});consensus.secret.fill(0);node.secret.fill(0);return publicRecord;}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){if(process.argv.length!==3)throw new Error('Usage: node deploy/keygen.mjs NEW_ENROLLMENT_DIRECTORY');generateOperatorKeys(process.argv[2]).then(value=>console.log(JSON.stringify(value,null,2))).catch(e=>{console.error(e.message);process.exitCode=1;});}

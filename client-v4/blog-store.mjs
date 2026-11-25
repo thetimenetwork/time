@@ -6,15 +6,27 @@
 import {DatabaseSync} from 'node:sqlite';
 
 // maxChars: characters (Unicode code points) after trimming. perAccount posts per account in windowMs,
-// counted from a record of publishes that deleting a post does not shorten. keep: the journal holds the
-// newest posts only. page: posts per answer of the list. maxRawChars: the longest text read at all.
-export const POST_LIMITS = Object.freeze({maxChars: 500, perAccount: 20, windowMs: 86400000, keep: 500, page: 50, maxRawChars: 2000});
+// counted from a record of publishes that deleting a post does not shorten. perHour: posts of all accounts together
+// in an hour; beyond it a post is refused, and nobody's post is deleted to make room. keep and keepMs: a post stays
+// keepMs (7 days) whatever comes after it; an older one goes once keep newer posts stand above it. page: posts per
+// answer of the list. maxRawChars: the longest text read at all. maxMarks: combining marks on one letter.
+// maxInvisible: characters that take no room in one post.
+export const POST_LIMITS = Object.freeze({maxChars: 500, perAccount: 20, windowMs: 86400000, perHour: 60, keep: 500, keepMs: 7 * 86400000, page: 50, maxRawChars: 2000, maxMarks: 4, maxInvisible: 16});
 
 const refusal = (status, message) => Object.assign(new Error(message), {httpStatus: status});
 // Every control character except the line feed (a carriage return before a line feed is read as part of the line break).
 const CONTROL = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/;
 // Embeddings, overrides and isolates of text direction: they could make a post read as something else.
 const DIRECTION = /[\u202A-\u202E\u2066-\u2069]/;
+// A run of combining marks: on one letter, more than a few paint over the lines around the post (the trick called
+// "Zalgo"). Four carry what people write: Vietnamese stacks two, Hebrew points and Thai tone marks three.
+const MARKS = /\p{M}+/gu;
+// Characters that take no room: soft hyphen, grapheme joiner, the Arabic, left-to-right and right-to-left marks,
+// Hangul fillers, Khmer and Mongolian invisible signs, zero width spaces and joiners, the word joiner and invisible
+// operators, the byte order mark. A joiner between two emoji (a family, a profession) is part of the emoji and is not
+// counted.
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u2060-\u2064\u3164\uFEFF\uFFA0]/gu;
+const EMOJI_JOINER = /(?<=[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F])\u200D(?=\p{Extended_Pictographic})/gu;
 const DECIMAL = /^(0|[1-9][0-9]{0,19})$/, POST_ID = /^[1-9][0-9]{0,15}$/, NAME = /^[a-z0-9_]{1,32}$/;
 
 /// The text of a post as it is stored, or a refusal (an Error with httpStatus 400) that says what is wrong.
@@ -26,6 +38,8 @@ export function checkPostText(value, limits = POST_LIMITS) {
   if (!text) throw refusal(400, 'Write something first: a post has at least one character');
   if (CONTROL.test(text)) throw refusal(400, 'Tabs and other control characters are not allowed in a post; line breaks are');
   if (DIRECTION.test(text)) throw refusal(400, 'Characters that change the direction of the text are not allowed in a post');
+  if ((text.match(MARKS) ?? []).some((run) => [...run].length > limits.maxMarks)) throw refusal(400, `A letter carries at most ${limits.maxMarks} accents or other combining marks in a post`);
+  if ((text.replace(EMOJI_JOINER, '').match(INVISIBLE) ?? []).length > limits.maxInvisible) throw refusal(400, `A post has at most ${limits.maxInvisible} characters that take no room, such as zero width spaces and joiners`);
   const count = [...text].length;
   if (count > limits.maxChars) throw refusal(400, `A post is at most ${limits.maxChars} characters; this one has ${count}`);
   return text;
@@ -49,7 +63,8 @@ export function createBlogStore({filename, networkId, now = Date.now, limits = P
     db.exec('CREATE TABLE IF NOT EXISTS scope (id INTEGER PRIMARY KEY CHECK(id=1), network TEXT NOT NULL);'
       + 'CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, name TEXT, body TEXT NOT NULL, created INTEGER NOT NULL);'
       + 'CREATE TABLE IF NOT EXISTS publishes (account TEXT NOT NULL, at INTEGER NOT NULL);'
-      + 'CREATE INDEX IF NOT EXISTS publishes_account ON publishes(account, at);');
+      + 'CREATE INDEX IF NOT EXISTS publishes_account ON publishes(account, at);'
+      + 'CREATE INDEX IF NOT EXISTS publishes_at ON publishes(at);');
     const scope = db.prepare('SELECT network FROM scope WHERE id=1').get();
     if (scope && scope.network !== networkId) throw Error('The blog database belongs to another network');
     if (!scope) db.prepare('INSERT INTO scope VALUES(1,?)').run(networkId);
@@ -59,15 +74,19 @@ export function createBlogStore({filename, networkId, now = Date.now, limits = P
   const one = db.prepare('SELECT id,account,name,body,created FROM posts WHERE id=?');
   const insert = db.prepare('INSERT INTO posts(account,name,body,created) VALUES(?,?,?,?)');
   const remove = db.prepare('DELETE FROM posts WHERE id=?');
-  const trim = db.prepare('DELETE FROM posts WHERE id NOT IN (SELECT id FROM posts ORDER BY id DESC LIMIT ?)');
+  // Only posts older than keepMs, and of those only the ones below the newest `keep`.
+  const trim = db.prepare('DELETE FROM posts WHERE created<? AND id NOT IN (SELECT id FROM posts ORDER BY id DESC LIMIT ?)');
   const record = db.prepare('INSERT INTO publishes(account,at) VALUES(?,?)');
   const forget = db.prepare('DELETE FROM publishes WHERE at<=?');
   const recent = db.prepare('SELECT COUNT(*) AS n, MIN(at) AS first FROM publishes WHERE account=? AND at>?');
+  const everyone = db.prepare('SELECT COUNT(*) AS n, MIN(at) AS first FROM publishes WHERE at>?');
   const shape = row => ({id: String(row.id), accountId: row.account, name: row.name, text: row.body, createdAt: new Date(row.created).toISOString()});
   function transaction(work) {
     db.exec('BEGIN IMMEDIATE');
     try { const result = work(); db.exec('COMMIT'); return result; } catch (error) { try { db.exec('ROLLBACK'); } catch {} throw error; }
   }
+  // A time to the minute, rounded up, as the refusals say it.
+  const minute = (ms) => new Date(Math.ceil(ms / 60000) * 60000).toISOString().slice(0, 16).replace('T', ' ');
   const clock = () => { const at = now(); if (!Number.isSafeInteger(at) || at < 0 || at > 8640000000000000) throw Error('The server clock is unusable'); return at; };
   return Object.freeze({
     limits,
@@ -82,16 +101,18 @@ export function createBlogStore({filename, networkId, now = Date.now, limits = P
       const body = checkPostText(text, limits), author = typeof name === 'string' && NAME.test(name) ? name : null;
       return transaction(() => {
         const at = clock(), since = at - limits.windowMs;
-        forget.run(since);
+        // The record keeps the last hour at least, for the count of everyone's posts.
+        forget.run(Math.min(since, at - 3600000));
         const done = recent.get(accountId, since);
         if (done.n >= limits.perAccount) {
           // The oldest publish of the window leaves it then; rounded up to the minute.
-          const again = new Date(Math.ceil((done.first + limits.windowMs + 1) / 60000) * 60000).toISOString().slice(0, 16).replace('T', ' ');
-          throw refusal(429, `You have published ${done.n} posts in the last ${limits.windowMs / 3600000} hours, the most this demo allows. You can publish again after ${again} UTC.`);
+          throw refusal(429, `You have published ${done.n} posts in the last ${limits.windowMs / 3600000} hours, the most this demo allows. You can publish again after ${minute(done.first + limits.windowMs + 1)} UTC.`);
         }
+        const all = everyone.get(at - 3600000);
+        if (all.n >= limits.perHour) throw refusal(429, `The blog has taken ${all.n} posts in the last hour from everyone together, the most this demo takes. You can publish again after ${minute(all.first + 3600000 + 1)} UTC.`);
         const id = insert.run(accountId, author, body, at).lastInsertRowid;
         record.run(accountId, at);
-        trim.run(limits.keep);
+        trim.run(at - limits.keepMs, limits.keep);
         return shape(one.get(id));
       });
     },

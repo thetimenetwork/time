@@ -173,7 +173,8 @@ test('an action that was waiting for its receipt when the app stopped is named, 
   // The sentence is also shown after "Recheck" and "Save public receipt" of an action verified earlier (the SDK's
   // exportReceiptEvidence throws the same finding): it claims no signature of this moment and no waiting.
   assert.doesNotMatch(upgradeWhileWaiting(raised), /an action you signed \(|was waiting/);
-  assert.ok(app.includes("upgradeRequired(error); notice(failureNotice(error), 'error');"));
+  // run() names the finding before it shows the notice (one already shown, as an urgent one with "Try again", stays).
+  assert.ok(app.includes("upgradeRequired(error); if (error?.noticeShown !== true) notice(failureNotice(error), "));
   assert.equal(failureNotice(raised), upgradeWhileWaiting(raised));
 });
 
@@ -197,7 +198,8 @@ test('a notice never shows a gateway\'s answer as the wallet\'s own sentence, an
   // Every place of app.js and of the Security tab that shows an error's text goes through failureNotice.
   const app = await readFile(new URL('./app.js', import.meta.url), 'utf8'), securityUi = await readFile(new URL('./security-ui.mjs', import.meta.url), 'utf8');
   assert.equal(/notice\((`[^`]*\$\{)?(e|error)\.message/.test(app) || /notice\((e|error)\.message/.test(securityUi), false, 'a notice shows an error\'s text without asking whose words they are');
-  assert.equal(app.split('failureNotice(').length - 1, 5); assert.equal(securityUi.split('c.notice(failureNotice(error)').length - 1, 3);
+  // The approval window says one fixed sentence of a request it does not take (web audit, W-1): no failureNotice there.
+  assert.equal(app.split('failureNotice(').length - 1, 4); assert.equal(securityUi.split('c.notice(failureNotice(error)').length - 1, 3);
   assert.equal(app.includes('item.type'), false, 'app.js shows a field of the gateway\'s notification feed itself');
   // Nothing of the wallet follows a gateway's answer in a notice. Where the wallet adds a sentence of its own, that
   // sentence comes first, so the gateway's words always run to the end of the notice and a reader knows where they end.
@@ -224,7 +226,7 @@ test('the wallet page takes no version from the gateway and has the banner and t
   assert.match(app, /client\.getVerifiedState\(\{ include_upgrade: true \}, \{ timeoutMs: 15000 \}\)/);
   assert.match(app, /\.\.\.\(upgrades\?\.selection\(\) \|\| \{\}\) \}\);/);
   assert.match(app, /showUpgrade\(upgrades\.probeFailed\(error\)\)/);
-  assert.match(app, /readActivity\(\); upgrades\?\.unlocked\(\);/);
+  assert.match(app, /await openPrivate\(unlocked\.storageKey\); session\.storageKey = null; check\(\); upgrades\?\.unlocked\(\);/);
   // Nothing in the wallet reads the text of an error to decide about upgrades: the words an older
   // node or gateway uses for the unknown question appear nowhere in its code.
   for (const [name, source] of [['app.js', app], ['actions.mjs', actions]]) {

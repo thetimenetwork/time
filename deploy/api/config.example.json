@@ -16,12 +16,14 @@
   "rate_limit": { "per_second": 20, "burst": 60 },
   "trusted_proxies": [],
   "webhooks": [
-    { "account": "5", "url": "https://hooks.example/time-deposits", "secret": "REPLACE_WITH_A_LONG_RANDOM_SECRET_PER_WEBHOOK" }
+    { "account": "5", "url": "https://hooks.example/time-deposits", "secret": "REPLACE_WITH_THE_OUTPUT_OF: openssl rand -hex 32 (one per webhook)" }
   ],
   "max_lag_seconds": 120,
   "rpc_timeout_seconds": 10,
   "max_streams": 100,
   "max_stream_seconds": 900,
   "reserved_stream_clients": [],
+  "unfiltered_stream_percent": 20,
+  "max_proof_reads_per_client": 2,
   "serve_explorer": false
 }

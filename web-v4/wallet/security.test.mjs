@@ -6,11 +6,13 @@ import { readFile } from 'node:fs/promises';
 import { argon2Sync, webcrypto } from 'node:crypto';
 import '../../client-v4/time-sdk.js';
 import * as security from '../../client-v4/account-security.mjs';
-import { KDF, newDevice, sealVault, openVault, validateVaultRecord, vaultIntent } from './vault.mjs';
+import { KDF, newDevice, openVault, validateVaultRecord, vaultIntent } from './vault.mjs';
+import { sealLegacy } from './tests/legacy-vault.mjs';
 import { PendingReservations } from './guards.mjs';
 import { accountActionHeader } from './actions.mjs';
 import { importEncryptedBackup, BACKUP_FORMAT } from './vault-backup.mjs';
 import * as F from './security-flows.mjs';
+import { recoveryKitSalt } from './recovery-file.mjs';
 
 const SDK = globalThis.TimeSDK;
 const source = await readFile(new URL('./vendor/argon2-4.12.0.umd.min.js', import.meta.url), 'utf8'), umd = { exports: {} };
@@ -64,24 +66,22 @@ test('recovery sheet: every single typo and swap is caught, and a wrong length i
   await assert.rejects(F.decodeSheet(chars.slice(1) + 'U'), /wrong character/);
 });
 
-test('recovery sheet: the person types back two different groups', () => {
-  for (let i = 0; i < 50; i++) { const [a, b] = F.pickConfirmGroups(); assert.ok(a < b && a >= 0 && b < 14); }
-  const sheet = '000G 40R4 0M30 E209 185G R38E 1W81 24GK 2GAH C5RR 34D1 P70X 3RFM VEE0';
-  assert.equal(F.confirmGroups(sheet, [2, 9], ['oM3o', 'c5rr']), true);
-  assert.throws(() => F.confirmGroups(sheet, [2, 9], ['0M30', 'C5RS']), /Group 10 does not match/);
-});
-
 // ------------------------------------------------------------------ recovery passphrase
-test('recovery passphrase: made by the wallet, 72 bits; the same key every time, another per network and per account, as native Argon2id computes it', async () => {
+test('recovery passphrase: made by the wallet, 90 bits; the same key every time, another per network and per account, as native Argon2id computes it', async () => {
   const phrase = 'kerine netoji nesimo vebine';
   assert.ok(F.PASSPHRASE_KDF.memoryKiB >= KDF.memoryKiB && F.PASSPHRASE_KDF.iterations >= KDF.iterations && F.PASSPHRASE_KDF.parallelism === KDF.parallelism);
   // Generated: four words of three syllables, 6 bits each (16 consonants x 4 vowels): 72 bits, all values reachable.
   assert.equal(F.PASSPHRASE.bits, F.PASSPHRASE.words * F.PASSPHRASE.syllablesPerWord * 6);
   const seen = new Set();
-  for (let i = 0; i < 200; i++) { const p = F.generatePassphrase(); assert.match(p, /^([bdfghjklmnprstvz][aeio]){3}( ([bdfghjklmnprstvz][aeio]){3}){3}$/); assert.equal(F.parsePassphrase(p), p); seen.add(p); }
+  for (let i = 0; i < 200; i++) { const p = F.generatePassphrase(); assert.match(p, /^([bdfghjklmnprstvz][aeio]){3}( ([bdfghjklmnprstvz][aeio]){3}){4}$/); assert.equal(F.parsePassphrase(p), p); seen.add(p); }
   assert.equal(seen.size, 200);
   const zeros = F.generatePassphrase({ getRandomValues: b => b.fill(0) }), ones = F.generatePassphrase({ getRandomValues: b => b.fill(255) });
-  assert.deepEqual([zeros, ones], ['bababa bababa bababa bababa', 'zozozo zozozo zozozo zozozo']);
+  assert.deepEqual([zeros, ones], ['bababa bababa bababa bababa bababa', 'zozozo zozozo zozozo zozozo zozozo']);
+  // Five words are made; four (the words of an account made before) and five are read; any other count is refused.
+  assert.deepEqual([F.PASSPHRASE.words, F.PASSPHRASE.bits, [...F.PASSPHRASE.readWords]], [5, 90, [4, 5]]);
+  assert.equal(F.parsePassphrase('kerine netoji nesimo vebine'), 'kerine netoji nesimo vebine');
+  assert.equal(F.parsePassphrase('KERINE netoji nesimo vebine bipori'), 'kerine netoji nesimo vebine bipori');
+  for (const count of [3, 6]) assert.throws(() => F.parsePassphrase('kerine netoji nesimo vebine bipori nofoze'.split(' ').slice(0, count).join(' ')), /five of them, or four on an older account/);
   const a = await F.passphraseKey({ passphrase: phrase, networkId, accountId, argon2id });
   const again = await F.passphraseKey({ passphrase: ' KERINE  netoji-nesimo\tVebine ', networkId, accountId, argon2id });
   assert.equal(a.publicKey, again.publicKey);
@@ -96,18 +96,18 @@ test('recovery passphrase: made by the wallet, 72 bits; the same key every time,
   assert.equal((await F.keyFromSeed(new Uint8Array(native))).publicKey, a.publicKey);
   // Chosen passphrases are refused however long; a typo is named by its word.
   assert.equal(F.checkPassphrase(phrase, { passwords: [password, payment] }), true);
-  for (const chosen of [password, 'Seven lanterns over the quiet harbour', 'kerine netoji nesimo', 'kerine netoji nesimo vebine extra']) assert.throws(() => F.checkPassphrase(chosen), /4 words|not one the wallet makes/);
+  for (const chosen of [password, 'Seven lanterns over the quiet harbour', 'kerine netoji nesimo', 'kerine netoji nesimo vebine extra']) assert.throws(() => F.checkPassphrase(chosen), /five of them|not one the wallet makes/);
   assert.throws(() => F.parsePassphrase('kerine netoji nesumo vebine'), /Word 3/);
-  await assert.rejects(F.passphraseKey({ passphrase: 'Seven lanterns over the quiet harbour', networkId, accountId, argon2id: async () => { throw new Error('must not derive'); } }), /4 words/);
+  await assert.rejects(F.passphraseKey({ passphrase: 'Seven lanterns over the quiet harbour', networkId, accountId, argon2id: async () => { throw new Error('must not derive'); } }), /five of them/);
 });
 
 // ------------------------------------------------------------------ vault intents
 test('vault intents: login and payment keys in separate records, checked before any derivation', async () => {
   const signin = await newDevice(webcrypto), spend = await newDevice(webcrypto), old = await newDevice(webcrypto);
   const binding = publicKey => ({ networkId, name: 'alice', publicKey });
-  const login = await sealVault({ pkcs8: signin.secret.pkcs8 }, password, binding(signin.publicKey), argon2id, webcrypto, 'signin');
-  const pay = await sealVault({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend');
-  const legacy = await sealVault({ ...old.secret, nameSalt: 'cd'.repeat(32), intent: 'device' }, password, binding(old.publicKey), argon2id, webcrypto);
+  const login = await sealLegacy({ pkcs8: signin.secret.pkcs8 }, password, binding(signin.publicKey), argon2id, webcrypto, 'signin');
+  const pay = await sealLegacy({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend');
+  const legacy = await sealLegacy({ ...old.secret, nameSalt: 'cd'.repeat(32), intent: 'device' }, password, binding(old.publicKey), argon2id, webcrypto);
   assert.deepEqual(Object.keys(pay).sort(), ['binding', 'ciphertext', 'intent', 'iv', 'kdf', 'salt', 'version']);
   assert.equal(pay.version, 2); assert.equal(vaultIntent(pay), 'spend'); assert.equal(vaultIntent(legacy), 'device'); assert.equal(legacy.version, 1);
   // Each opens for what it is.
@@ -125,7 +125,7 @@ test('vault intents: login and payment keys in separate records, checked before 
   // No weaker or looser form: unknown intents, a version 2 without intent, a weaker KDF, extra plaintext.
   for (const bad of [{ ...pay, intent: 'device' }, { ...pay, intent: 'admin' }, (({ intent, ...rest }) => rest)(pay), { ...legacy, intent: 'spend' }, { ...pay, kdf: { ...pay.kdf, memoryKiB: 1024 } }, { ...pay, version: 3 }]) assert.throws(() => validateVaultRecord(bad), /Unsupported/);
   await assert.rejects(openVault(pay, payment, argon2id, webcrypto, 'owner'), /Invalid vault intent/);
-  await assert.rejects(sealVault({ pkcs8: spend.secret.pkcs8, nameSalt: 'cd'.repeat(32) }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend'), /contents/);
+  await assert.rejects(sealLegacy({ pkcs8: spend.secret.pkcs8, nameSalt: 'cd'.repeat(32) }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend'), /contents/);
   await assert.rejects(openVault(pay, password, argon2id, webcrypto, 'spend'), /Could not unlock/);
   // A backup file cannot carry a payment key into the login slot.
   const storage = new Storage();
@@ -160,8 +160,8 @@ test('securing: the same bytes the engine accepted, and the protocol-4 key is fo
   const storage = new Storage(), slots = F.vaultSlots(networkId, 'alice');
   const oldDevice = await newDevice(webcrypto), signin = await newDevice(webcrypto), spend = await newDevice(webcrypto);
   const binding = publicKey => ({ networkId, name: 'alice', publicKey });
-  storage.setItem(slots.login, JSON.stringify(await sealVault(oldDevice.secret, password, binding(oldDevice.publicKey), argon2id, webcrypto)));
-  const records = { signin: await sealVault({ pkcs8: signin.secret.pkcs8 }, password, binding(signin.publicKey), argon2id, webcrypto, 'signin'), spend: await sealVault({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend') };
+  storage.setItem(slots.login, JSON.stringify(await sealLegacy(oldDevice.secret, password, binding(oldDevice.publicKey), argon2id, webcrypto)));
+  const records = { signin: await sealLegacy({ pkcs8: signin.secret.pkcs8 }, password, binding(signin.publicKey), argon2id, webcrypto, 'signin'), spend: await sealLegacy({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend') };
   F.stageVaults(storage, slots, records);
   assert.throws(() => F.stageVaults(storage, slots, records), /earlier attempt/);
   const notYet = { devices: [{ public_key: oldDevice.publicKey, can_manage: true, can_spend: true }] };
@@ -363,8 +363,8 @@ test('this browser\'s login key was removed: the payment key can make a new one 
   const storage = new Storage(), slots = F.vaultSlots(networkId, 'alice'), binding = publicKey => ({ networkId, name: 'alice', publicKey });
   const gone = await newDevice(webcrypto), spend = await newDevice(webcrypto);
   assert.deepEqual(F.lostDeviceSlots(storage, slots, account), { stale: [], blocked: null });
-  storage.setItem(slots.login, JSON.stringify(await sealVault({ pkcs8: gone.secret.pkcs8 }, password, binding(gone.publicKey), argon2id, webcrypto, 'signin')));
-  storage.setItem(slots.spend, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend')));
+  storage.setItem(slots.login, JSON.stringify(await sealLegacy({ pkcs8: gone.secret.pkcs8 }, password, binding(gone.publicKey), argon2id, webcrypto, 'signin')));
+  storage.setItem(slots.spend, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, payment, binding(spend.publicKey), argon2id, webcrypto, 'spend')));
   assert.deepEqual(F.lostDeviceSlots(storage, slots, account), { stale: [slots.login, slots.spend], blocked: null });
   const withSpend = { ...account, devices: [...account.devices, device(spend.publicKey, 'spend')] };
   assert.match(F.lostDeviceSlots(storage, slots, withSpend).blocked, /still holds a payment key/);
@@ -464,4 +464,45 @@ test('a stake signed by the spend key has the form the engine checks: next nonce
   assert.deepEqual([withdraw.kind, withdraw.payload], [21, { entry: '3' }]);
   // The login key has no can_spend: no staking header is built for it.
   assert.throws(() => accountActionHeader({ account, publicKey: keys.signin.publicKey, networkId, kind: 'delegate', payload: {} }), /permission/);
+});
+
+test('a field that takes either recovery key tells the four words from a printed sheet by the text alone', async () => {
+  const sheet = await F.encodeSheet(F.newSheetSeed()), words = F.generatePassphrase();
+  for (const typed of [words, words.toUpperCase(), ` ${words.replace(/ /g, ' - ')} `, 'kerine netoji nesumo vebine', 'kerine netoji nesimo', 'kerinenetojinesimovebine']) assert.equal(F.recoveryPaperKind(typed), 'words', typed);
+  for (const typed of [sheet, sheet.toLowerCase(), sheet.replace(/ /g, ''), sheet.replace(/ /g, '-'), 'ABCD EFGH', '000G 40R4', '', '12345678']) assert.equal(F.recoveryPaperKind(typed), 'sheet', typed);
+  assert.equal(F.recoveryPaperKind(undefined), 'sheet');
+});
+
+test('words only: the words give two recovery keys of their own, neither of them the key of a Recovery Kit, as an independent Argon2id computes them', async () => {
+  const words = 'kerine netoji nesimo vebine bipori', registrationKey = 'ab'.repeat(32), enc = text => hex(new TextEncoder().encode(text));
+  // The salts: a domain of their own, the network, and the account's number or its registration key, as the first's.
+  const salt = F.secondWordsSalt(networkId, accountId), regSalt = F.secondWordsRegistrationSalt(networkId, registrationKey);
+  assert.equal(hex(salt), enc('TCDEVNET-RECOVERY-WORDS-SECOND-V1\0') + networkId + BigInt(accountId).toString(16).padStart(16, '0'));
+  assert.equal(hex(regSalt), enc('TCDEVNET-RECOVERY-WORDS-SECOND-REGISTRATION-V1\0') + networkId + registrationKey);
+  const first = await F.passphraseKey({ passphrase: words, networkId, accountId, argon2id }), second = await F.recoveryWordsSecondKey({ passphrase: words, networkId, accountId, argon2id });
+  const native = nonce => argon2Sync('argon2id', { message: Buffer.from(words), nonce: Buffer.from(nonce), parallelism: 1, tagLength: 32, memory: F.PASSPHRASE_KDF.memoryKiB, passes: F.PASSPHRASE_KDF.iterations });
+  const secondSeed = native(salt);
+  assert.equal((await F.keyFromSeed(new Uint8Array(secondSeed))).publicKey, second.publicKey);
+  assert.equal((await F.keyFromSeed(new Uint8Array(native(regSalt)))).publicKey, (await F.recoveryWordsSecondKey({ passphrase: ' ' + words.toUpperCase(), networkId, registrationKey, argon2id })).publicKey);
+  // Two keys, each its own, and none the key that locks a Recovery Kit of the same words.
+  const kitKey = native(recoveryKitSalt(new Uint8Array(16)));
+  assert.notEqual(first.publicKey, second.publicKey);
+  assert.equal(new Set([hex(native(F.passphraseSalt(networkId, accountId))), hex(secondSeed), hex(kitKey)]).size, 3);
+});
+
+test('the kind of an account\'s recovery keys is told from its words: both keys from the words is "words only"; a first key without its second is an account with a sheet', async () => {
+  const quick = async ({ password, salt }) => new Uint8Array(await webcrypto.subtle.digest('SHA-256', new Uint8Array([...password, ...salt])));
+  const words = 'kerine netoji nesimo vebine bipori', registrationKey = 'cd'.repeat(32), sheet = await newDevice(webcrypto);
+  const key = async (args, second = false) => (await F.passphraseKey({ passphrase: words, networkId, argon2id: quick, second, ...args })).publicKey;
+  const byNumber = [await key({ accountId }), await key({ accountId }, true)], byRegistration = [await key({ registrationKey }), await key({ registrationKey }, true)];
+  const kindOf = async (recover, registered = false) => {
+    const found = await F.accountWordsKeys({ passphrase: words, networkId, account: { id: accountId, public_key: registrationKey }, registered, isRecovery: k => recover.includes(k.publicKey), argon2id: quick });
+    return [found.first.publicKey, found.second?.publicKey ?? null];
+  };
+  assert.deepEqual(await kindOf(byNumber), byNumber, 'words only, by the account number');
+  assert.deepEqual(await kindOf([byNumber[0], sheet.publicKey]), [byNumber[0], null], 'words and a sheet');
+  assert.deepEqual(await kindOf(byRegistration, true), byRegistration, 'words only, from a protected sign-up');
+  assert.deepEqual(await kindOf([byRegistration[0], sheet.publicKey], true), [byRegistration[0], null]);
+  // Words that are not the account's: the first key by number is returned, to be refused, and nothing more is computed.
+  assert.deepEqual(await kindOf([sheet.publicKey]), [byNumber[0], null]);
 });

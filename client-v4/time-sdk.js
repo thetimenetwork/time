@@ -52,6 +52,45 @@
     if (/UPGRADE_REQUIRED/i.test(text)) text = 'The gateway reports: ' + text;
     const error = new Error(text); error.gateway = true; return error;
   }
+  // ---- A service that is busy (the web audit's W-9; seen on a trial network on 24 November 2026, where a proxy's limit
+  // per caller refused 9 requests of 1,130 and twelve steps of a check failed for them).
+  // A proxy, a gateway or an API refuses a request for load with status 429 (too many requests from this caller) or 503
+  // (busy), and may say in Retry-After how many whole seconds to wait. Such an answer is told by its STATUS alone,
+  // before anything of it is read: it is never a finding about the network, its body is never parsed or shown, and the
+  // request it refused was not acted on, so it may be sent again. The numbers:
+  // - tries: at most 4 sends of one read, the first included;
+  // - budgetMs: 20 seconds for one read from its first send, so that an action that waits says something in that time;
+  // - submitBudgetMs: 30 seconds to send a signed action (the same bytes), protectiveBudgetMs: 2 minutes for one that
+  //   protects an account (a freeze, a cancellation, new recovery keys), with at most submitTries sends;
+  // - minMs and maxMs: a wait is 1 to 30 seconds, whatever Retry-After says;
+  // - firstMs: without Retry-After, 2 seconds, then 4, 8 and 16 (capped at maxMs);
+  // - jitter: each wait is lengthened by up to a quarter, never shortened below what was asked, so that wallets behind
+  //   one address that were refused together do not all ask again in the same instant.
+  const BUSY = Object.freeze({ tries: 4, budgetMs: 20000, submitBudgetMs: 30000, protectiveBudgetMs: 120000, submitTries: 10, minMs: 1000, maxMs: 30000, firstMs: 2000, jitter: 0.25 });
+  function busyStatus(status) { return status === 429 || status === 503; }
+  // Retry-After in whole seconds (the form the proxy, the gateway and the API send), held to 1 to 30 seconds; null when
+  // absent or not in that form.
+  function retryAfterMs(value) {
+    const seconds = String(value ?? '').trim();
+    if (!/^[0-9]{1,6}$/.test(seconds)) return null;
+    return Math.min(BUSY.maxMs, Math.max(BUSY.minMs, Number(seconds) * 1000));
+  }
+  // How long to wait before send number `attempt + 1` after a busy answer: Retry-After when given, else 2, 4, 8, 16 s;
+  // plus up to a quarter more (`random` in [0, 1)); never more than 30 s.
+  function busyDelayMs(retryAfter, attempt = 1, random = Math.random) {
+    const base = retryAfter ?? Math.min(BUSY.maxMs, BUSY.firstMs * 2 ** Math.max(0, attempt - 1));
+    const share = Math.min(1, Math.max(0, Number(random()) || 0));
+    return Math.min(BUSY.maxMs, Math.round(base * (1 + BUSY.jitter * share)));
+  }
+  // The error of a busy answer: fixed words, the code 'BUSY', the status, and the wait it asked for (null if none).
+  function busyError(status, retryAfter = null) {
+    const error = new Error('BUSY: the service is busy; ask again later');
+    error.code = 'BUSY'; error.busy = true; error.status = status; error.retryAfterMs = retryAfter; return error;
+  }
+  function isBusy(error) { return typeof error === 'object' && error !== null && error.busy === true && error.code === 'BUSY'; }
+  // The busy error of an answer (a fetch Response), told by its status and its Retry-After header, or null. For the
+  // requests a wallet makes itself, to other services.
+  function busyAnswer(response) { return busyStatus(response?.status) ? busyError(response.status, retryAfterMs(response.headers?.get?.('Retry-After'))) : null; }
   // The version of a verified state, if this build implements it. A later version throws
   // UPGRADE_REQUIRED; a state that names no version this network can have is refused.
   function requireKnownVersion(state) {
@@ -582,7 +621,10 @@
   function loginBytes(message) { return concat(utf8.encode('TCDEVNET-LOGIN-V1\0'), utf8.encode(JSON.stringify(loginMessage(message, { account: { id: message.accountId, auth_epoch: message.authEpoch }, publicKey: message.publicKey })))); }
   async function signLogin(challenge, { account, publicKey, privateKey }) { const message = loginMessage(challenge, { account, publicKey }); return { message, signature: bytesToHex(new Uint8Array(await crypto.subtle.sign('Ed25519', privateKey, loginBytes(message)))) }; }
   function sameOriginURL(value) { const url = new URL(value, root.location?.origin); invariant(url.origin === root.location?.origin, 'Gateway must use the wallet origin'); return url; }
-  function createClient({ gateway = root.location?.origin, verifier, trust, checkpointStorage = !root.process?.versions?.node ? root.localStorage : undefined, fetcher = root.fetch?.bind(root) } = {}) {
+  // `onBusy`: told of each busy answer ({kind, busy: true, retryInMs, answer: its status}), of each wait for one
+  // ({kind, busy: true, retryInMs}), and of an answer after either ({kind, busy: false}); `kind` is the route.
+  // `timing`: {now, sleep, random}, for tests.
+  function createClient({ gateway = root.location?.origin, verifier, trust, checkpointStorage = !root.process?.versions?.node ? root.localStorage : undefined, fetcher = root.fetch?.bind(root), onBusy = null, timing = {} } = {}) {
     let network, light, lightPromise;
     let latestHeight = -1n;
     const base = new URL(gateway);
@@ -590,8 +632,56 @@
     invariant(trust?.app_version==='4', 'V4 requires an independently installed application-4 trust manifest');
     // From the pinned trust data, never from the gateway: see nodesReportUpgrades.
     const reportsUpgrades=nodesReportUpgrades(trust);
-    async function request(path, options = {}) {
-      const response = await fetcher(new URL(path, base), { cache: 'no-store', credentials: 'same-origin', redirect: 'error', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(root.process?.versions?.node && options.method === 'POST' ? { Origin: base.origin } : {}), ...options.headers } });
+    // The one place where this client's requests go out (the network, light blocks, proofs, receipts, submit, and
+    // whatever a wallet asks through `request`). A busy answer (see BUSY) is waited for: no request of the same kind
+    // (route) goes out before its wait is over, whoever sends it, so that a refused read does not multiply; a read (GET)
+    // is sent again after the wait, at most `tries` times within `budgetMs`, and the same read asked again while it
+    // waits joins it; anything else is sent again only when its caller says it is the same bytes (`again`).
+    const clock = { now: () => Date.now(), sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), random: Math.random, ...timing };
+    const holds = new Map(), busyKinds = new Set(), lines = new Map();
+    const tell = event => { try { onBusy?.(event); } catch { /* the hook's own trouble is not the request's */ } };
+    async function request(path, options = {}, { budgetMs = BUSY.budgetMs, tries = BUSY.tries, again } = {}) {
+      const url = new URL(path, base), method = String(options.method || 'GET').toUpperCase(), retry = again ?? method === 'GET';
+      if (method !== 'GET' || options.signal) return paced(url, options, { budgetMs, tries, retry });
+      const key = url.href, line = lines.get(key);
+      if (line) return line.then(value => structuredClone(value));
+      const fresh = paced(url, options, { budgetMs, tries, retry }).finally(() => { lines.delete(key); });
+      lines.set(key, fresh); return fresh;
+    }
+    async function paced(url, options, { budgetMs, tries, retry }) {
+      const kind = url.pathname, until = clock.now() + budgetMs;
+      let own = null, status = 503, told = false;
+      for (let attempt = 1; ; attempt++) {
+        const hold = holds.get(kind) ?? 0, left = hold - clock.now();
+        if (left > 0) {
+          // Waiting for a wait another request of this kind was told: a share of jitter of its own on top.
+          const pause = hold === own ? left : Math.min(BUSY.maxMs, left + Math.round(left * BUSY.jitter * Math.min(1, Math.max(0, Number(clock.random()) || 0))));
+          if (clock.now() + pause > until) throw busyError(status, left);
+          tell({ kind, busy: true, retryInMs: pause }); told = true;
+          await clock.sleep(pause);
+          if (options.signal?.aborted) throw options.signal.reason ?? Object.assign(new Error('Aborted'), { name: 'AbortError' });
+        }
+        try {
+          const result = await ask(url, options);
+          // An answer after a wait: the service takes requests of this kind again, so no later one waits for an older
+          // wait, and the hook hears it.
+          if (busyKinds.delete(kind) || told) { holds.delete(kind); tell({ kind, busy: false }); }
+          return result;
+        } catch (error) {
+          if (!isBusy(error)) throw error;
+          status = error.status;
+          const delay = busyDelayMs(error.retryAfterMs, attempt, clock.random);
+          own = Math.max(holds.get(kind) ?? 0, clock.now() + delay); holds.set(kind, own); busyKinds.add(kind);
+          tell({ kind, busy: true, retryInMs: delay, answer: error.status }); told = true;
+          if (!retry || attempt >= tries || clock.now() + delay > until) throw error;
+        }
+      }
+    }
+    async function ask(url, options) {
+      const response = await fetcher(url, { cache: 'no-store', credentials: 'same-origin', redirect: 'error', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(root.process?.versions?.node && options.method === 'POST' ? { Origin: base.origin } : {}), ...options.headers } });
+      // A refusal for load, by its status alone: nothing of it is read.
+      const busy = busyAnswer(response);
+      if (busy) { try { await response.body?.cancel?.(); } catch { /* nothing to read */ } throw busy; }
       let text;
       if (response.body?.getReader) {
         const reader = response.body.getReader(), chunks = []; let size = 0;
@@ -769,8 +859,9 @@
         const started=Date.now(),trusted=lc.getCheckpoint()?.height,wait=Math.max(0,Math.min(5000,until-started));let again=false,proof;
         // A gateway that holds the request longer than it promised is treated as "pending".
         const limit=typeof root.AbortSignal?.timeout==='function'?{signal:root.AbortSignal.timeout(wait+8000)}:{};
-        try{proof = await request('/api/receipt?hash=' + hash.toUpperCase()+'&wait='+wait+fast+(trusted?'&trusted='+trusted:''),limit);}
-        catch(error){if(error?.name!=='TimeoutError'&&error?.name!=='AbortError')throw (await ownVersionFinding(hash,ownCheckMs))||error;proof={pending:true};}
+        // A busy answer is "not yet": the next ask waits for the wait it was told, within this wait's own time.
+        try{proof = await request('/api/receipt?hash=' + hash.toUpperCase()+'&wait='+wait+fast+(trusted?'&trusted='+trusted:''),limit,{budgetMs:Math.max(1000,until-started)});}
+        catch(error){if(!isBusy(error)&&error?.name!=='TimeoutError'&&error?.name!=='AbortError')throw (await ownVersionFinding(hash,ownCheckMs))||error;proof={pending:true};}
         if (!proof.pending) {
           try{return await checkReceipt(proof,hash);}catch(error){if(!/ROLLBACK|CHECKPOINT_MISMATCH|canonical receipt block hash proof missing/.test(error.message))throw error;again=true;}
         }
@@ -785,14 +876,21 @@
       const found=await ownVersionFinding(hash,ownCheckMs);if(found)throw found;
       const error = new Error('Transaction pending; retain its signed bytes and hash. Do not send a replacement blindly.'); error.hash = hash; throw error;
     }
-    async function submit(tx, { wait = true } = {}) {
-      const metadata = await getNetwork(), action = decodeAction(tx); invariant(action.networkId === metadata.networkId, 'Wrong transaction network');
-      const current=await getVerifiedState(action.from === MAX_U64.toString() ? { public_keys: [action.publicKey] } : { ids: [action.from] });
-      // Decided from the state just verified (checkMerchantQuote reads its version), not from
-      // the version the gateway reports, which is the network's first one for ever.
-      if(action.kind===10)checkMerchantQuote(action.payload.reference,action.nonce,current.state);
-      const hash = await transactionHash(tx), result = await request('/api/submit', { method: 'POST', body: JSON.stringify({ tx: base64(tx) }) });
-      invariant(result.hash?.toUpperCase() === hash, 'Gateway returned another transaction hash'); return wait ? waitReceipt(hash, { action }) : { hash, pending: true };
+    // `busyBudgetMs`: how long the same bytes may be sent again after busy answers (BUSY.submitBudgetMs unless given;
+    // a wallet gives BUSY.protectiveBudgetMs to an action that protects an account). They are never signed again: a
+    // signed action is taken once, by its hash. A busy error that ends it carries the hash.
+    async function submit(tx, { wait = true, busyBudgetMs = BUSY.submitBudgetMs } = {}) {
+      invariant(Number.isSafeInteger(busyBudgetMs) && busyBudgetMs >= 1000 && busyBudgetMs <= 600000, 'busyBudgetMs is a number of milliseconds from 1000 to 600000');
+      const hash = await transactionHash(tx);
+      try {
+        const metadata = await getNetwork(), action = decodeAction(tx); invariant(action.networkId === metadata.networkId, 'Wrong transaction network');
+        const current=await getVerifiedState(action.from === MAX_U64.toString() ? { public_keys: [action.publicKey] } : { ids: [action.from] });
+        // Decided from the state just verified (checkMerchantQuote reads its version), not from
+        // the version the gateway reports, which is the network's first one for ever.
+        if(action.kind===10)checkMerchantQuote(action.payload.reference,action.nonce,current.state);
+        const result = await request('/api/submit', { method: 'POST', body: JSON.stringify({ tx: base64(tx) }) }, { again: true, budgetMs: busyBudgetMs, tries: BUSY.submitTries });
+        invariant(result.hash?.toUpperCase() === hash, 'Gateway returned another transaction hash'); return wait ? await waitReceipt(hash, { action }) : { hash, pending: true };
+      } catch (error) { if (isBusy(error)) error.hash = hash; throw error; }
     }
     async function perform({ kind, account: selected, publicKey, privateKey, payload }) {
       const { state } = await getVerifiedState({ ids: [String(selected.id)] }), current = state.accounts.find(a => a.id === String(selected.id));
@@ -962,5 +1060,5 @@
       prepared.then(value => { invariant(value && ['login', 'payment'].includes(value.type), 'Unsupported wallet request'); resolvedRequest = value; send(); }, error => { settled = true; finish(error); }).catch(error => { settled = true; finish(error); });
     });
   }
-  root.TimeSDK = Object.freeze({ KINDS, MAX_U64: MAX_U64.toString(), createClient, buildAction, signAction, transactionHash, decodeAction, canonicalPayload, nameCommitment, deviceProofBytes, recoveryProofBytes, loginMessage, loginBytes, signLogin, requestWallet, compactBitcoinReceipt, sponsorConsentBytes, sponsorConsentExpiry, SPONSOR_CONSENT_MAX_AHEAD_MICROS, bitcoinBidCommitment, publicHeadersAction, orderReference,decodeOrderReference,checkMerchantQuote,decimal, PROTOCOL_FEE_MICROS, isFee, networkFee, nameSkeleton, distinctNames, waitsSurviveStops, stoppedMicros, securityNow, securityDeadline, protectedRegistration, REGISTER_PROTECTED_KIND, registrationRoleBytes, protectedSetup, protectedNameCommitment, signProtectedRegistration, FIRST_VERSION, IMPLEMENTED, KNOWN_VERSIONS, sinceFirstVersion, knowsVersion, knowsPlan, requireKnownVersion, isUpgradeRequired, upgradeStatusOf, nodesReportUpgrades, SIGNAL_RULES, SIGNAL_ADMISSION_MARGIN_MICROS, SIGNAL_SHARES, signalSupport, signalWithdrawal, samePlan, signalFactsOf, signalStatusOf, judgeSignal, hexToBytes, bytesToHex, base64, fromBase64, concat, sameOriginURL });
+  root.TimeSDK = Object.freeze({ KINDS, MAX_U64: MAX_U64.toString(), BUSY, isBusy, busyAnswer, busyDelayMs, retryAfterMs, createClient, buildAction, signAction, transactionHash, decodeAction, canonicalPayload, nameCommitment, deviceProofBytes, recoveryProofBytes, loginMessage, loginBytes, signLogin, requestWallet, compactBitcoinReceipt, sponsorConsentBytes, sponsorConsentExpiry, SPONSOR_CONSENT_MAX_AHEAD_MICROS, bitcoinBidCommitment, publicHeadersAction, orderReference,decodeOrderReference,checkMerchantQuote,decimal, PROTOCOL_FEE_MICROS, isFee, networkFee, nameSkeleton, distinctNames, waitsSurviveStops, stoppedMicros, securityNow, securityDeadline, protectedRegistration, REGISTER_PROTECTED_KIND, registrationRoleBytes, protectedSetup, protectedNameCommitment, signProtectedRegistration, FIRST_VERSION, IMPLEMENTED, KNOWN_VERSIONS, sinceFirstVersion, knowsVersion, knowsPlan, requireKnownVersion, isUpgradeRequired, upgradeStatusOf, nodesReportUpgrades, SIGNAL_RULES, SIGNAL_ADMISSION_MARGIN_MICROS, SIGNAL_SHARES, signalSupport, signalWithdrawal, samePlan, signalFactsOf, signalStatusOf, judgeSignal, hexToBytes, bytesToHex, base64, fromBase64, concat, sameOriginURL });
 })(globalThis);

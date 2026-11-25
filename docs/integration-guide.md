@@ -88,6 +88,8 @@ With `account`, the stream carries the payments **to** that account (`direction=
 
 Both are at-least-once hints. Keep the poll as the source of truth: within the heights an index holds, the cursor cannot miss a payment, and a cursor from below them is refused, not skipped. A webhook covers the blocks made since it was configured, also those made while the API was down (they are sent when it is back); it does not cover the history before, a queue that overflowed, or an index that was rebuilt (webhooks then start again at the chain's height at that moment). If your deposit reader uses the stream, have the operator list its address in `reserved_stream_clients`: other readers can be put out when places run out.
 
+A wallet with its page open has a lighter stream, `GET /v1/touches?account=5`: one `touch` event, `{"source": "index", "proven": false, "account": "5", "height": "1234"}`, for each block that names the account (`deploy/api/README.md`, "Hints for wallets"). It says nothing else: on a touch, read the account's state with a proof and show what that says. It is not for deposits. Nothing is sent again: a wallet that reconnects reads its state, and a missed touch costs nothing.
+
 ### Deposits above the sender's daily limit (kind 75)
 
 An account with security rules pays within a daily limit. Above it, the payment is asked for (`kind` 75, `request`), waits, and is completed by a second action (`kind` 75, `execute`). Large deposits arrive this way.
@@ -270,7 +272,7 @@ The customer can check the withdrawal the same way, from their side: `GET /v1/ac
 
 ## Networks with the account-safety settings
 
-A network's genesis may carry three settings (`spec/settings.md`). Every proven state carries them: `TimeSDK.distinctNames(state)`, `TimeSDK.waitsSurviveStops(state)` and `TimeSDK.protectedRegistration(state)` read them. On a network without them nothing in this guide changes. With them:
+A network's genesis may carry three settings for account safety (`spec/settings.md`). Every proven state carries them: `TimeSDK.distinctNames(state)`, `TimeSDK.waitsSurviveStops(state)` and `TimeSDK.protectedRegistration(state)` read them. On a network without them nothing in this guide changes. With them:
 
 - **Names that look alike (`distinct_names`).** A new name that looks like an existing one (`paypa1` beside `paypal`) is refused. Nothing changes for you: find and credit deposits by account number and by the payer's number (`from`), never by a name.
 - **Waits that survive a stop (`waits_survive_stops`).** The moments in a security row are on the clock of the waits, the chain's time less the total of its stops (`stopped_micros`), not on the chain's time ("Withdrawals above the daily limit"). For your own paying account: compare `ready_elapsed_micros` and `frozen_until_elapsed_micros` with `security_clock.now_elapsed_micros`; as a date, a moment is itself plus `stopped_micros` plus the genesis time, and while it has not come that date is the earliest it can come ("not before"). The expiry of approvals you sign stays on the chain's time. An alert watch for your account (`deploy/watch/README.md`) counts the same way.
@@ -279,7 +281,10 @@ A network's genesis may carry three settings (`spec/settings.md`). Every proven 
 ## Limits and errors
 
 - 429 `rate_limited`: wait `Retry-After` seconds. Each client address has a budget (60 at once, 20 more a second, unless the operator set it otherwise). A list or a block takes 1 from it; an action by hash, an account and every other answer that comes with a proof take 5; a submission or a stream 10. The table of routes in `deploy/api/README.md` has each one.
+- 429 `too_many_reads`: your address has two answers with a proof (an account, its state, the validators, the proof of a block, a light block) under way already. Ask in turn, or at most two at once; the operator can allow more (`max_proof_reads_per_client`). Identical requests within a second share one read, so asking the same account twice at once costs the service nothing more.
+- 503 `busy`: every place for a proof read is taken and the short wait in line ran out. Wait `Retry-After` seconds.
 - 503 `state_unavailable`: no fresh proof of the state could be had (the node is behind or unreachable). Indexed routes still answer.
+- 403 `cross_site_refused`: a browser loaded an address of the API for a page of another site as an image, a script, a frame or the like. Read the API with `fetch` from an origin the operator allows, or from your servers.
 - `/v1/health` 503 with `index_behind`: the index is older than the operator allows. Do not conclude that a deposit is missing; wait.
 - 409 `cursor_below_index_start`: your cursor is from below the start of this index (step 1, "An index does not hold what lies below its start"). Read the missing heights from an index that holds them before you go on without a cursor.
 - Pages hold at most 200 rows. Every parameter has one accepted form, listed in `GET /v1/openapi.json`.

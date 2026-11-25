@@ -1,3 +1,4 @@
+import { isBusyError, askWhenFree, BUSY_NOTHING, BUSY_KEPT, BUSY_KEPT_PRESS_AGAIN, BUSY_FAUCET, BUSY_FAUCET_ASKED } from './busy.mjs';
 export function accountActionHeader({ account, publicKey, networkId, kind, payload }) {
   if (!account || !Array.isArray(account.devices)) throw new Error('Verified account required.');
   const device = account.devices.find(d => d.public_key === publicKey);
@@ -108,15 +109,37 @@ export function registrationWords(error) { return REGISTRATION_WORDS_INTRO + pla
 // marked (`error.faucet === true`) and shown by the same rule, after a sentence that names it.
 export const FAUCET_WORDS_INTRO = 'The test faucet refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ';
 export function faucetWords(error) { return FAUCET_WORDS_INTRO + plainWords(error); }
+// An error whose words are not the wallet's own is told by its kind, in fixed words (web audit of November 2026,
+// W-2). The wallet's own refusals are plain Errors with its sentences, and so are the SDK's; the verifier's wrapper
+// gives its own words or a code and fixed words (client-v4/proof-verifier.mjs). Anything else comes from the
+// browser's or the engine's machinery, whose messages may quote what came from outside: JSON.parse quotes the start
+// of a text it cannot read, BigInt the text it cannot convert, a module that does not load its address.
+const FOREIGN_WORDS = Object.freeze({
+  SyntaxError: 'An answer could not be read, so nothing was done with it.',
+  TypeError: 'The network could not be reached, or an answer could not be used. Check your connection and try again.',
+  RangeError: 'A number in an answer is out of range, so nothing was done with it.',
+  AbortError: 'No answer came in time. Try again.',
+  TimeoutError: 'No answer came in time. Try again.',
+});
+/// The kinds of error whose name the notice may add, in brackets, after the fixed words.
+const FOREIGN_NAMES = new Set([...Object.keys(FOREIGN_WORDS), 'ReferenceError', 'EvalError', 'URIError', 'CompileError', 'LinkError', 'RuntimeError', 'NetworkError', 'NotAllowedError', 'SecurityError', 'InvalidStateError', 'QuotaExceededError', 'OperationError', 'DataError', 'NotSupportedError']);
+export const FOREIGN_ERROR = 'Something went wrong that this wallet cannot describe. Nothing was signed that you did not review. Try again.';
+export function foreignWords(error) {
+  let name = ''; try { name = typeof error?.name === 'string' ? error.name : ''; } catch { name = ''; }
+  return (Object.hasOwn(FOREIGN_WORDS, name) ? FOREIGN_WORDS[name] : FOREIGN_ERROR) + (FOREIGN_NAMES.has(name) ? ` (${name})` : '');
+}
 // What the notice says after a failed step: the wallet's sentence about a receipt it could no
-// longer check, a gateway's answer marked as such, or the error's own text (the wallet's, the
-// SDK's or the verifier's).
+// longer check, a gateway's answer marked as such, the error's own text when it is a plain Error
+// (the wallet's, the SDK's or the verifier wrapper's), or fixed words for any other error.
 export function failureNotice(error, fallback = 'Action failed.') {
   const waiting = upgradeWhileWaiting(error); if (waiting) return waiting;
+  // A network that stayed busy (busy.mjs): before anything was sent, or with a signed action kept (it carries the hash).
+  if (isBusyError(error)) return typeof error.hash !== 'string' ? BUSY_NOTHING : error.sameButton === true ? BUSY_KEPT_PRESS_AGAIN : BUSY_KEPT;
   if (typeof error === 'object' && error !== null && error.gateway === true) return gatewayWords(error);
   if (typeof error === 'object' && error !== null && error.registrationService === true) return registrationWords(error);
   if (typeof error === 'object' && error !== null && error.faucet === true) return faucetWords(error);
-  return (typeof error?.message === 'string' && error.message) || fallback;
+  if (!(error instanceof Error) || typeof error.message !== 'string' || error.message === '') return fallback;
+  return Object.getPrototypeOf(error) === Error.prototype ? error.message : foreignWords(error);
 }
 // A line of the gateway's notification feed (/api/notifications), which no proof covers. Only a
 // short name in small letters and a block height are taken from it, and the line says whose
@@ -268,12 +291,21 @@ export const FAUCET_SAYS = Object.freeze({
   node_refused: SENT_LATER,
 });
 const HASH = /^[0-9a-fA-F]{64}$/, NUMBER = /^(0|[1-9][0-9]{0,19})$/;
-export async function askFaucet({ origin, account, networkId, fetch: get = globalThis.fetch, timeoutMs = 15000, maxBytes = 65536 }) {
+/// `busy`: {sdk, timing, onBusy}, how a busy answer is waited for (busy.mjs, askWhenFree); without it, a busy answer is
+/// read as any other refusal.
+export async function askFaucet({ origin, account, networkId, fetch: get = globalThis.fetch, timeoutMs = 15000, maxBytes = 65536, busy = null }) {
   if (typeof origin !== 'string' || origin === '') throw new Error('The service of this wallet names no test faucet.');
   if (!NUMBER.test(String(account ?? ''))) throw new Error('Open your account first.');
   const options = { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' };
   const read = async (path, init = {}) => {
-    const response = await get(origin + path, { ...options, ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const send = () => get(origin + path, { ...options, ...init, signal: AbortSignal.timeout(timeoutMs) });
+    let response;
+    // The question is asked again after a busy answer; a request for test time is sent once, since a busy answer to it
+    // may come after the faucet sent something (its refusals "the node refused it for now" say 503, Retry-After 30).
+    // The faucet's own refusals to it (its limits of a day, "not giving now") are read as before (busy.mjs, inOwnForm).
+    const once = init.method === 'POST';
+    try { response = busy ? await askWhenFree(send, once ? { ...busy, tries: 1, ownForm: true } : busy) : await send(); }
+    catch (error) { if (isBusyError(error)) throw Object.assign(new Error(once ? BUSY_FAUCET_ASKED : BUSY_FAUCET), { faucetBusy: true }); throw error; }
     const reader = response.body?.getReader(), parts = []; let size = 0;
     if (reader) for (;;) { const { done, value } = await reader.read(); if (done) break; size += value.byteLength; if (size > maxBytes) { await reader.cancel().catch(() => {}); throw new Error('The answer of the test faucet is too long.'); } parts.push(value); }
     const bytes = new Uint8Array(size); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.byteLength; }
@@ -281,13 +313,13 @@ export async function askFaucet({ origin, account, networkId, fetch: get = globa
     return { ok: response.ok, status: response.status, answer };
   };
   let facts = null;
-  try { const got = await read('/v1/faucet'); if (got.ok) facts = got.answer; } catch { facts = null; }
+  try { const got = await read('/v1/faucet'); if (got.ok) facts = got.answer; } catch (error) { if (error.faucetBusy === true) throw error; facts = null; }
   if (!facts || typeof facts !== 'object') throw new Error('The test faucet does not answer. Nothing was asked. Try again in a minute.');
   if (facts.network_id !== networkId) throw new Error('The test faucet answers for another network. Nothing was asked.');
   if (facts.giving !== true) throw new Error(NOT_GIVING);
   let got;
   try { got = await read('/v1/faucet/grants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account: String(account) }) }); }
-  catch { throw new Error('The test faucet could not be reached, or did not answer in time. If it sent test time anyway, your balance shows it in a moment.'); }
+  catch (error) { if (error.faucetBusy === true) throw error; throw new Error('The test faucet could not be reached, or did not answer in time. If it sent test time anyway, your balance shows it in a moment.'); }
   const answer = got.answer;
   if (got.status === 202 && HASH.test(String(answer?.hash ?? ''))) return { hash: answer.hash, faucetAccount: NUMBER.test(String(facts.account ?? '')) ? String(facts.account) : null };
   if (got.ok) throw new Error('The test faucet gave an answer that this wallet cannot use. If it sent test time anyway, your balance shows it in a moment.');
@@ -307,18 +339,24 @@ export function faucetReceiptPays(receipt, accountId, faucetAccount = null) {
 }
 
 // ---------------------------------------------------------------- the Keys screen
+/// The quiet line on the card of the recovery words of an account whose recovery is one paper (words only) and whose proven
+/// balance is more than an hour of seconds: `text`, then `link`, which opens "New recovery words" with a kit selected.
+export const KIT_HINT = Object.freeze({ text: 'Your recovery is one paper.', link: 'Add a Recovery Kit so that a paper alone is not enough.' });
+export const KIT_HINT_ABOVE_MICROS = 3600n * 1000000n;
 // What the Keys screen says: each thing that opens the account, what it does, where it is, when it is needed and
 // what to do without it, marked in words as one for every day or one to keep safe. app.js draws it.
 // - An account with one key: its name and its password every day, its backup file to keep safe.
 // - A protected account (security-flows.mjs, accountSecured): the login password and the payment password every day,
-//   the recovery sheet and the recovery passphrase to keep safe, and this browser, which holds the keys.
+//   the recovery words (and a Recovery Kit when the account has one) to keep safe, and this browser, which holds the
+//   keys. What is said of recovery follows the kind of recovery keys this browser knows the account has.
 // The sentences say only what the wallet's code does: which key signs what is in signing.mjs and security-flows.mjs,
 // the backup file in vault-backup.mjs and BACKUP_FORMAT.md, recovery on another browser in security-ui.mjs.
 // `limit` and `waiting` are words already ("60 seconds", "48 hours"). `paymentKeyHere`: this browser holds the payment
 // key of a protected account. `guardians`: the account has a guardian policy. `otherKeys`: keys of an account with one
 // key per browser that are not this browser's. `paused`: payments of a protected account are paused (Home,
-// Protection): its limit is then no amount to name as what the payment password pays.
-export function keysView({ protectedAccount, name, limit = '', waiting = '', paymentKeyHere = true, guardians = false, otherKeys = 0, paused = false }) {
+// Protection): its limit is then no amount to name as what the payment password pays. `balanceMicros`: the proven balance,
+// for the quiet line of a recovery that is one paper (KIT_HINT).
+export function keysView({ protectedAccount, name, limit = '', waiting = '', paymentKeyHere = true, guardians = false, otherKeys = 0, paused = false, recoveryKind = null, balanceMicros = '0' }) {
   const day = (id, title, rows, mark = 'Every day') => ({ id, title, mark: 'day', markText: mark, rows });
   const safe = (id, title, rows) => ({ id, title, mark: 'safe', markText: 'Keep safe', rows });
   const lede = `@${name}: what you need every day, and what to keep safe.`;
@@ -333,11 +371,34 @@ export function keysView({ protectedAccount, name, limit = '', waiting = '', pay
     ] };
   }
   const wait = waiting || 'the waiting period';
-  return { lede, note: 'The recovery sheet and the recovery passphrase are your two recovery keys, on paper. Lost both? The account keeps working, but nobody can replace a lost password any more. Make new papers while you still have one of them.', cards: [
-    day('login', 'Login password', [['What it does', 'Opens this wallet and signs you in to websites. It cannot pay.'], ['Where it is', 'In your head, or in a password manager. It unlocks the login key that this browser keeps.'], ['When you need it', 'Each time you open the wallet.'], ['If you forget it', `In another browser, choose “Recover with my recovery sheet”. It needs both recovery papers, and the account waits ${wait}, frozen, before that browser takes over.`], ['If someone may know it', 'Under “Change something” below, make a new login password. It needs your payment password.']]),
-    day('payment', 'Payment password', [['What it does', paused ? 'Payments are paused (see Home): it pays nothing at once now. It can start a payment that waits, and it can freeze the account.' : `Pays up to ${limit || 'your daily limit'} at once, fees included: your daily limit, which refills over 24 hours. It can also freeze the account.`], ['Where it is', paymentKeyHere ? 'In your head, apart from the login password. It unlocks the payment key that this browser keeps.' : 'In your head. Its payment key is kept in another browser of yours, not in this one.'], ['When you need it', 'Each time you pay or stake.'], ['If you forget it', 'Recover with both papers in another browser, as for the login password.'], ['If someone may know it', 'Freeze the account at once, on Home. Then make a new payment password under “Change something”: it needs one recovery paper.']], 'When you pay'),
-    safe('sheet', 'Recovery sheet', [['What it does', `With the passphrase: replaces lost passwords, after ${wait}. Alone: freezes the account. With your payment password: pays more than the limit at once, ends a freeze, or makes new papers.`], ['Where it is', 'On paper, somewhere safe, away from this device. It is stored nowhere else.'], ['When you need it', 'Never day to day.'], ['If you lose it', 'Make new papers at once under “Change something”. It needs your payment password and the passphrase. The old papers then stop working.']]),
-    safe('phrase', 'Recovery passphrase', [['What it does', 'The same as the sheet: the two are equal halves. Kept apart, nobody who finds one of them has both.'], ['Where it is', 'Four words on another paper, kept in another place than the sheet. It is stored nowhere else.'], ['When you need it', 'Never day to day. A step that uses it needs a lot of memory: do it on a computer.'], ['If you lose it', 'Make new papers at once under “Change something”. It needs your payment password and the sheet.']]),
-    day('browser', 'This browser', [['What it keeps', paymentKeyHere ? 'Your login key and your payment key, each locked by its own password.' : 'Your login key, locked by your login password.'], ['Where it is', 'In this browser\'s data, on this device.'], ['If it is lost', 'Clearing this browser\'s data, or losing the device, deletes the keys in it. Recover with both papers in another browser. A backup file brings back the login key only.']]),
+  // What recovering needs, by the kind of recovery keys this browser knows the account has (security-flows.mjs,
+  // recoveryKindOf): words only, words and a Recovery Kit, or not known here (keys made in another browser).
+  const needs = recoveryKind === 'words' ? 'your recovery words' : recoveryKind === 'kit' ? 'your recovery words and your Recovery Kit' : 'your recovery words, and your Recovery Kit if your account has one';
+  const note = recoveryKind === 'words' ? `Your recovery words, on paper, are all your account needs to be recovered: both recovery keys come from them. Whoever has them can ask for your account too; that waits ${wait}, frozen, and only these words can stop it: keep two copies in different places. Lost them? The account keeps working, but a lost password can no longer be replaced.`
+    : recoveryKind === 'kit' ? 'Your recovery words and your Recovery Kit are your two recovery keys: the kit holds your recovery sheet, locked with the words. Recovering needs both. Lost either? The account keeps working, but a lost password can no longer be replaced.'
+    : 'Your recovery words are your recovery, and your Recovery Kit too if you made one under “New recovery words”. Lost them? The account keeps working, but a lost password can no longer be replaced.';
+  const words = safe('phrase', 'Recovery words', recoveryKind === 'kit' ? [
+    ['What it does', 'They open your Recovery Kit, and are a recovery key themselves. Alone: they freeze the account. With your payment password: they pay more than the limit at once, end a freeze, or make new words.'],
+    ['Where it is', 'On paper, kept in another place than the kit: not in a photo, a note or a message. The wallet stores them nowhere.'],
+    ['When you need it', 'Never day to day. A step that uses them needs a lot of memory: do it on a computer.'],
+    ['If you lose them', 'Your Recovery Kit does not open without them. If you printed it, make new words at once under “Change something”, with your payment password and the printed sheet. If not, nobody can replace a lost password any more: move your seconds to a new account while your passwords work.'],
+  ] : [
+    ['What it does', recoveryKind === 'words' ? `Both recovery keys of your account come from them. With them, lost passwords are replaced after ${wait}. Alone they also freeze the account; with your payment password they pay more than the limit at once, end a freeze, or make new words.` : `With your Recovery Kit if your account has one: they replace lost passwords, after ${wait}. Alone they freeze the account; with your payment password they pay more than the limit at once, end a freeze, or make new words.`],
+    ['Where it is', 'On paper, written by hand: not in a photo, a note or a message. The wallet stores them nowhere.'],
+    ['When you need it', 'Never day to day. A step that uses them needs a lot of memory: do it on a computer.'],
+    ['If someone may have seen them', `Make new words at once under “Change something”, with your payment password and these words. Until then, whoever has them can ask for your account: that waits ${wait}, frozen, and only these words can stop it.`],
+    ['If you lose them', 'New words cannot be made without them, and a lost password can no longer be replaced. The account keeps working: move your seconds to a new account while your passwords work.'],
+  ]);
+  const kit = safe('sheet', 'Recovery Kit', [['What it does', `With your recovery words: replaces lost passwords, after ${wait}. It holds your recovery sheet, locked with the words: alone it opens nothing.`], ['Where it is', 'A file you downloaded: in your own email, your cloud storage or a folder you will find again. Or on paper, if you printed it (your printed recovery sheet). The wallet stores it nowhere.'], ['When you need it', 'Never day to day. To recover your account: “Recover my account”.'], ['If you lose it', 'Make new words at once under “Change something”. It needs your payment password and your recovery words. The old kit and words then stop working.']]);
+  // A recovery that is one paper, on an account that holds more than an hour of seconds: one quiet line on the card of the
+  // words, which leads to "New recovery words" with a kit (app.js, offerKit). Nothing else asks for it.
+  let more = false; try { more = BigInt(balanceMicros) > KIT_HINT_ABOVE_MICROS; } catch { more = false; }
+  if (recoveryKind === 'words' && more) words.hint = KIT_HINT;
+  return { lede, note, cards: [
+    day('login', 'Login password', [['What it does', 'Opens this wallet and signs you in to websites. It cannot pay.'], ['Where it is', 'In your head, or in a password manager. It unlocks the login key that this browser keeps.'], ['When you need it', 'Each time you open the wallet.'], ['If you forget it', `In another browser, choose “Recover my account”. It needs ${needs}, and the account waits ${wait}, frozen, before that browser takes over.`], ['If someone may know it', 'Under “Change something” below, make a new login password. It needs your payment password.']]),
+    day('payment', 'Payment password', [['What it does', paused ? 'Payments are paused (see Home): it pays nothing at once now. It can start a payment that waits, and it can freeze the account.' : `Pays up to ${limit || 'your daily limit'} at once, fees included: your daily limit, which refills over 24 hours. It can also freeze the account.`], ['Where it is', paymentKeyHere ? 'In your head, apart from the login password. It unlocks the payment key that this browser keeps.' : 'In your head. Its payment key is kept in another browser of yours, not in this one.'], ['When you need it', 'Each time you pay or stake.'], ['If you forget it', `Recover with ${needs} in another browser, as for the login password.`], ['If someone may know it', 'Freeze the account at once, on Home. Then make a new payment password under “Change something”: it needs your recovery words.']], 'When you pay'),
+    ...(recoveryKind === 'kit' ? [kit] : []),
+    words,
+    day('browser', 'This browser', [['What it keeps', paymentKeyHere ? 'Your login key and your payment key, each locked by its own password.' : 'Your login key, locked by your login password.'], ['Where it is', 'In this browser\'s data, on this device.'], ['If it is lost', `Clearing this browser's data, or losing the device, deletes the keys in it. Recover with ${needs} in another browser. A backup file brings back the login key only.`]]),
   ] };
 }

@@ -49,7 +49,8 @@ const { createSignalUI } = await import(new URL('web-v4/wallet/upgrade-signal-ui
 const { createSecurityUI } = await import(new URL('web-v4/wallet/security-ui.mjs', root).href);
 const F = await import(new URL('web-v4/wallet/security-flows.mjs', root).href);
 const { accountActionHeader } = await import(new URL('web-v4/wallet/actions.mjs', root).href);
-const { newDevice, sealVault, b64 } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, b64 } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const { PendingReservations, formatSeconds } = await import(new URL('web-v4/wallet/guards.mjs', root).href);
 
 // ------------------------------------------------------------------ a mock chain
@@ -132,7 +133,7 @@ async function world({ secured = false } = {}) {
     const signin = await newDevice(), spend = await newDevice(), sheet = await newDevice(), phrase = await newDevice(), alice = chain.accounts.at(-1);
     alice.devices = [{ public_key: signin.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }];
     chain.rows['5'] = { account: '5', version: '1', policy: { threshold: '2', daily_limit_micros: '60000000', delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: '60000000', allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null };
-    storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+    storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
     tab.session = { binding: { networkId, name: 'alice', publicKey: signin.publicKey }, privateKey: signin.privateKey }; tab.spend = spend;
     tab.security = createSecurityUI(c);
   }
@@ -325,7 +326,8 @@ test('nothing is filled in for the owner: not from proven signals, not from the 
   for (const id of ['signal-version', 'signal-spec', 'signal-start', 'signal-node-ready', 'signal-payment']) {
     const tag = new RegExp(`<input id="${id}"[^>]*>`).exec(page)?.[0]; assert.ok(tag, id);
     assert.equal(/\b(?:value|checked|placeholder)\b/.test(tag), false, tag);
-    assert.match(tag, /autocomplete="off"/, 'a browser must not bring back what was typed before'); if (id === 'signal-node-ready') assert.match(tag, /type="checkbox"/);
+    // The payment password is a password field that password managers are told to leave alone (password-fields.test.mjs).
+    assert.match(tag, id === 'signal-payment' ? /autocomplete="one-time-code"/ : /autocomplete="off"/, 'a browser must not bring back what was typed before'); if (id === 'signal-node-ready') assert.match(tag, /type="checkbox"/);
   }
   assert.match(page, /Take the version, the specification hash and the start time from the release announcement of the software your validator runs, and type or paste them here yourself\. Do not take them from this page, from a chat, or from a website that asks you to signal\. The hash decides which rules the network will run\./);
   // The row "Validator signal" under More is hidden until proven state shows a validator of the account.

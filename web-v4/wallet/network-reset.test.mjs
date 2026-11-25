@@ -93,14 +93,17 @@ globalThis.fetch = async (url) => {
 };
 
 // ------------------------------------------------------------------ what a browser kept of the old network, and of others
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
-const vault = async (networkId, name, device) => JSON.stringify(await sealVault({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name, publicKey: device.publicKey }, argon2id));
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
+const vault = async (networkId, name, device) => JSON.stringify(await sealLegacy({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name, publicKey: device.publicKey }, argon2id));
 const OLD_ENTRIES = {
   [`timecurrency.vault.v1:${OLD}:alice`]: await vault(OLD, 'alice', await newDevice()),
   [`timecurrency.spend-vault.v1:${OLD}:alice`]: '{}', [`timecurrency.vault-next.v1:${OLD}:alice:signin`]: '{}', [`timecurrency.vault-next.v1:${OLD}:alice:action`]: '{}',
   [`timecurrency.activity.v1:${OLD}:alice`]: '[]', [`timecurrency.names.v1:${OLD}:alice`]: '{"paid":["bob"]}', [`timecurrency.pending.v1:${OLD}:7`]: '{}',
   [`timecurrency.order.v1:${OLD}:7:${'ab'.repeat(32)}`]: '{}', [`timecurrency.pause.v1:${OLD}:alice`]: '{}', [`timecurrency.upgrade-entry.v1:${OLD}`]: '1', [`timecurrency.v4.epochs:${OLD}:7`]: '[]',
   [`timecurrency.backup-saved.v1:${OLD}:alice:${'cd'.repeat(32)}`]: '1', [`timecurrency.signal.v1:${OLD}:7`]: '{}', [`timecurrency-v4-checkpoint:${OLD}`]: '{}',
+  // What the private store keeps (locked-store.mjs): the wrapped data key and the encrypted records.
+  [`timecurrency.store-key.v1:${OLD}:alice`]: '{}', [`timecurrency.activity.v2:${OLD}:alice`]: '{}', [`timecurrency.names.v2:${OLD}:alice`]: '{}', [`timecurrency.orders.v2:${OLD}:alice`]: '{}',
 };
 // Kept: what the wallet keeps of the network it serves now, and what is not the wallet's.
 const STAYING = { [`timecurrency.upgrade-entry.v1:${NEW}`]: '1', [`timecurrency-v4-checkpoint:${NEW}`]: '{}', 'another-page.setting': 'timecurrency.vault.v1:' + OLD, 'timecurrency.vault.v1:not-a-network:alice': '{}' };

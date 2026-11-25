@@ -15,9 +15,9 @@ import { createRpc } from '../../client-v4/indexer.mjs';
 // data directory, JSON lines, and a config error that never quotes the file.
 import { claim, jsonLog, readConfig, LOCK_LOST_EXIT } from '../watch/start.mjs';
 
-const KEYS = ['test_network', 'network_id', 'rpc_url', 'trust', 'data_directory', 'account', 'key_file', 'grant_micros', 'limits', 'min_balance_micros', 'max_recipient_balance_micros',
+const KEYS = ['test_network', 'network_id', 'rpc_url', 'trust', 'data_directory', 'caller_key_file', 'account', 'key_file', 'grant_micros', 'limits', 'min_balance_micros', 'max_recipient_balance_micros',
   'max_chain_daily_limit_micros', 'sponsor_registrations', 'cancel_waiting', 'freeze_on_misuse', 'host', 'port', 'hosts', 'cors_origins', 'rate_limit', 'trusted_proxies', 'rpc_timeout_seconds', 'serve_page'];
-const LIMIT_KEYS = ['per_account_per_day', 'per_address_per_day', 'total_per_day_micros', 'registrations_per_address_per_day', 'refused_requests_per_address_per_hour'];
+const LIMIT_KEYS = ['per_account_per_day', 'per_address_per_day', 'total_per_day_micros', 'registrations_per_address_per_day', 'refused_requests_per_address_per_hour', 'per_network_per_day', 'registrations_per_network_per_day', 'registrations_per_day'];
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const canonicalId = (value) => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) < 18446744073709551615n;
 
@@ -42,6 +42,14 @@ export function validateConfig(config) {
   if (typeof config.data_directory !== 'string' || !path.isAbsolute(config.data_directory)) throw new Error('data_directory is an absolute path');
   if (!canonicalId(config.account)) throw new Error('account is the number of the faucet account, in decimal and in quotes');
   if (typeof config.key_file !== 'string' || !path.isAbsolute(config.key_file)) throw new Error('key_file is the absolute path of the file that holds the spend key');
+  // Optional. The key of the hashes of who asked must not be where a copy of the store goes: never in the data
+  // directory (README, "Who asked, and for how long it is kept").
+  if (config.caller_key_file !== undefined) {
+    if (typeof config.caller_key_file !== 'string' || !path.isAbsolute(config.caller_key_file)) throw new Error('caller_key_file is the absolute path of a file on a file system in memory, such as /dev/shm/time-faucet-callers.key');
+    const inside = path.relative(path.resolve(config.data_directory), path.resolve(config.caller_key_file));
+    if (!inside || (inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside))) throw new Error('caller_key_file must not be inside data_directory: whoever had a copy of the directory would have the key beside the hashes it protects. Put it on a file system in memory, such as /dev/shm');
+    if (path.resolve(config.caller_key_file) === path.resolve(config.key_file)) throw new Error('caller_key_file and key_file are two different files');
+  }
   const amount = (value, name, min = 1n) => {
     if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,15})$/.test(value) || BigInt(value) < min || BigInt(value) > 1_000_000_000_000_000n) throw new Error(`${name} is a whole number of microseconds as a decimal string, from ${min}`);
     return BigInt(value);
@@ -79,7 +87,8 @@ export function validateConfig(config) {
   }
   const perSecond = integer(rate.per_second, 'rate_limit.per_second', 5, 1, 1000);
   return {
-    test_network: true, network_id: config.network_id, rpc_url: rpc.href, trust, data_directory: path.resolve(config.data_directory), account: config.account, key_file: path.resolve(config.key_file),
+    test_network: true, network_id: config.network_id, rpc_url: rpc.href, trust, data_directory: path.resolve(config.data_directory), ...(config.caller_key_file === undefined ? {} : { caller_key_file: path.resolve(config.caller_key_file) }),
+    account: config.account, key_file: path.resolve(config.key_file),
     grant_micros: grant,
     limits: {
       per_account_per_day: integer(limits.per_account_per_day, 'limits.per_account_per_day', undefined, 1, 1000),
@@ -87,6 +96,8 @@ export function validateConfig(config) {
       total_per_day_micros: total,
       registrations_per_address_per_day: config.sponsor_registrations ? integer(limits.registrations_per_address_per_day, 'limits.registrations_per_address_per_day', undefined, 1, 1000) : 1,
       refused_requests_per_address_per_hour: integer(limits.refused_requests_per_address_per_hour, 'limits.refused_requests_per_address_per_hour', 50, 1, 100000),
+      // Optional (README): an IPv6 /48, three times one address unless set; registrations of all callers, ten times one address's.
+      ...Object.fromEntries([['per_network_per_day', 100000], ['registrations_per_network_per_day', 10000], ['registrations_per_day', 1000000]].filter(([key]) => limits[key] !== undefined).map(([key, most]) => [key, integer(limits[key], `limits.${key}`, undefined, 1, most)])),
     },
     min_balance_micros: amount(config.min_balance_micros, 'min_balance_micros', 0n),
     max_recipient_balance_micros: amount(config.max_recipient_balance_micros, 'max_recipient_balance_micros', 0n),
@@ -131,9 +142,11 @@ export async function start(rawConfig, inject = {}) {
       trust: config.trust, networkId: config.network_id, testNetwork: config.test_network, verifier: installedVerifier,
       rpc: inject.rpc || createRpc(config.rpc_url, { timeoutMs: config.rpc_timeout_seconds * 1000 }),
       lookup: inject.lookup || createTxLookup(config.rpc_url, { timeoutMs: config.rpc_timeout_seconds * 1000 }),
-      dataFile: path.join(config.data_directory, 'faucet.sqlite'), account: config.account, key,
+      dataFile: path.join(config.data_directory, 'faucet.sqlite'), callerKeyFile: config.caller_key_file, account: config.account, key,
       grantMicros: config.grant_micros, minBalanceMicros: config.min_balance_micros, maxRecipientBalanceMicros: config.max_recipient_balance_micros, maxChainDailyLimitMicros: config.max_chain_daily_limit_micros,
-      limits: { perAccountPerDay: config.limits.per_account_per_day, perAddressPerDay: config.limits.per_address_per_day, totalPerDayMicros: config.limits.total_per_day_micros, registrationsPerAddressPerDay: config.limits.registrations_per_address_per_day },
+      limits: { perAccountPerDay: config.limits.per_account_per_day, perAddressPerDay: config.limits.per_address_per_day, totalPerDayMicros: config.limits.total_per_day_micros, registrationsPerAddressPerDay: config.limits.registrations_per_address_per_day,
+        ...(config.limits.per_network_per_day === undefined ? {} : { perNetworkPerDay: config.limits.per_network_per_day }), ...(config.limits.registrations_per_network_per_day === undefined ? {} : { registrationsPerNetworkPerDay: config.limits.registrations_per_network_per_day }),
+        ...(config.limits.registrations_per_day === undefined ? {} : { registrationsPerDay: config.limits.registrations_per_day }) },
       sponsorRegistrations: config.sponsor_registrations, cancelWaiting: config.cancel_waiting, freezeOnMisuse: config.freeze_on_misuse, refusedPerAddressPerHour: config.limits.refused_requests_per_address_per_hour, host: config.host, port: config.port, hosts: config.hosts, corsOrigins: config.cors_origins,
       rateLimit: { perSecond: config.rate_limit.per_second, burst: config.rate_limit.burst }, trustedProxies: config.trusted_proxies, servePage: config.serve_page, log,
       ...(inject.readState ? { readState: inject.readState } : {}), ...(inject.now ? { now: inject.now } : {}), ...(inject.timings || {}),
@@ -142,6 +155,8 @@ export async function start(rawConfig, inject = {}) {
     log('info', 'time faucet started on a test network', {
       listening: service.url, rpc: new URL(config.rpc_url).origin, network_id: config.network_id, chain_id: config.trust.chain_id, account: config.account,
       grant_micros: config.grant_micros.toString(), total_per_day_micros: config.limits.total_per_day_micros.toString(), sponsor_registrations: config.sponsor_registrations, trusted_proxies: config.trusted_proxies.length,
+      // Where the key of the hashes of who asked came from: 'kept' (its file, as before the restart), 'new' or 'memory'.
+      caller_key: service.callerKey,
     });
     let closing;
     return { url: service.url, service, close: () => closing ??= (async () => { await service.close(); await release(); })() };

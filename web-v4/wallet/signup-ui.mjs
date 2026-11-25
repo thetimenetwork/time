@@ -1,52 +1,61 @@
-// Signing up protected, on the start screen (index.html, the form "auth-form" and the steps "signup-sheet-step" and
-// "signup-confirm-step"). Only on a network that takes it (signup.mjs, protectedSignup); on any other "Create an account"
-// is as it was, and nothing here touches the page.
+// Signing up protected, on the start screen (index.html, the form "auth-form" and the step "signup-sheet-step"). Only
+// on a network that takes it (signup.mjs, protectedSignup); on any other "Create an account" is as it was, and nothing
+// here touches the page.
 //
-// What the person does, in three steps:
-// 1. A name, a login password (every day: opens the wallet, signs in to websites, cannot pay), a payment password (when
-//    you pay: up to the daily limit) and the daily limit, 600 seconds unless changed. The wallet checks the name with
-//    the network and that the registration service answers, then makes the keys, locks them with the passwords, and
-//    makes the two recovery papers. Nothing is kept yet.
-// 2. The recovery sheet and the recovery passphrase, shown once, to write down or print: keep safe.
-// 3. Two groups of the sheet and the passphrase, typed back. Only then is anything kept in this browser (signup.mjs says
-//    what and how), and the account is created through the sponsor (`register`, client.registerProtected). The page then
-//    opens it with its new login key (app.js, signupCreated).
+// What the person does, in two steps:
+// 1. A name and the daily limit, 600 seconds unless changed; and, by the rule (vault.mjs, RULE), either a login password
+//    (every day: opens the wallet, signs in to websites, cannot pay) and a payment password (when you pay: up to the
+//    daily limit) that the device locks the keys with, or nothing more: the wallet makes both passwords and shows them
+//    once. Where the device can lock keys, the person chooses one of the two ways, and neither is chosen beforehand
+//    (device-lock-ui.mjs, wayChoice); the form does not go on before one is. Where the device cannot, or when it fails at
+//    any step after the lock was chosen, the wallet makes the passwords (device-lock.mjs, newKeysByRule).
+//    The wallet checks the name with the network and that the registration service answers, then makes the keys, locks
+//    them, and makes the two recovery keys. Nothing of the account is kept yet.
+// 2. "Write down your recovery words" (papers.mjs): five words, by hand, on paper; both recovery keys come from them
+//    ("words only"). Nothing is downloaded or printed, and nothing is asked back: the person is trusted to have written
+//    them down. On "I wrote them down. Create my account", and only then, is anything kept in this browser (signup.mjs
+//    says what and how), and the account is created through the sponsor (`register`, client.registerProtected). The page then opens it with its new
+//    login key (app.js, signupCreated).
 //
-// Every way the sign-up can stop after step 3 is gone on from by opening the account with its name and its login password
+// Every way the sign-up can stop after step 2 is gone on from by opening the account with its name and its login password
 // (app.js, auth): `register` is called again with what was kept, and goes on from what the chain shows.
 import * as security from '/sdk/account-security.mjs';
-import { newDevice, sealVault, hex, forgetSecret } from './vault.mjs';
-import { choosePolicy, checkPasswords, defaultHours, vaultSlots, stageVaults, stagedNote, settleStaged, sealedKey, dateOf, DEFAULT_DAILY_LIMIT_SECONDS, dailyLimitWords } from './security-flows.mjs';
-import { makeRecoveryKeys, confirmRecoveryKeys, forgetRecoveryKeys, printSheet, paperSteps } from './papers.mjs';
+import { newDevice, hex, forgetSecret } from './vault.mjs';
+import { choosePolicy, checkPasswords, defaultHours, vaultSlots, stageVaults, stagedNote, settleStaged, dateOf, DEFAULT_DAILY_LIMIT_SECONDS, dailyLimitWords, rememberRecoveryKind } from './security-flows.mjs';
+import { newKeysByRule, LOCK_WORDS } from './device-lock.mjs';
+import { wayChoice } from './device-lock-ui.mjs';
+import { makeRecoveryKeys, forgetRecoveryKeys, paperSteps, WRITE_NOW } from './papers.mjs';
 import { protectedSignup, signNote, readNote, isSignupNote, keysByRole, noteKey, signupWords, tooCloseAddition, CHANGED,
   consentKey, signConsent, readConsent, letGoState, letGoWords, letGoReview, letGoneWords, LET_GO_CHANGED, keptPaymentKey } from './signup.mjs';
 import { IDLE_LOCK_MS } from './guards.mjs';
 
 const $ = id => document.getElementById(id);
-// While the recovery papers are on the page no account exists, so the lock of an idle wallet (app.js, scheduleIdleLock)
-// has nothing to lock. The same rule hides them: after IDLE_LOCK_MS without use the keys and the papers are forgotten, as
-// by "Start over", and the person is told. What counts as use is what a person does who is writing the papers down or
-// typing them back on this page: a tap or a click (`pointerdown`, also the first touch of a finger), a key (`keydown`), text
-// that arrives without a key (`input`: pasting, dictation, a keyboard that composes), and scrolling, by a wheel or a
-// trackpad (`wheel`), by a finger (`touchmove`), or by the scroll bar or the keyboard (`scroll`, heard on the way down to
-// any element). A pointer that only moves over the page, focus and the page being shown again do not count: they also
-// happen when nobody is there, and the lock does not count them either.
+// While the step of the recovery words is on the page no account exists, so the lock of an idle wallet (app.js,
+// scheduleIdleLock) has nothing to lock. The same rule closes the step: after IDLE_LOCK_MS without use the keys and the
+// words are forgotten, as by "Start over", and the person is told. What counts as use is what a person does who
+// is writing the words down on this page: a tap or a click (`pointerdown`, also the first touch of a
+// finger), a key (`keydown`), text that arrives without a key (`input`: pasting, dictation, a keyboard that composes), and
+// scrolling, by a wheel or a trackpad (`wheel`), by a finger (`touchmove`), or by the scroll bar or the keyboard
+// (`scroll`, heard on the way down to any element). A pointer that only moves over the page, focus and the page being
+// shown again do not count: they also happen when nobody is there, and the lock does not count them either.
 export const PAPERS_ACTIVITY = Object.freeze(['pointerdown', 'keydown', 'input', 'wheel', 'scroll', 'touchmove']);
-export const PAPERS_IDLE = `Your recovery papers were hidden after ${IDLE_LOCK_MS / 60000} minutes without use, and nothing was created. The papers that were shown will never work: destroy them if you wrote them down. Start again to get new ones.`;
+export const PAPERS_IDLE = `Your recovery words were hidden after ${IDLE_LOCK_MS / 60000} minutes without use, and nothing was created. They will never work: destroy the paper if you wrote them down. Start again to get new ones.`;
+/// "Start over" after the words were shown.
+export const DROPPED = 'Nothing was created. The recovery words that were shown will never work: destroy the paper if you wrote them down.';
 const assert = (value, message) => { if (!value) throw new Error(message); };
 /// Reads a secret field once and clears it.
 function take(id) { const el = $(id), value = el.value; el.value = ''; return value; }
 const scrub = ids => { for (const id of ids) $(id).value = ''; };
-const SECRET = ['signup-payment', 'signup-payment-confirm', 'signup-confirm-a', 'signup-confirm-b', 'signup-confirm-phrase'];
+const SECRET = ['signup-payment', 'signup-payment-confirm'];
 export const KEPT = 'Your sign-up is kept in this browser, locked with your passwords. Open your account with its name and your login password to go on. ';
 const CREATING = 'Creating your protected account on the network. This takes a few seconds…';
 
 export function createSignupUI(c) {
   const net = () => c.network().networkId, argon = () => c.argon2id(), steps = paperSteps('signup', $);
-  // `draft`: what steps 1 and 2 made, in this page's memory only. `drawn`: the page shows the protected form. `shown`: a
-  // step of the papers is on the page.
+  // `draft`: what step 1 made, in this page's memory only. `drawn`: the page shows the protected form. `shown`: the step
+  // of the recovery words is on the page.
   let draft = null, drawn = false, shown = false;
-  // The idle rule while a step of the papers is on the page (PAPERS_ACTIVITY above): `idle` is its timer.
+  // The idle rule while the step of the recovery words is on the page (PAPERS_ACTIVITY above): `idle` is its timer.
   let idle = null;
   const stillHere = () => { clearTimeout(idle); idle = shown ? setTimeout(idleOut, IDLE_LOCK_MS) : null; };
   function idleOut() { idle = null; if (!shown) return; reset(); c.notice(PAPERS_IDLE); }
@@ -54,6 +63,26 @@ export function createSignupUI(c) {
 
   /// Whether this page makes protected accounts: the network takes them, by the wallet's latest verified state.
   const on = () => protectedSignup(c.sdk, c.state());
+  // How the keys of a sign-up are sealed (the rule), as the person chose it (device-lock-ui.mjs, wayChoice): 'asking' (the
+  // browser has not said yet what the device can do: the form does not go on), 'none' (the device can lock keys, and no
+  // way is chosen yet: the form does not go on), 'device' (locked to this device from birth, the passwords chosen),
+  // 'declined' (the wallet makes the passwords) or 'made' (this device cannot lock keys).
+  const SEALING = Object.freeze({
+    asking: 'Pick a name. The wallet then shows five recovery words for you to write on paper. Your account is protected from its first moment.',
+    none: 'Pick a name and how to lock your keys. The wallet then shows five recovery words for you to write on paper. Your account is protected from its first moment.',
+    device: 'Pick a name, a login password and a payment password: your device locks your keys with them. The wallet then shows five recovery words for you to write on paper. Your account is protected from its first moment.',
+    declined: 'Pick a name. The wallet makes your login password and your payment password and shows them to you, then five recovery words for you to write on paper. Your account is protected from its first moment.',
+    made: 'Pick a name. The wallet makes your login password and your payment password and shows them to you, then five recovery words for you to write on paper. Your account is protected from its first moment.',
+  });
+  /// The fields of the protected form for how its keys are sealed: the chosen passwords only once the lock is chosen.
+  const sealing = wayChoice('auth', { env: () => c.env?.(), drawn: mode => {
+    const typed = mode === 'device';
+    c.typedPassword?.(typed, typed);
+    $('signup-chosen').hidden = !typed; $('signup-login-note').hidden = !typed;
+    for (const id of ['signup-payment', 'signup-payment-confirm']) $(id).required = typed;
+    if (!typed) scrub(['password', 'password-confirm', ...SECRET]);
+    $('auth-copy').textContent = SEALING[mode];
+  } });
   /// The form of "Create an account": the protected one, or as it was. On a network without the setting it is never
   /// touched: `drawn` stays false.
   function form(protect) {
@@ -61,31 +90,41 @@ export function createSignupUI(c) {
     drawn = protect;
     $('password-label').textContent = protect ? 'Login password' : 'Password';
     $('confirm-label').textContent = protect ? 'Login password again' : 'Password again';
-    $('password-note').hidden = protect; $('signup-login-note').hidden = !protect; $('signup-protected').hidden = !protect;
-    for (const id of ['signup-payment', 'signup-payment-confirm', 'signup-limit']) $(id).required = protect;
+    $('signup-login-note').hidden = !protect; $('signup-protected').hidden = !protect;
+    for (const id of ['signup-payment', 'signup-payment-confirm']) $(id).required = false;
+    $('signup-limit').required = protect;
     scrub(['signup-payment', 'signup-payment-confirm']);
-    if (!protect) return;
-    $('auth-copy').textContent = 'Pick a name, a login password and a payment password. The wallet then makes two recovery papers for you to keep. Your account is protected from its first moment.';
-    $('auth-submit').textContent = 'Next: my recovery papers';
+    if (!protect) { sealing.forget(); return; }
+    $('auth-submit').textContent = 'Next: my recovery words';
     // The daily limit the form suggests comes from one constant (security-flows.mjs), as on Keys; one the person typed stays.
     $('signup-limit-suggested').textContent = `Suggested: ${dailyLimitWords()}.`;
     if ($('signup-limit').dataset.touched !== 'true' && !$('signup-limit').value) $('signup-limit').value = DEFAULT_DAILY_LIMIT_SECONDS;
+    // What the browser says it can do (it asks the person nothing): where the device can lock keys, the choice of the two
+    // ways once it has said, with neither chosen.
+    sealing.redraw();
   }
-  /// Steps 1 and 2 forgotten: the keys, the papers and whatever was typed. Nothing of them was kept.
+  /// Steps 1 and 2 forgotten: the keys, the words and whatever was typed. Nothing of them was kept.
   function reset() {
     clearTimeout(idle); idle = null;
     if (!draft && !shown) return;
-    if (draft) { forgetRecoveryKeys(draft); draft.registration.privateKey = draft.signin.key.privateKey = draft.spend.key.privateKey = null; }
+    if (draft) { forgetRecoveryKeys(draft); draft.registration.privateKey = draft.signin.key.privateKey = draft.spend.key.privateKey = null; draft.registration.storageKey = draft.signin.storageKey = null; }
     draft = null; shown = false; scrub(SECRET); steps.clear(); $('auth-form').hidden = false;
   }
 
-  // ---------------------------------------------------------------- step 1: name, passwords, limit; keys and papers
+  // ---------------------------------------------------------------- step 1: name, passwords, limit; the keys
   /// Called by app.js (auth) for "Create an account" on a network that takes protected accounts, once the name and the
   /// login password passed the wallet's rules and the wallet's service names a sponsor.
-  async function begin({ name, login }) {
-    const check = c.capture(), payment = take('signup-payment'), again = take('signup-payment-confirm');
-    assert(payment === again, 'The two payment passwords differ.');
-    checkPasswords({ login, payment, name });
+  async function begin({ name, login, again: loginAgain }) {
+    // Nothing is read or made before the browser said what the device can do and, where it can lock keys, the person chose
+    // a way (LOCK_WORDS.ways.asking, .pick).
+    sealing.ready();
+    const check = c.capture(), payment = take('signup-payment'), again = take('signup-payment-confirm'), byDevice = sealing.byDevice;
+    // The passwords a person chose are used only with the device (the rule); where the wallet makes them, nothing typed is.
+    if (byDevice) {
+      assert(login === loginAgain, 'Passwords do not match.');
+      assert(payment === again, 'The two payment passwords differ.');
+      checkPasswords({ login, payment, name });
+    }
     const slots = vaultSlots(net(), name);
     c.setBusy(true, 'Checking the name with the network…');
     const state = await c.verifiedState({ names: [name] }); check();
@@ -93,53 +132,74 @@ export function createSignupUI(c) {
     assert(!state.accounts.some(a => a.name === name), 'That username is already registered.');
     assert(c.storage.getItem(slots.login) === null, 'An encrypted vault already exists for this account here. Unlock it instead.');
     assert(stagedNote(c.storage, slots) === null && c.storage.getItem(slots.nextLogin) === null && c.storage.getItem(slots.nextSpend) === null, 'Keys of an earlier sign-up of this name are still kept in this browser. Choose another name.');
-    // The registration service answers, for this network, and sponsors now: else nothing is made, and no papers are shown.
+    // The registration service answers, for this network, and sponsors now: else nothing is made, and no recovery key is shown.
     await c.registrationSponsor(); check();
     const hours = defaultHours(state);
     const policy = choosePolicy({ dailyLimitMicros: c.parseSeconds($('signup-limit').value.trim()), delayHours: hours, freezeHours: hours, threshold: '2', recoveryKeys: 2, feeMicros: c.fee(), minDelayMicros: state.config.recovery_min_delay_micros });
-    c.setBusy(true, 'Making your keys and your recovery papers, and locking them with your passwords. This takes a few seconds…');
+    c.setBusy(true, byDevice ? 'Making your keys and your recovery words, and locking the keys to this device. This takes a few seconds…' : 'Making your keys, your passwords and your recovery words. This takes a few seconds…');
     // The registration key: it signs the sponsor's consent and the registration, and becomes the account's identity key,
-    // on no role. Kept under the login password with the salt of the name, as the key of every new account is.
-    const registration = await newDevice(), salt = hex(crypto.getRandomValues(new Uint8Array(32)));
-    let registrationRecord;
-    try { registrationRecord = await sealVault({ ...registration.secret, nameSalt: salt, intent: 'device' }, login, { networkId: net(), name, publicKey: registration.publicKey }, argon()); } finally { forgetSecret(registration.secret); }
+    // on no role. Kept, with the salt of the name, under the new login key (vault version 4: the rule), which the login
+    // password opens (with the device when the keys are locked to it). With its storage key: it opens what the sign-up's
+    // receipts leave in the private store (app.js, signupCreated).
+    const registration = await newDevice(globalThis.crypto, { networkId: net(), name }), salt = hex(crypto.getRandomValues(new Uint8Array(32)));
+    let made;
+    try {
+      // Locked to this device from birth, or under passwords the wallet makes (device-lock.mjs, newKeysByRule): a device
+      // that fails at any step does not end the sign-up; the wallet makes the passwords instead, and says what happened.
+      made = await newKeysByRule({ byDevice, storage: c.storage, env: c.env?.(), wanted: [{ intent: 'signin', password: login }, { intent: 'spend', password: payment }], networkId: net(), name, argon2id: argon(),
+        say: text => c.notice(text, 'busy'), under: { secret: { ...registration.secret, nameSalt: salt, intent: 'device' }, binding: { networkId: net(), name, publicKey: registration.publicKey } } });
+    } finally { forgetSecret(registration.secret); }
     check();
-    const signin = await sealedKey({ password: login, networkId: net(), name, intent: 'signin', argon2id: argon() });
-    const spend = await sealedKey({ password: payment, networkId: net(), name, intent: 'spend', argon2id: argon() }); check();
-    const papers = await makeRecoveryKeys({ networkId: net(), registrationKey: registration.publicKey, argon2id: argon() }); check();
-    reset();
-    draft = { name, salt, policy, registration: { publicKey: registration.publicKey, privateKey: registration.privateKey }, registrationRecord, signin, spend, ...papers };
+    const [signin, spend] = made.keys;
+    let papers = null;
+    try {
+      // Words only: both recovery keys come from the words (security-flows.mjs, recoveryWordsSecondKey).
+      c.setBusy(true, 'Making your recovery words. This takes a few seconds…');
+      papers = await makeRecoveryKeys({ networkId: net(), registrationKey: registration.publicKey, argon2id: argon(), kind: 'words' }); check();
+      reset();
+      // The passwords the wallet made are shown once, before anything is kept: only "I have them" goes on to the recovery
+      // words. Closed any other way (made-dialog.mjs), the step ends here and nothing was kept.
+      if (!made.locked) {
+        c.setBusy(false);
+        await c.showMade({ name, login: signin.made, payment: spend.made, why: made.fallback ?? (byDevice ? LOCK_WORDS.fellBack : 'The wallet made the passwords of your new account. Let your browser save the login password; write the payment password down, apart from your recovery words.') });
+        check();
+      }
+    } catch (error) {
+      // Nothing of this sign-up stays in memory: its keys, the registration key and the recovery keys.
+      if (papers) forgetRecoveryKeys(papers);
+      registration.privateKey = signin.key.privateKey = spend.key.privateKey = null; registration.storageKey = signin.storageKey = spend.storageKey = null;
+      throw error;
+    }
+    draft = { name, salt, policy, locked: made.locked, registration: { publicKey: registration.publicKey, privateKey: registration.privateKey, storageKey: registration.storageKey }, registrationRecord: signin.under, signin, spend, ...papers };
     $('auth-form').hidden = true; shown = true;
-    steps.show(draft, `Recovery sheet for @${name} · network ${net().slice(0, 12)}`);
+    steps.show(draft);
     stillHere();
-    c.notice('Write down your recovery sheet and, on another paper, your recovery passphrase. They are shown only now.');
+    c.notice(WRITE_NOW);
   }
 
-  // ---------------------------------------------------------------- step 2: the papers, then step 3: asked back
-  $('signup-print').addEventListener('click', printSheet);
-  $('signup-sheet-done').addEventListener('click', () => { if (!draft) return reset(); steps.askBack(draft); });
-  $('signup-cancel').addEventListener('click', () => { const had = Boolean(draft); reset(); if (had) c.notice('Nothing was created. The recovery papers that were shown will never work: destroy them if you wrote them down.'); });
+  // ---------------------------------------------------------------- step 2: the recovery words, on paper
+  $('signup-cancel').addEventListener('click', () => { const had = Boolean(draft); reset(); if (had) c.notice(DROPPED); });
   $('signup-limit').addEventListener('input', () => { $('signup-limit').dataset.touched = 'true'; });
   $('signup-submit').addEventListener('click', () => c.run(async () => {
-    // The papers are being checked and kept: they are not hidden half way. If they are on the page again after this (a
-    // paper typed back wrong, a failure before anything was kept), the idle rule starts again.
+    // The keys are being kept: the step is not closed half way. If it is still on the page after this (a failure before
+    // anything was kept), the idle rule starts again.
     clearTimeout(idle); idle = null;
     try {
       assert(draft, 'Start again from the beginning.');
       const current = draft, check = c.capture();
-      try { confirmRecoveryKeys(current, take('signup-confirm-a'), take('signup-confirm-b'), take('signup-confirm-phrase')); }
-      catch (error) { steps.show(current); throw error; }
       c.setBusy(true, 'Keeping your new keys in this browser…');
-      // Each key accepts its role for this registration key: the papers' keys now, and then they are forgotten.
+      // Each key accepts its role for this registration key: the recovery keys now, and then they are forgotten.
       const accept = (role, key) => security.acceptRegistrationRole({ networkId: net(), registrationKey: current.registration.publicKey, role, publicKey: key.publicKey, privateKey: key.privateKey });
       const keys = [await accept('signin', current.signin.key), await accept('spend', current.spend.key), await accept('recover', current.sheet), await accept('recover', current.phrase)];
       const note = await signNote({ networkId: net(), name: current.name, registration: current.registration, keys, policy: current.policy }); check();
       await keep(current, note); check();
-      // The papers leave the page, and the form they stood in for is back under them: the account is opened next, and
+      // Keys says what words only means for this account (security-flows.mjs, recoveryKindOf).
+      rememberRecoveryKind(c.storage, net(), current.name, current);
+      // The step leaves the page, and the form it stood in for is back under it: the account is opened next, and
       // when it is locked, or could not be made, the start screen has its name and password fields again. (Seen in a
       // browser on 2026-11-23: after a sign-up, "Lock" showed "Open your account" with no field and no button.)
       draft = null; shown = false; forgetRecoveryKeys(current); current.spend.key.privateKey = null; steps.clear(); $('auth-form').hidden = false;
-      await c.created({ name: current.name, registration: current.registration, salt: current.salt, signin: current.signin.key });
+      await c.created({ name: current.name, registration: current.registration, salt: current.salt, signin: { ...current.signin.key, storageKey: current.signin.storageKey } });
     } finally { scrub(SECRET); if (shown) stillHere(); }
   }));
   /// What is kept from now on (signup.mjs): written before anything is sent, all of it or none of it.
@@ -170,7 +230,7 @@ export function createSignupUI(c) {
     return held !== null && held === note.registration && (registrationKey === undefined || registrationKey === held);
   }
   /// Creates the account from what is kept, or goes on from what the chain shows, and puts its new keys in place. The
-  /// session's key is the registration key (app.js: after the papers were checked, or the login password opened it).
+  /// session's key is the registration key (app.js: after the keys were kept, or the login password opened it).
   async function register({ name, registration, salt, check }) {
     const slots = vaultSlots(net(), name);
     // What was kept is used only as it was kept (signup.mjs, readNote): else nothing is sent, and going on cannot help.

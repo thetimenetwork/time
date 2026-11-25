@@ -34,7 +34,8 @@ globalThis.window = { print() {} };
 const $ = id => document.getElementById(id);
 
 const { createSecurityUI } = await import(new URL('web-v4/wallet/security-ui.mjs', root).href);
-const { newDevice, sealVault } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const { PendingReservations, formatSeconds } = await import(new URL('web-v4/wallet/guards.mjs', root).href);
 const { assertSpendKeyKind } = await import(new URL('web-v4/wallet/security-flows.mjs', root).href);
 const security = await import(new URL('client-v4/account-security.mjs', root).href);
@@ -97,27 +98,22 @@ const check = (label) => { assert.deepEqual(errors, [], label + ': ' + errors.jo
 const full = await newDevice();
 chain.accounts.push({ id: '5', name: 'alice', balance: '100000000', nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: full.publicKey, can_manage: true, can_spend: true }] });
 chain.accounts.push({ id: '9', name: 'bob', balance: '0', nonce: '0', auth_epoch: '0', recovery_policy: null, devices: [] });
-storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealVault(full.secret, 'an old protocol four password', { networkId, name: 'alice', publicKey: full.publicKey }, umd.exports.argon2id)));
+storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy(full.secret, 'an old protocol four password', { networkId, name: 'alice', publicKey: full.publicKey }, umd.exports.argon2id)));
 session = { binding: { networkId, name: 'alice', publicKey: full.publicKey }, privateKey: full.privateKey };
 latest = stateOf(); ui.render(ownAccount(), latest); ui.availability(true);
 assert.equal($('security-adopt').hidden, false); assert.equal($('security-dashboard').hidden, true);
 const login = 'violet otters dance beneath moonlight 41', payment = 'quiet harbour lanterns at dawn 77';
 Object.assign(els, {}); for (const [id, v] of [['secure-login', login], ['secure-login-confirm', login], ['secure-payment', payment], ['secure-payment-confirm', payment], ['secure-limit', '60'], ['secure-delay', '48'], ['secure-freeze', '48'], ['secure-threshold', '2']]) $(id).value = v;
 await $('secure-form').fire('submit'); check('secure step 1');
-const sheet = $('secure-sheet').textContent; assert.match(sheet, /^([0-9A-Z]{4} ){13}[0-9A-Z]{4}$/);
-const phrase = $('secure-phrase-shown').textContent; assert.match(phrase, /^[a-z]{6}( [a-z]{6}){3}$/, 'the wallet made the passphrase');
+const phrase = $('secure-phrase-shown').textContent; assert.match(phrase, /^[a-z]{6}( [a-z]{6}){4}$/, 'the wallet made five recovery words');
 assert.equal($('secure-login').value + $('secure-payment').value, '', 'secret fields are cleared');
-await $('secure-sheet-done').fire('click'); assert.equal($('secure-sheet').textContent, '', 'the sheet leaves the page once written down');
-const groups = sheet.split(' '), pick = id => groups[Number($(id + '-label').textContent.replace('Group ', '')) - 1];
-$('secure-confirm-a').value = pick('secure-confirm-a'); $('secure-confirm-b').value = 'ZZZZ';
-await $('secure-submit').fire('click'); assert.match(errors.pop(), /does not match/); assert.equal($('secure-sheet').textContent, sheet, 'a wrong group shows the sheet again');
-await $('secure-sheet-done').fire('click'); $('secure-confirm-a').value = pick('secure-confirm-a'); $('secure-confirm-b').value = pick('secure-confirm-b'); $('secure-confirm-phrase').value = phrase;
+assert.equal($('secure-submit').hidden, false, 'words only: the button is there from the start');
 await $('secure-submit').fire('click'); check('secure submit');
 assert.equal(signed.at(-1).kind, 70); assert.equal(locked, 'Your account is protected. Open it with your login password.');
 const loginRecord = JSON.parse(storage.getItem(`timecurrency.vault.v1:${networkId}:alice`)), spendRecord = JSON.parse(storage.getItem(`timecurrency.spend-vault.v1:${networkId}:alice`));
 assert.equal(loginRecord.intent, 'signin'); assert.equal(spendRecord.intent, 'spend');
 assert.ok(![...storage.m.values()].some(v => v.includes(full.publicKey)), 'the protocol-4 key is gone from storage');
-assert.ok(![...storage.m.values()].some(v => v.includes(sheet.replace(/ /g, '')) || v.includes(phrase)), 'no recovery secret is stored');
+assert.ok(![...storage.m.values()].some(v => v.includes(phrase)), 'no recovery secret is stored');
 const alice = chain.accounts[0];
 assert.deepEqual(alice.devices.map(d => security.roleOf(d)).sort(), ['recover', 'recover', 'signin', 'spend']);
 
@@ -136,7 +132,7 @@ assert.equal($('send-over-limit').hidden, false);
 $('send-payment').value = payment; await $('send-wait').fire('click'); check('waiting payment');
 assert.equal(signed.at(-1).kind, 75); assert.equal(signed.at(-1).by, 'spend');
 latest = stateOf(); await c.run(() => ui.pay({ name: 'bob', to: { id: '9' }, amount: '55000000', state: latest, account: ownAccount() }));
-$('send-payment').value = payment; $('send-recovery-method').value = 'sheet'; $('send-recovery-secret').value = sheet.toLowerCase();
+$('send-payment').value = payment; $('send-recovery-secret').value = phrase.toUpperCase();
 await $('send-now').fire('click'); check('pay now');
 assert.deepEqual([signed.at(-1).kind, signed.at(-1).payload.op.type, signed.at(-1).payload.approvals.length], [73, 'pay', 2]);
 
@@ -144,7 +140,7 @@ assert.deepEqual([signed.at(-1).kind, signed.at(-1).payload.op.type, signed.at(-
 latest = stateOf(); ui.render(ownAccount(), latest);
 assert.ok($('security-inbox').children.some(r => r.children[0]?.children[0]?.textContent.startsWith('Waiting payment')));
 assert.equal($('inbox-keys').hidden, false);
-$('freeze-method').value = 'phrase'; $('freeze-secret').value = phrase;
+$('freeze-method').value = 'paper'; $('freeze-secret').value = phrase;
 await $('freeze-form').fire('submit'); check('freeze');
 assert.deepEqual([signed.at(-1).kind, signed.at(-1).by], [72, 'recover']);
 latest = stateOf(); ui.render(ownAccount(), latest);
@@ -153,7 +149,7 @@ assert.equal($('security-title').textContent, 'Your account is frozen.');
 assert.deepEqual([$('freeze-switch').checked, $('freeze-more').hidden, $('unfreeze-form').hidden], [true, false, true]);
 await $('unfreeze-open').fire('click'); assert.equal($('unfreeze-form').hidden, false);
 assert.match(ui.loginRefusal(latest, ownAccount()), /frozen/);
-$('unfreeze-payment').value = payment; $('unfreeze-method').value = 'sheet'; $('unfreeze-secret').value = sheet;
+$('unfreeze-payment').value = payment; $('unfreeze-secret').value = phrase;
 await $('unfreeze-form').fire('submit'); check('unfreeze');
 assert.equal(signed.at(-1).payload.op.type, 'unfreeze');
 
@@ -163,7 +159,7 @@ $('limit-amount').value = '120'; $('limit-payment').value = payment; await $('li
 assert.equal(signed.at(-1).kind, 77); latest = stateOf(); ui.render(ownAccount(), latest);
 const raiseRow = $('security-inbox').children.find(r => r.children[0]?.children[0]?.textContent.startsWith('Waiting raise'));
 assert.ok(raiseRow, 'the raise is in the inbox');
-$('inbox-method').value = 'sheet'; $('inbox-secret').value = sheet; await raiseRow.children.find(b => b.textContent === 'Cancel').fire('click'); check('cancel raise');
+$('inbox-secret').value = phrase; await raiseRow.children.find(b => b.textContent === 'Cancel').fire('click'); check('cancel raise');
 assert.deepEqual([signed.at(-1).kind, signed.at(-1).by, signed.at(-1).payload.type], [76, 'recover', 'limit']);
 const oldLogin = session.binding.publicKey, newLogin = 'another login password for alice 7';
 $('replace-login-new').value = newLogin; $('replace-login-confirm').value = newLogin; $('replace-login-payment').value = payment;
@@ -174,7 +170,7 @@ assert.notEqual(login3.binding.publicKey, oldLogin); assert.ok(alice.devices.som
 session = { binding: { networkId, name: 'alice', publicKey: login3.binding.publicKey }, privateKey: null }; latest = stateOf(); ui.render(ownAccount(), latest);
 const payment3 = 'a fresh payment password for alice 8';
 const login5 = 'the login after replacing the payment key 5';
-$('replace-spend-payment').value = payment; $('replace-spend-new').value = payment3; $('replace-spend-confirm').value = payment3; $('replace-spend-login').value = login5; $('replace-spend-login-confirm').value = login5; $('replace-spend-method').value = 'phrase'; $('replace-spend-secret').value = phrase;
+$('replace-spend-payment').value = payment; $('replace-spend-new').value = payment3; $('replace-spend-confirm').value = payment3; $('replace-spend-login').value = login5; $('replace-spend-login-confirm').value = login5; $('replace-spend-secret').value = phrase;
 await $('replace-spend-form').fire('submit'); check('replace spend');
 assert.match(locked, /new login password/);
 const login5Record = JSON.parse(storage.getItem(`timecurrency.vault.v1:${networkId}:alice`));
@@ -256,7 +252,7 @@ storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, savedSpend); $
 storage.m.clear(); session = null; locked = null; ui.reset();
 // This browser still holds the record of a login key the account no longer has: the recovery replaces it.
 storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(loginRecord));
-$('lost-name').value = 'alice'; $('lost-sheet').value = sheet; $('lost-phrase').value = phrase;
+$('lost-name').value = 'alice'; $('lost-sheet').value = ''; $('lost-phrase').value = phrase;
 const login2 = 'brand new login words for alice 2026', payment2 = 'brand new payment words for alice 99';
 for (const [id, v] of [['lost-login', login2], ['lost-login-confirm', login2], ['lost-payment', payment2], ['lost-payment-confirm', payment2]]) $(id).value = v;
 await $('lost-form').fire('submit'); check('lost request');
@@ -265,7 +261,7 @@ assert.match($('lost-status-text').textContent, /is waiting/);
 const progress = JSON.parse(storage.getItem(`timecurrency.security-recovery.v1:${networkId}:alice`));
 assert.equal(JSON.parse(storage.getItem(`timecurrency.vault.v1:${networkId}:alice`)).binding.publicKey, progress.signin, 'the stale login record was replaced');
 assert.deepEqual(Object.keys(progress).sort(), ['accountId', 'name', 'networkId', 'signin', 'spend', 'version']);
-assert.ok(![...storage.m.values()].some(v => v.includes(sheet.replace(/ /g, '')) || v.includes(phrase)), 'no recovery secret is stored while waiting');
+assert.ok(![...storage.m.values()].some(v => v.includes(phrase)), 'no recovery secret is stored while waiting');
 // A reload: a fresh module instance finds the progress and shows the status.
 for (const el of Object.values(els)) el.listeners = {};
 const ui2 = createSecurityUI(c); await ui2.start(); check('reload');

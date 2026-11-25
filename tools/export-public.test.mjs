@@ -234,7 +234,7 @@ test('public-manifest.json is well formed, and every allowlist entry has a reaso
   for (const file of manifest.files) assert.equal(safeRelative(file.path), file.path);
   for (const list of ['key_fixtures', 'third_party_texts', 'email_allowlist', 'not_account_numbers', 'path_allowlist']) for (const entry of manifest.scan[list]) assert.ok(typeof entry.reason === 'string' && entry.reason.length > 10, list + ': ' + JSON.stringify(entry));
   for (const entry of manifest.scan.email_allowlist) assert.match(entry.address, /^\*@example(?:\.(?:com|org|net))?$/, 'only names reserved for examples are allowlisted');
-  for (const required of ['LICENSE', 'NOTICE', 'README.md', 'SECURITY.md', 'CONTRIBUTING.md', 'GOVERNANCE.md', 'CODE_OF_CONDUCT.md', 'THIRD-PARTY-LICENSES.md', MANIFEST, 'rust-toolchain.toml', 'v5/Cargo.lock', 'campaign/lib/genesis.mjs']) assert.ok(manifest.files.some(file => file.path === required), required);
+  for (const required of ['LICENSE', 'NOTICE', 'README.md', 'SECURITY.md', 'CONTRIBUTING.md', 'GOVERNANCE.md', 'CODE_OF_CONDUCT.md', 'CHANGELOG.md', 'docs/publishing.md', 'THIRD-PARTY-LICENSES.md', MANIFEST, 'rust-toolchain.toml', 'v5/Cargo.lock', 'campaign/lib/genesis.mjs']) assert.ok(manifest.files.some(file => file.path === required), required);
 });
 
 test('every file git tracks is either published or withheld by the manifest', async t => {

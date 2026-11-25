@@ -105,7 +105,7 @@ test('the page: exactly its files, nothing loaded from outside its folder, no in
   assert.deepEqual(literals.filter(text => /https?:\/\/\w|\/\/[\w-]+\.[\w-]/.test(text)), [], 'no address of another site in the script');
   assert.deepEqual([...script.matchAll(/fetch\(([^,)]+)/g)].map(match => match[1]), ["`${api}/v1/status`", "'site-config.json'"]);
   assert(!/url\(|@import|https?:\/\//.test(styles));
-  for (const words of ['Test network.', 'have no value', 'may be reset at any time', 'has not had its outside audit', 'Create your account', 'Get test time', 'Send some to a friend', 'Sign in to the demo blog', 'Your keys in one minute', 'The backup file', 'Protect my account', 'recovery sheet', 'recovery passphrase', 'Look up any account or payment, and check it in your own browser.', 'one for the whole network and not one per person']) assert(html.includes(words), words);
+  for (const words of ['Test network.', 'have no value', 'may be reset at any time', 'has not had its outside audit', 'Create your account', 'Get test time', 'Send some to a friend', 'Sign in to the demo blog', 'Your keys in one minute', 'The backup file', 'Protect my account', 'five recovery words', 'written by hand on paper', 'Look up any account or payment, and check it in your own browser.', 'one for the whole network and not one per person']) assert(html.includes(words), words);
   // The four steps, the wallet's explanation of keys, the explorer.
   assert.equal((html.match(/data-link="/g) || []).length, 6);
   for (const key of html.matchAll(/data-link="([^"]+)"/g)) assert(['wallet', 'faucet', 'explorer', 'blog'].includes(key[1]), key[1]);

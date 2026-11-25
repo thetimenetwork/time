@@ -1,5 +1,5 @@
 // Website-side login and order verification. No passwords or private signing keys.
-import { createPublicKey, randomBytes, timingSafeEqual, verify } from 'node:crypto';
+import { createHmac, createPublicKey, randomBytes, timingSafeEqual, verify } from 'node:crypto';
 import './time-sdk.js';
 import { securityOf, signInRefusal } from './account-security.mjs';
 import { createOwnNode, OwnNodeRefusal, OWN_NODE_UNAVAILABLE, OWN_NODE_MISMATCH } from './own-node.mjs';
@@ -41,35 +41,67 @@ async function authority(verifiedState, networkId, accountId, publicKey) {
   if (!Array.isArray(full.state.security)) fail('Account security state unavailable');
   return { ...full, rules: full.account ? securityOf(full.state, accountId) : null };
 }
+/// The check of a signed login against the challenge it answers, apart from where that challenge is kept. The
+/// message is exactly the challenge's, for `origin` and `networkId`, and not expired at `now()`; the key is a key of
+/// the account in a VERIFIED state (`verifiedState`), at the account's authority epoch; the login rule of the wallet
+/// library lets that key sign in now (on an account with security rules: a sign-in key, and not while frozen); no
+/// guardian recovery freezes the account; and the signature is that key's over TimeSDK.loginBytes(message).
+/// Returns { account, state, message }; throws with a sentence on anything else. The website login below and the
+/// alert service (alert-push.mjs), which asks the same proof of whoever subscribes a browser to an account, use it.
+export async function verifyLogin({ verifiedState, networkId, origin, challenge, proof, now = Date.now }) {
+  const message = proof?.message;
+  if (!message || Object.keys(message).join(',') !== 'purpose,origin,networkId,accountId,authEpoch,publicKey,nonce,issuedAt,expiresAt') fail('Noncanonical login message');
+  for (const field of ['purpose', 'origin', 'networkId', 'nonce', 'issuedAt', 'expiresAt']) if (message[field] !== challenge[field]) fail('Login challenge binding mismatch');
+  if (message.purpose !== 'login' || message.origin !== origin || message.networkId !== networkId || message.expiresAt <= now()) fail('Invalid or expired login scope');
+  sdk.decimal(message.accountId); sdk.decimal(message.authEpoch); sdk.hexToBytes(message.publicKey, 32); sdk.hexToBytes(proof.signature, 64);
+  const { state, account, rules } = await authority(verifiedState, networkId, message.accountId, message.publicKey);
+  if (!account || String(account.auth_epoch) !== message.authEpoch) fail('Device authority changed or revoked');
+  const refusal = signInRefusal({ account, security: rules, publicKey: message.publicKey, nowElapsedMicros: securityNowOf(state) });
+  if (refusal) fail(refusal);
+  if (frozen(state, message.accountId)) fail('Account login is frozen by a guardian recovery quorum');
+  const publicKey = createPublicKey({ key: Buffer.concat([keyPrefix, Buffer.from(message.publicKey, 'hex')]), format: 'der', type: 'spki' });
+  if (!verify(null, sdk.loginBytes(message), publicKey, Buffer.from(proof.signature, 'hex'))) fail('Invalid login signature');
+  return { account, state, message };
+}
 export function createLoginService({ origin, networkId, verifiedState, now = Date.now, ttlMs = 180000, sessionMs = 3600000 }) {
   if (new URL(origin).origin !== origin || !/^[0-9a-f]{64}$/.test(networkId) || typeof verifiedState !== 'function') fail('Invalid login service configuration');
-  const prelogins = new Map(); const sessions = new Map();
-  function prune() { const time = now(); for (const [id, value] of prelogins) if (value.challenge.expiresAt <= time) prelogins.delete(id); for (const [id, value] of sessions) if (value.expiresAt <= time) sessions.delete(id); }
+  // A challenge is kept by nobody here: it travels in the prelogin cookie, its nonce and times with a MAC under a key
+  // made at start (a restart only makes the sign-ins under way start again). Handing one out costs no memory, so no
+  // number of requests can fill a table of them (until 24 November 2026 a table of 1000 was full after 6 requests a
+  // second, and every sign-in was refused). A nonce is remembered once a proof for it is checked: while it is checked,
+  // so that no second proof for it is checked at the same time, and, after a sign-in succeeded with it, until it
+  // expires; so what is remembered is bounded by the sign-ins under way and those of the last three minutes.
+  const key = randomBytes(32), checking = new Set(), used = new Map(), sessions = new Map();
+  const mac = (nonce, issuedAt, expiresAt) => createHmac('sha256', key).update(`time-prelogin-v1|${origin}|${networkId}|${nonce}|${issuedAt}|${expiresAt}`).digest('hex');
+  function prune() { const time = now(); for (const [nonce, expiresAt] of used) if (expiresAt <= time) used.delete(nonce); for (const [id, value] of sessions) if (value.expiresAt <= time) sessions.delete(id); }
   function issue() {
-    prune(); if (prelogins.size >= 1000) fail('Too many outstanding login requests');
-    const cookie = token(); const issuedAt = now();
-    const challenge = { purpose: 'login', origin, networkId, nonce: token(), issuedAt, expiresAt: issuedAt + ttlMs };
-    prelogins.set(cookie, { challenge }); return { cookie, challenge };
+    const nonce = token(), issuedAt = now(), expiresAt = issuedAt + ttlMs;
+    const challenge = { purpose: 'login', origin, networkId, nonce, issuedAt, expiresAt };
+    return { cookie: `${nonce}.${issuedAt}.${expiresAt}.${mac(nonce, issuedAt, expiresAt)}`, challenge };
+  }
+  // The challenge a prelogin cookie carries: one this service made, unexpired, and neither used nor being checked.
+  function challengeOf(cookie) {
+    const match = /^([0-9a-f]{64})\.(0|[1-9][0-9]{0,15})\.(0|[1-9][0-9]{0,15})\.([0-9a-f]{64})$/.exec(typeof cookie === 'string' ? cookie : '');
+    if (!match) return null;
+    const [, nonce, issued, expires, given] = match, issuedAt = Number(issued), expiresAt = Number(expires);
+    if (!equal(given, mac(nonce, issuedAt, expiresAt)) || expiresAt - issuedAt !== ttlMs || expiresAt <= now() || used.has(nonce) || checking.has(nonce)) return null;
+    return { purpose: 'login', origin, networkId, nonce, issuedAt, expiresAt };
   }
   async function finish(cookie, proof) {
-    prune(); const pending = prelogins.get(cookie); if (!pending) fail('Login challenge expired or already consumed');
-    // A challenge is consumed before parsing/verification, including failures.
-    prelogins.delete(cookie);
-    const message = proof?.message; const challenge = pending.challenge;
-    if (!message || Object.keys(message).join(',') !== 'purpose,origin,networkId,accountId,authEpoch,publicKey,nonce,issuedAt,expiresAt') fail('Noncanonical login message');
-    for (const field of ['purpose', 'origin', 'networkId', 'nonce', 'issuedAt', 'expiresAt']) if (message[field] !== challenge[field]) fail('Login challenge binding mismatch');
-    if (message.purpose !== 'login' || message.origin !== origin || message.networkId !== networkId || message.expiresAt <= now()) fail('Invalid or expired login scope');
-    sdk.decimal(message.accountId); sdk.decimal(message.authEpoch); sdk.hexToBytes(message.publicKey, 32); sdk.hexToBytes(proof.signature, 64);
-    const { state, account, rules } = await authority(verifiedState, networkId, message.accountId, message.publicKey);
-    if (!account || String(account.auth_epoch) !== message.authEpoch) fail('Device authority changed or revoked');
-    const refusal = signInRefusal({ account, security: rules, publicKey: message.publicKey, nowElapsedMicros: securityNowOf(state) });
-    if (refusal) fail(refusal);
-    if (frozen(state, message.accountId)) fail('Account login is frozen by a guardian recovery quorum');
-    const publicKey = createPublicKey({ key: Buffer.concat([keyPrefix, Buffer.from(message.publicKey, 'hex')]), format: 'der', type: 'spki' });
-    if (!verify(null, sdk.loginBytes(message), publicKey, Buffer.from(proof.signature, 'hex'))) fail('Invalid login signature');
-    const id = token(); const session = { accountId: String(account.id), publicKey: message.publicKey, authEpoch: String(account.auth_epoch), name: account.name, csrf: token(), expiresAt: now() + sessionMs };
-    sessions.set(id, session); return { cookie: id, session };
+    prune(); const challenge = challengeOf(cookie); if (!challenge) fail('Login challenge expired or already consumed');
+    // A challenge is consumed before parsing/verification: no second proof for it is checked while this one is, and
+    // once a sign-in succeeded with it, it is never taken again. A proof that was refused is refused again.
+    checking.add(challenge.nonce);
+    try {
+      const { account, message } = await verifyLogin({ verifiedState, networkId, origin, challenge, proof, now });
+      used.set(challenge.nonce, challenge.expiresAt);
+      const id = token(); const session = { accountId: String(account.id), publicKey: message.publicKey, authEpoch: String(account.auth_epoch), name: account.name, csrf: token(), expiresAt: now() + sessionMs };
+      sessions.set(id, session); return { cookie: id, session };
+    } finally { checking.delete(challenge.nonce); }
   }
+  // The session of a cookie as it is kept, without reading the chain: for signing out, which must work when the chain
+  // cannot be read.
+  function session(cookie) { prune(); return sessions.get(cookie) ?? null; }
   async function current(cookie) {
     prune(); const session = sessions.get(cookie); if (!session) return null;
     const { state, account, rules } = await authority(verifiedState, networkId, session.accountId, session.publicKey);
@@ -80,14 +112,15 @@ export function createLoginService({ origin, networkId, verifiedState, now = Dat
   }
   function logout(cookie) { sessions.delete(cookie); }
   function checkCsrf(session, csrf) { if (!equal(session.csrf, csrf)) fail('Invalid session CSRF token'); }
-  return { issue, finish, current, logout, checkCsrf };
+  return { issue, finish, current, session, logout, checkCsrf };
 }
 
 // onAlert receives events a person should look at (an own node that contradicts the light
 // client); by default they are written to the error log.
-export function createOrderService({ networkId, recipient, verifiedReceipt, protocolVersion='4',verifiedState,now = Date.now, initialState, persist, repository, ownNode, onAlert = event => console.error(JSON.stringify(event)) }) {
+export function createOrderService({ networkId, recipient, verifiedReceipt, protocolVersion='4',verifiedState,now = Date.now, initialState, persist, repository, ownNode, maxOpenPerAccount = 3, onAlert = event => console.error(JSON.stringify(event)) }) {
   if (!repository && typeof persist !== 'function') fail('A durable order persistence callback is required');
   if (typeof onAlert !== 'function') fail('onAlert must be a function');
+  if (!Number.isSafeInteger(maxOpenPerAccount) || maxOpenPerAccount < 1) fail('maxOpenPerAccount is a whole number of orders, at least 1');
   if(protocolVersion!=='4'||protocolVersion==='4'&&typeof verifiedState!=='function')fail('V4 orders require a fresh independently verifying account client');
   sdk.decimal(recipient); const orders = new Map(); let queue = Promise.resolve();
   // Optional: the merchant's own full node, a second witness for large orders (own-node.mjs).
@@ -110,8 +143,24 @@ export function createOrderService({ networkId, recipient, verifiedReceipt, prot
   }
   function locked(operation) { const task = queue.then(operation); queue = task.catch(() => {}); return task; }
   function snapshot(replacement) { const values = [...orders.values()].filter(value => value.orderId !== replacement.orderId); values.push(replacement); return { networkId, recipient, orders: values }; }
+  // Orders that wait for their payment: at most maxOpenPerAccount (3) of one account at once. An account that asks
+  // again for the same amount while one of its open orders still reserves its next nonce, with a minute left before the
+  // chain would refuse its payment, gets that order back. An order nobody paid is deleted KEEP_UNSETTLED_MS after it expired (the
+  // chain takes no payment for it after its expiry; one already made can still settle it until then).
+  const REUSE_LEFT_MICROS = 60_000_000n, KEEP_UNSETTLED_MS = 86_400_000; let purgedAt = -Infinity;
+  const tooMany = count => Object.assign(new Error(`This account has ${count} orders waiting for their payment, the most at once. Pay one of them, or ask again once they have expired, three minutes after they were made.`), { httpStatus: 429 });
+  async function openOrders(accountId, time) {
+    if (repository) return repository.open(accountId, time);
+    return [...orders.values()].filter(value => value.accountId === accountId && !value.fulfilled && value.expiresAt > time);
+  }
+  async function purge(time) {
+    if (time - purgedAt < 60000) return; purgedAt = time;
+    if (repository) { repository.purge(time - KEEP_UNSETTLED_MS); return; }
+    for (const [orderId, value] of orders) if (!value.fulfilled && value.expiresAt < time - KEEP_UNSETTLED_MS) orders.delete(orderId);
+  }
   function issue(accountId, amount) { return locked(async () => {
     sdk.decimal(accountId); sdk.decimal(amount); if (BigInt(amount) <= 0n) fail('Payment amount must be positive');
+    await purge(now());
     if (!repository && orders.size >= 1000) fail('Laboratory order limit reached; retain settlement history');
     let reservation={};let orderId=token();let fee;
     if(protocolVersion==='4'){
@@ -126,7 +175,12 @@ export function createOrderService({ networkId, recipient, verifiedReceipt, prot
       fee=sdk.networkFee(checked.state);
       const account=checked.state.accounts.find(a=>a.id===accountId);if(!account||frozen(checked.state,accountId))fail('Payer account unavailable or frozen');
       const nonce=(BigInt(account.nonce)+1n).toString();sdk.decimal(nonce);
-      const expires=(BigInt(checked.state.time_micros)-BigInt(checked.state.genesis.genesis_time_micros)+180000000n).toString();sdk.decimal(expires);
+      const elapsed=BigInt(checked.state.time_micros)-BigInt(checked.state.genesis.genesis_time_micros);
+      const open=await openOrders(accountId,now());
+      const again=open.find(value=>value.amount===amount&&value.reservedNonce===nonce&&String(value.fee)===String(fee)&&BigInt(value.expiresElapsedMicros)>=elapsed+REUSE_LEFT_MICROS);
+      if(again)return {...again};
+      if(open.length>=maxOpenPerAccount)throw tooMany(open.length);
+      const expires=(elapsed+180000000n).toString();sdk.decimal(expires);
       orderId=sdk.orderReference({nonce,expiresElapsedMicros:expires,randomHex:randomBytes(16).toString('hex')});
       reservation={reservedNonce:nonce,expiresElapsedMicros:expires};
     }
@@ -172,6 +226,8 @@ export function createOrderService({ networkId, recipient, verifiedReceipt, prot
   }
   async function fulfill(accountId, orderId, hash) {
     if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/i.test(hash)) fail('Invalid payment transaction hash'); hash = hash.toUpperCase();
+    // An order is named by its reference: anything else is no order (and never reaches the store as a query).
+    if (typeof orderId !== 'string' || !/^[a-f0-9]{64}$/.test(orderId)) fail('Unknown payment order');
     const order = await read(orderId); if (!order || order.accountId !== accountId) fail('Unknown payment order');
     if (order.fulfilled) { if (order.hash !== hash) fail('Order already settled with a different transaction'); return { ...order }; }
     if (await usedElsewhere(hash, orderId)) fail('Transaction already used for another order');

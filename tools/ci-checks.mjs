@@ -69,7 +69,7 @@ export function checks() {
     // engine and the verifier; libFuzzer's crates are in fuzz/Cargo.lock, which only `cargo fuzz` uses.
     onlyWith: 'fuzz/harness/Cargo.toml', run: [['cargo', 'test', '--locked', '--manifest-path', 'fuzz/harness/Cargo.toml']],
   });
-  list.push({ name: 'node-clients', group: 'node', note: 'SDK, light client, servers, API, faucet, alert watch, gateway, wallet, explorer',
+  list.push({ name: 'node-clients', group: 'node', note: 'SDK, light client, servers, API, faucet, alert watch, alert service, gateway, wallet, explorer',
     run: [['node', '--test', 'client-v4/*.test.mjs', 'deploy/gateway/*.test.mjs', 'web-v4/wallet/*.test.mjs', 'web-v4/explorer/*.test.mjs']] });
   list.push({ name: 'node-release', group: 'node', note: 'release packagers, the genesis ceremony, and the deployment kit\'s own tests beside them (deploy/*.test.mjs)',
     run: [['node', '--test', 'tools/release-v4.test.mjs', 'tools/release-v5.test.mjs', 'tools/genesis-v5.test.mjs', 'deploy/*.test.mjs']] });

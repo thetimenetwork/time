@@ -55,6 +55,9 @@ services:
   signer:
     image: ${REMOTE_SIGNER_IMAGE:?set independently reviewed fenced signer NAME@sha256 digest}
     network_mode: service:validator
+    # Never as root, whatever the image says: the signer image must give UID 10001 its state directory, as the kit's
+    # signer images do (campaign/lib/kit-plan.mjs, TMKMS_DOCKERFILE and COSMOS_DOCKERFILE).
+    user: "10001:10001" # the owner of /signer-state in the image
     read_only: true
     restart: "no"
     cap_drop: [ALL]

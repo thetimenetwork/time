@@ -146,17 +146,33 @@ test('Keys for an account with one key: the name and the password every day, the
   assert.equal(view.note, '');
 });
 
-test('Keys for a protected account: two passwords every day, two papers to keep safe, and this browser, with the account\'s own limit and waiting period', () => {
-  const view = A.keysView({ protectedAccount: true, name: 'carol', limit: '30 seconds', waiting: '48 hours' });
-  assert.deepEqual(view.cards.map(card => [card.id, card.mark, card.markText]), [['login', 'day', 'Every day'], ['payment', 'day', 'When you pay'], ['sheet', 'safe', 'Keep safe'], ['phrase', 'safe', 'Keep safe'], ['browser', 'day', 'Every day']]);
-  const rows = Object.fromEntries(view.cards.map(card => [card.id, Object.fromEntries(card.rows)]));
+test('Keys for a protected account: two passwords every day, the recovery words to keep safe (and the Recovery Kit of an account that has one), and this browser, with the account\'s own limit and waiting period', () => {
+  const kindOf = recoveryKind => A.keysView({ protectedAccount: true, name: 'carol', limit: '30 seconds', waiting: '48 hours', recoveryKind });
+  const rowsOf = view => Object.fromEntries(view.cards.map(card => [card.id, Object.fromEntries(card.rows)]));
+  // Words only: one thing to keep safe, the words; both recovery keys come from them.
+  const words = kindOf('words'), rows = rowsOf(words);
+  assert.deepEqual(words.cards.map(card => [card.id, card.mark, card.markText, card.title]), [['login', 'day', 'Every day', 'Login password'], ['payment', 'day', 'When you pay', 'Payment password'], ['phrase', 'safe', 'Keep safe', 'Recovery words'], ['browser', 'day', 'Every day', 'This browser']]);
   assert.equal(rows.login['What it does'], 'Opens this wallet and signs you in to websites. It cannot pay.');
-  assert.match(rows.login['If you forget it'], /In another browser, choose “Recover with my recovery sheet”\. It needs both recovery papers, and the account waits 48 hours, frozen/);
+  assert.match(rows.login['If you forget it'], /In another browser, choose “Recover my account”\. It needs your recovery words, and the account waits 48 hours, frozen/);
   assert.match(rows.payment['What it does'], /^Pays up to 30 seconds at once, fees included/);
   assert.match(rows.payment['Where it is'], /unlocks the payment key that this browser keeps/);
-  assert.match(rows.sheet['What it does'], /With the passphrase: replaces lost passwords, after 48 hours\. Alone: freezes the account\./);
-  assert.match(rows.browser['If it is lost'], /A backup file brings back the login key only\./);
-  assert.match(view.note, /Lost both\? The account keeps working, but nobody can replace a lost password any more\./);
+  assert.match(rows.phrase['What it does'], /^Both recovery keys of your account come from them\. With them, lost passwords are replaced after 48 hours\./);
+  assert.match(rows.phrase['If someone may have seen them'], /whoever has them can ask for your account: that waits 48 hours, frozen, and only these words can stop it\./);
+  assert.match(rows.phrase['If you lose them'], /^New words cannot be made without them/);
+  assert.match(rows.browser['If it is lost'], /Recover with your recovery words in another browser\. A backup file brings back the login key only\./);
+  assert.match(words.note, /^Your recovery words, on paper, are all your account needs to be recovered: both recovery keys come from them\./);
+  // Words and a Recovery Kit: the kit has a card of its own, and recovering needs both.
+  const kit = kindOf('kit'), kitRows = rowsOf(kit);
+  assert.deepEqual(kit.cards.map(card => card.id), ['login', 'payment', 'sheet', 'phrase', 'browser']);
+  assert.match(kitRows.login['If you forget it'], /It needs your recovery words and your Recovery Kit, and the account waits 48 hours/);
+  assert.match(kitRows.sheet['What it does'], /With your recovery words: replaces lost passwords, after 48 hours\. It holds your recovery sheet, locked with the words: alone it opens nothing\./);
+  assert.match(kitRows.phrase['If you lose them'], /does not open without them\. If you printed it, make new words at once/);
+  assert.match(kit.note, /Recovering needs both\./);
+  // Not known in this browser (keys made in another one): what holds for both.
+  const unknown = A.keysView({ protectedAccount: true, name: 'carol', limit: '30 seconds', waiting: '48 hours' }), unknownRows = rowsOf(unknown);
+  assert.deepEqual(unknown.cards.map(card => card.id), ['login', 'payment', 'phrase', 'browser']);
+  assert.match(unknownRows.login['If you forget it'], /It needs your recovery words, and your Recovery Kit if your account has one, and the account waits/);
+  for (const view of [words, kit, unknown]) assert.match(view.note, /Lost (them|either)\? The account keeps working, but a lost password can no longer be replaced\./);
   // A browser that holds only the login key says so.
   const loginOnly = Object.fromEntries(A.keysView({ protectedAccount: true, name: 'carol', limit: '30 seconds', waiting: '48 hours', paymentKeyHere: false }).cards.map(card => [card.id, Object.fromEntries(card.rows)]));
   assert.match(loginOnly.payment['Where it is'], /kept in another browser of yours, not in this one/);
@@ -208,7 +224,7 @@ const realTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (fn, ms, ...given) => { const timer = realTimeout(fn, ms, ...given); if (ms >= 60000) timer.unref(); return timer; };
 const until = async (condition, what) => { for (let turn = 0; turn < 1200; turn++) { if (await condition()) return; await new Promise(resolve => realTimeout(resolve, 5)); } assert.fail(`waited in vain for: ${what} (the wallet's notice: ${$('notice').textContent})`); };
 
-const GENESIS = 1700000000000000n, DAY = 86400000000n, FEE = 1000n, PASSWORD = 'correct horse battery staple 41', PAYMENT = 'quiet harbour lanterns at dawn 77';
+const GENESIS = 1700000000000000n, DAY = 86400000000n, FEE = 1000n, PAYMENT = 'quiet harbour lanterns at dawn 77';
 const faucetKey = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
 const faucetPublic = Buffer.from(await crypto.subtle.exportKey('raw', faucetKey.publicKey)).toString('hex');
 const chain = { height: 900, now: 100n * DAY, security: {}, included: new Map(), posted: [], faucet: { mode: 'grant', calls: [] },
@@ -255,6 +271,8 @@ globalThis.fetch = async (url, options = {}) => {
     const route = new URL(String(url)).pathname; chain.faucet.calls.push({ route, body: options.body ?? null });
     if (route === '/v1/faucet') return new Response(JSON.stringify({ network_id: networkId, account: '1', giving: true }), { status: 200 });
     const mode = chain.faucet.mode, asked = JSON.parse(options.body).account;
+    // A limit of a day, as a browser sees it from another origin: the 429 without a Retry-After it may read, in the
+    // faucet's own form, so the wallet reads it as the faucet's answer (busy.mjs, inOwnForm).
     if (mode === 'limit') return new Response(JSON.stringify({ error: { code: 'account_limit', message: 'This account has had its 1 per 24 hours; "previous" lists what it was given' }, previous: [] }), { status: 429 });
     if (mode === 'odd') return new Response(JSON.stringify({ error: { code: 'teapot', message: 'Send 0123456789abcdef to "us"' } }), { status: 418 });
     return new Response(JSON.stringify({ hash: await grant(mode === 'elsewhere' ? '2' : asked), status: 'submitted' }), { status: 202 });
@@ -272,10 +290,13 @@ globalThis.fetch = async (url, options = {}) => {
   return { ok: !answer.error, status: answer.error ? 400 : 200, text: async () => JSON.stringify(answer), json: async () => answer };
 };
 
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex, sealVault, makePassword } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const login = await newDevice(), spend = await newDevice(), sheet = await newDevice(), phrase = await newDevice();
 chain.accounts.push({ id: '5', name: 'alice', balance: '5000000', nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: true, can_spend: true }] });
-storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
+// The key of an account with one key, as the wallet makes it now: under a password it made (the rule, vault.mjs RULE).
+const MADE = makePassword(), PASSWORD = MADE.text;
+storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, MADE, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
 await import(new URL('web-v4/wallet/app.js', root).href);
 await until(() => /^Connected to the Time test network/.test($('notice').textContent) || $('notice').className.includes('error'), 'the wallet to start');
 async function unlock() { $('username').value = 'alice'; $('password').value = PASSWORD; await $('auth-form').fire('submit'); await until(() => $('dashboard').hidden === false && $('account-verification').textContent === 'Checked by this browser', 'the dashboard'); }
@@ -325,8 +346,11 @@ test('on the stand-in page: a payment ends with "Sent" and what the other person
   assert.equal($('send-result').hidden, true, 'the next payment starts without the last "Sent"');
 });
 
-test('on the stand-in page: two paid names that look alike are both marked under the name, where one is picked; the review of a paid name is as before; a refresh does not draw the names again', async () => {
+test('on the stand-in page: two paid names that look alike are both marked under the name, where one is picked; the review of either says so, with the tick; a refresh does not draw the names again', async () => {
+  // The list as an earlier version kept it, in the clear: the next unlock encrypts it (locked-store.mjs).
   storage.setItem(`timecurrency.names.v1:${networkId}:alice`, JSON.stringify({ paid: ['bob', 'b0b'] }));
+  await $('lock-button').fire('click'); await unlock();
+  assert.equal(storage.getItem(`timecurrency.names.v1:${networkId}:alice`), null, 'the list is no longer kept in the clear');
   await $('refresh').fire('click');
   assert.deepEqual($('paid-names').children.map(chip => [chip.textContent, chip.className]), [['@b0b', 'chip alike'], ['@bob', 'chip alike']]);
   assert.deepEqual([$('paid-names-wrap').hidden, $('paid-names-alike').hidden], [false, false]);
@@ -335,11 +359,14 @@ test('on the stand-in page: two paid names that look alike are both marked under
   $('recipient').value = 'bob'; $('amount').value = '0.1';
   const sending = $('send-form').fire('submit');
   await until(() => $('review-dialog').open, 'the review');
-  // A paid name: no line and no tick (name-warning.test.mjs); the review names the account it comes from and its button what it does.
-  assert.deepEqual([$('review-ack-wrap').hidden, $('review-confirm').textContent], [true, 'Send 0.1 seconds']);
+  // A paid name that looks like another paid name: the review says so, with the tick (web audit of November 2026, W-4:
+  // one of the two may be written into this browser's list by someone else). It names the account it comes from and its
+  // button what it does.
+  assert.deepEqual([$('review-ack-wrap').hidden, $('review-ack-text').textContent, $('review-confirm').textContent], [false, 'I checked the name, letter by letter.', 'Send 0.1 seconds']);
+  assert.match(textOf($('review-body')), /You have paid\s+@bob\s+before, and also\s+@b0b\s*, which looks like it\. One of them may not be who you think\. Check every letter\./);
   assert.match(textOf($('review-body')), /From @alice · account 5 To @bob · account 2/);
   $('review-dialog').returnValue = 'cancel'; $('review-dialog').open = false; await $('review-dialog').fire('close'); await sending;
-  storage.removeItem(`timecurrency.names.v1:${networkId}:alice`);
+  storage.removeItem(`timecurrency.names.v2:${networkId}:alice`);
 });
 
 test('on the stand-in page: a lock closes a review that is open, and leaves nothing of the account in Payments, Activity or Receive', async () => {
@@ -355,16 +382,27 @@ test('on the stand-in page: a lock closes a review that is open, and leaves noth
   assert.equal(chain.posted.filter(action => action.payload?.amount === '200000').length, 0, 'nothing was signed');
 });
 
-test('on the stand-in page: locking empties Home; a protected account shows its five things, "Change something", and no backup suggestion', async () => {
+test('on the stand-in page: locking empties Home; a protected account shows its things by the kind of its recovery keys, "Change something", and no backup suggestion', async () => {
   await $('lock-button').fire('click');
   assert.deepEqual([$('balance').textContent, $('account-name').textContent, $('account-verification').textContent, $('account-verification').className, $('approval-account').hidden], ['—', '@—', 'Not checked yet', 'badge', true]);
   assert.deepEqual([$('home-activity').children.length, $('keys-cards').children.length, $('keys-lede').textContent], [0, 0, ''], 'nothing of the last account is left on Home or Keys');
   // The account as "Protect my account" leaves it: this browser's key is the login key, a payment key is kept here under the payment password.
   alice().devices = [{ public_key: login.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }];
   chain.security['5'] = { account: '5', version: '1', policy: { threshold: '2', daily_limit_micros: '30000000', delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: '30000000', allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null };
-  storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+  storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
   await unlock();
+  // This browser does not know the kind of the account's recovery keys: Keys says what holds for both.
+  assert.deepEqual(cards().map(([id, className]) => [id, className]), [['login', 'key-card day'], ['payment', 'key-card day'], ['phrase', 'key-card safe'], ['browser', 'key-card day']]);
+  assert.match(textOf($('keys-cards')), /your Recovery Kit if your account has one/);
+  // Once it remembers them as words and a kit (security-flows.mjs, recoveryKindOf), the kit has its card.
+  storage.setItem(`timecurrency.recovery-kind.v1:${networkId}:alice`, JSON.stringify({ kind: 'kit', keys: [sheet.publicKey, phrase.publicKey].sort() }));
+  await $('lock-button').fire('click'); await unlock();
   assert.deepEqual(cards().map(([id, className]) => [id, className]), [['login', 'key-card day'], ['payment', 'key-card day'], ['sheet', 'key-card safe'], ['phrase', 'key-card safe'], ['browser', 'key-card day']]);
+  // Remembered for other keys than the account's of now, the kind is not used.
+  storage.setItem(`timecurrency.recovery-kind.v1:${networkId}:alice`, JSON.stringify({ kind: 'words', keys: [sheet.publicKey, login.publicKey].sort() }));
+  await $('lock-button').fire('click'); await unlock();
+  assert.deepEqual(cards().map(([id]) => id), ['login', 'payment', 'phrase', 'browser']);
+  assert.match(textOf($('keys-cards')), /your Recovery Kit if your account has one/);
   assert.match(textOf($('keys-cards')), /Pays up to 30 seconds at once, fees included/);
   assert.match(textOf($('keys-cards')), /the account waits 48 hours, frozen/);
   assert.match(textOf($('keys-cards')), /Your login key and your payment key, each locked by its own password\./);

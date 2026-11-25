@@ -43,12 +43,13 @@
 // counted in the block time of proven states, not on this machine's clock. Requests are handled
 // one at a time from the proof to the node's answer, so two requests never get the same nonce.
 import http from 'node:http';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { readFileSync, constants as fsConstants } from 'node:fs';
+import { open as openFile, unlink } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import './time-sdk.js';
 import { roleOf, securityOf, allowance, frozen, KIND, payloads, signSecurityAction } from './account-security.mjs';
-import { ApiError, createRateLimiter, createStateReader, normalIp } from './api.mjs';
+import { ApiError, createRateLimiter, createStateReader, normalIp, carriesBody } from './api.mjs';
 import { IndexerError, plainText } from './indexer.mjs';
 import { withTimeout } from './security-watch-service.mjs';
 
@@ -66,8 +67,25 @@ export const isTestChain = (chainId) => typeof chainId === 'string' && TEST_CHAI
 /// A registration consent must still be valid this long after the state it is checked against:
 /// nodes admit what carries an expiry only if it is valid 30 seconds after the last block.
 const EXPIRY_MARGIN_MICROS = 45_000_000n;
-/// Records of grants are kept this long, then removed.
+/// Records of grants are kept this long, then removed. Who asked for one (a keyed hash of the caller's address
+/// group, under a key that is not in the store) is kept only as long as a limit counts it: 24 hours of block time,
+/// and then emptied.
 const KEEP_MS = 30 * DAY_MS;
+/// How long what was removed from the store may stay in its log of writes (the -wal file) before that log is copied
+/// into the store and emptied (see `prune`).
+const SCRUB_MS = 10 * 60_000;
+/// How many times the limits of one address (an IPv4 address or an IPv6 /56) the IPv6 /48 around it has, unless the
+/// config says otherwise; and how many times the registrations of one address all callers together get in 24 hours.
+export const NETWORK_FACTOR = 3, REGISTRATIONS_FACTOR = 10;
+/// The refusals of the node for a sponsored registration that no sending will ever change: an account holds the key,
+/// or a commitment of the key that has not expired waits (registration/src/lib.rs, `commit`; the node's log is the
+/// error's own text, v5/src/app.rs `check_batch`). Such bytes are withdrawn at once (see signAndSend).
+const SETTLED_REFUSALS = Object.freeze({ 'registration key already belongs to an account': 'already_registered', 'unexpired registration commitment already exists': 'already_committed' });
+/// How long the body of a request may take to arrive (it is at most MAX_BODY_BYTES).
+const BODY_MS = 5000;
+/// The page's address with an account for its field, as the page itself accepts one (web-v4/faucet/app.js): a number
+/// or a name, with or without "@" (written "%40" too), in either case, and nothing else.
+const PREFILL = /^\/\?account=(?:@|%40)?[A-Za-z0-9_]{1,20}$/;
 const PAGE_FILES = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   // The menu of the public networks that every page of the project carries (web-v4/shared/network-menu.js).
   '/web-v4/shared/network-menu.js': ['../shared/network-menu.js', 'text/javascript; charset=utf-8'], '/web-v4/shared/network-menu.css': ['../shared/network-menu.css', 'text/css; charset=utf-8'] };
@@ -82,6 +100,14 @@ export function callerKey(address) {
   if (!ip.includes(':')) return ip;
   const groups = ip.split(':');
   return `${groups[0]}:${groups[1]}:${groups[2]}:${(parseInt(groups[3], 16) & 0xff00).toString(16)}::/56`;
+}
+/// The network a caller is also counted under: the IPv6 /48 around its /56 (what one site is commonly given), so
+/// that one network does not count as 256 callers. Null for IPv4, whose address is the caller. Takes an address, or
+/// a caller key as `callerKey` gives it.
+export function networkOf(address) {
+  const key = /::\/56$/.test(String(address)) ? String(address) : callerKey(address);
+  const match = /^([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):[0-9a-f]+::\/56$/.exec(key);
+  return match ? `${match[1]}:${match[2]}:${match[3]}::/48` : null;
 }
 
 /// Reads the spend key from its file: 64 hexadecimal characters, the 32-byte Ed25519 seed, and
@@ -130,7 +156,12 @@ export function createTxLookup(origin, { fetcher = globalThis.fetch, timeoutMs =
 // ------------------------------------------------------------------ the store
 /// Statuses of bytes that may still be sent: they wait for a signature, the node, or a block.
 const SENDABLE = ['signed', 'submitted'];
-const SCHEMA = '3';
+/// Version 5 (2026-11-24) keeps who asked as a keyed hash of the caller's address group, with the hash of its IPv6
+/// /48 beside it, empties both after 24 hours, and holds NOT the key of those hashes (`loadCallerKey`). Version 4 kept
+/// the key in the store, so that the file alone gave back who asked (every IPv4 address can be tried in seconds);
+/// version 3 kept the address groups themselves for 30 days. A store of either is moved to version 5 in place when it
+/// is opened (see openStore).
+const SCHEMA = '5', MOVABLE_SCHEMAS = Object.freeze(['3', '4']);
 /// What an existing file must hold to be this faucet's store, or why it is not. Nothing is written
 /// to find out: a file of another version, network or account is refused as it is.
 function storeMismatch(db, networkId, account) {
@@ -140,7 +171,7 @@ function storeMismatch(db, networkId, account) {
     if (tables.length === 0) return null; // a new file
     held = tables.includes('meta') ? Object.fromEntries(db.prepare('SELECT key, value FROM meta').all().map((row) => [row.key, row.value])) : {};
   } catch { return 'This data directory holds a file that is not a store of the faucet; use a new one'; }
-  if (held.schema !== SCHEMA) return 'This data directory holds the store of another version of the faucet; use a new one (see the README before you do)';
+  if (held.schema !== SCHEMA && !MOVABLE_SCHEMAS.includes(held.schema)) return 'This data directory holds the store of another version of the faucet; use a new one (see the README before you do)';
   if (held.network_id !== networkId) return 'This data directory belongs to another network; use a new one';
   if (held.account !== account) return 'This data directory belongs to another faucet account; use a new one';
   return null;
@@ -153,22 +184,92 @@ function storeMismatch(db, networkId, account) {
 /// `created_at` of a grant is block time (of the proven state the grant was made on), in
 /// milliseconds: the 24 hours of the limits are counted in it. The other times are this
 /// machine's clock and only pace the work.
-export function openFaucetStore({ filename, networkId, account, synchronous = 'FULL' }) {
+///
+/// Who asked is never kept as an address. `caller` holds a keyed hash (HMAC-SHA-256) of the caller's address group
+/// (`callerKey`), `network` one of its IPv6 /48 (`networkOf`; null for IPv4). Both fields are emptied once the
+/// request is 24 hours old: no limit looks further back.
+///
+/// The key of the hashes (`callerKey`, 32 bytes) is given by the service and is never written to the store
+/// (`loadCallerKey` says where it is kept). The store keeps only a check of it (`caller_key_check`, a keyed hash of a
+/// fixed text, which tells nothing about the key): hashes made under another key match nobody, so when the key is not
+/// the one of the check (it was lost with the memory that held it, or there is none) they are removed at once, and
+/// the counts per caller start afresh (`opened.forgotten`). The counts that know no caller (per account, per key and
+/// the totals of the day) are unchanged by any of this.
+///
+/// What is removed does not stay in the file: `secure_delete` overwrites deleted records and emptied fields with
+/// zeros, and the log of writes (-wal) is copied into the store and emptied within SCRUB_MS of a removal (`prune`).
+///
+/// `opened` says what the opening did: `moved` (the version a store was moved from, or null), `forgotten`, and
+/// `rewritten` (true when the store was written anew after a move, false when that failed and waits for the next
+/// start, null when there was nothing to do).
+export function openFaucetStore({ filename, networkId, account, synchronous = 'FULL', callerKey = randomBytes(32) }) {
   if (!['FULL', 'NORMAL', 'OFF'].includes(synchronous)) throw new Error('synchronous is FULL, NORMAL or OFF');
+  if (!Buffer.isBuffer(callerKey) || callerKey.length !== 32) throw new Error('callerKey is 32 bytes');
   const db = new DatabaseSync(filename);
   const mismatch = storeMismatch(db, networkId, account);
   if (mismatch) { db.close(); throw new Error(mismatch); }
-  try { return openStore(db, { networkId, account, synchronous }); } catch (error) { try { db.close(); } catch { /* closed already */ } throw error; }
+  try { return openStore(db, { networkId, account, synchronous, callerKey }); } catch (error) { try { db.close(); } catch { /* closed already */ } throw error; }
 }
-function openStore(db, { networkId, account, synchronous }) {
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=${synchronous}; PRAGMA busy_timeout=5000;`);
+
+/// The key of the hashes of who asked (openFaucetStore). It is never in the store. Without `file` it is made at
+/// every start and held in memory only. With `file` it is also kept in that file, so that a restart of the service
+/// counts the same callers as before: the file belongs on a file system in memory (tmpfs: /dev/shm, or a directory
+/// of the faucet's user under /run), on no disk and in no backup, and it is emptied by a reboot, after which the
+/// faucet makes a new key and the counts per caller start afresh.
+/// - The file is read without following a link, and used only if it is a plain file of this process's user (any
+///   user's, for root) that no other user may read, holding 64 lower-case hexadecimal characters and nothing else
+///   but a final line break.
+/// - A file that is not so is removed and made anew, when it can be; one that is missing is made (mode 600, never
+///   over an existing file).
+/// - When nothing of that works, the key is held in memory only and `problem` says why. No message says what the
+///   file holds.
+/// Returns { key, source: 'kept' (read from the file) | 'new' (made and written to it) | 'memory', problem }, and for
+/// 'new' `replaced`: what was wrong with the file it replaced, or null.
+export async function loadCallerKey(file) {
+  if (file === undefined || file === null) return { key: randomBytes(32), source: 'memory', problem: null };
+  const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+  const ours = (info) => typeof process.getuid !== 'function' || ((process.getuid() === 0 || info.uid === process.getuid()) && (info.mode & 0o077) === 0);
+  let found = null;
+  try {
+    const handle = await openFile(file, fsConstants.O_RDONLY | NOFOLLOW);
+    try {
+      const info = await handle.stat();
+      if (!info.isFile()) found = { bad: 'is not a plain file' };
+      else if (!ours(info)) found = { bad: 'belongs to another user, or other users may read it' };
+      else {
+        const match = info.size <= 128 ? /^([0-9a-f]{64})\n?$/.exec((await handle.readFile()).toString('latin1')) : null;
+        found = match ? { key: Buffer.from(match[1], 'hex') } : { bad: 'does not hold a key' };
+      }
+    } finally { await handle.close(); }
+  } catch (error) {
+    if (error.code === 'ELOOP') found = { bad: 'is a link' };
+    else if (error.code !== 'ENOENT') return { key: randomBytes(32), source: 'memory', problem: `its file could not be read (${error.code ?? 'error'})` };
+  }
+  if (found?.key) return { key: found.key, source: 'kept', problem: null };
+  if (found?.bad) {
+    try { await unlink(file); } catch { return { key: randomBytes(32), source: 'memory', problem: `its file ${found.bad}, and could not be replaced` }; }
+  }
+  const key = randomBytes(32);
+  let handle;
+  try { handle = await openFile(file, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | NOFOLLOW, 0o600); } catch (error) {
+    return { key, source: 'memory', problem: `its file could not be made (${error.code ?? 'error'})` };
+  }
+  try { await handle.writeFile(`${key.toString('hex')}\n`); } catch (error) {
+    await handle.close().catch(() => {}); await unlink(file).catch(() => {});
+    return { key, source: 'memory', problem: `its file could not be written (${error.code ?? 'error'})` };
+  }
+  await handle.close();
+  return { key, source: 'new', problem: null, replaced: found?.bad ?? null };
+}
+function openStore(db, { networkId, account, synchronous, callerKey }) {
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=${synchronous}; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;`);
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS grants (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       kind TEXT NOT NULL CHECK(kind IN ('grant', 'registration')),
-      recipient TEXT NOT NULL, caller TEXT NOT NULL, amount INTEGER NOT NULL, cost INTEGER NOT NULL, created_at INTEGER NOT NULL,
+      recipient TEXT NOT NULL, caller TEXT NOT NULL, network TEXT, amount INTEGER NOT NULL, cost INTEGER NOT NULL, created_at INTEGER NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('reserved', 'signed', 'submitted', 'included', 'withdrawn', 'superseded', 'unconfirmed', 'cancelled')),
       reason TEXT, payload TEXT NOT NULL, nonce TEXT, hash TEXT, raw BLOB, signed_height TEXT,
       attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, accepted INTEGER NOT NULL DEFAULT 0,
@@ -186,10 +287,73 @@ function openStore(db, { networkId, account, synchronous }) {
   `);
   const metaGet = db.prepare('SELECT value FROM meta WHERE key = ?'), metaPut = db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
   for (const [key, value] of [['schema', SCHEMA], ['network_id', networkId], ['account', account]]) if (metaGet.get(key) === undefined) metaPut.run(key, value);
+  const hmac = (key, text) => createHmac('sha256', key).update(text).digest('hex').slice(0, 32);
+  /// The keyed hash a caller's address group is kept under (null for none).
+  const group = (text) => (text === null || text === undefined ? null : hmac(callerKey, String(text)));
+  const check = hmac(callerKey, 'time faucet: the check of the key of who asked');
+  /// A store of version 4 is moved with the key it held (`previous`, see below): its hashes are kept as the hash under
+  /// the new key of the old hash (`carried`), and this run, which holds the old key in memory, counts them for the
+  /// caller they are of. The next start no longer can (the old key is gone), and those requests then count for nobody.
+  let previous = null;
+  const carried = (old) => hmac(callerKey, `version 4:${old}`);
+  /// The hashes a caller's address group may be stored under: its own, and, in the run that moved a store of
+  /// version 4, its carried one (null otherwise, which matches no row).
+  const candidates = (text) => (text === null || text === undefined ? [null, null] : [group(text), previous ? carried(hmac(previous, String(text))) : null]);
+  const opened = { moved: null, forgotten: false, rewritten: null };
+  const from = metaGet.get('schema').value;
+  if (MOVABLE_SCHEMAS.includes(from)) {
+    // In one transaction, before anything else is read or written. Version 3 kept the address groups themselves:
+    // they are replaced by their hashes, and the /48 of each IPv6 one is added beside it. Version 4 kept its key in
+    // the store: its hashes are carried (above), and the key is removed from the store.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!db.prepare('PRAGMA table_info(grants)').all().some((column) => column.name === 'network')) db.exec('ALTER TABLE grants ADD COLUMN network TEXT');
+      const old = from === '4' ? metaGet.get('caller_key')?.value ?? null : null;
+      if (from === '4' && old !== null && /^[0-9a-f]{64}$/.test(old)) previous = Buffer.from(old, 'hex');
+      // What a stored value becomes: an address group of version 3 its hash, a hash of version 4 its carried hash (or
+      // nothing, if the old key cannot be read), an emptied field stays empty.
+      const move = (value) => (!value ? null : from === '3' ? group(value) : previous ? carried(value) : null);
+      const rewrite = db.prepare('UPDATE grants SET caller = ?, network = ? WHERE id = ?');
+      for (const row of db.prepare('SELECT id, caller, network FROM grants').all()) rewrite.run(move(row.caller) ?? '', from === '3' ? group(networkOf(row.caller)) : move(row.network), row.id);
+      const refusals = db.prepare('UPDATE refusals SET caller = ? WHERE rowid = ?');
+      for (const row of db.prepare('SELECT rowid, caller FROM refusals').all()) refusals.run(move(row.caller) ?? '', row.rowid);
+      db.prepare('DELETE FROM meta WHERE key = ?').run('caller_key');
+      metaPut.run('caller_key_check', check);
+      metaPut.run('rewrite_pending', from);
+      metaPut.run('schema', SCHEMA);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    opened.moved = from;
+  } else if (metaGet.get('caller_key_check')?.value !== check) {
+    // The hashes in the store were made under another key, or the store is new: whatever they are, they match nobody.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const emptied = db.prepare("UPDATE grants SET caller = '', network = NULL WHERE caller <> '' OR network IS NOT NULL").run().changes + db.prepare('DELETE FROM refusals').run().changes;
+      metaPut.run('caller_key_check', check);
+      db.exec('COMMIT');
+      opened.forgotten = emptied > 0;
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    if (opened.forgotten) db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  }
+  // After a move nothing of the version before stays in the file: the old key and the old values were overwritten
+  // with zeros when they were replaced (secure_delete); the store is written anew from what it holds now (VACUUM,
+  // which also drops what the version before had freed without overwriting it); and its log of writes is copied into
+  // it and emptied. Until that has worked (a full disk), every start tries it again (`opened.rewritten`).
+  if (metaGet.get('rewrite_pending')) {
+    try {
+      db.exec('PRAGMA temp_store=MEMORY; VACUUM;');
+      db.prepare('DELETE FROM meta WHERE key = ?').run('rewrite_pending');
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+      opened.rewritten = true;
+    } catch { opened.rewritten = false; }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS grants_network ON grants (kind, network, created_at) WHERE network IS NOT NULL');
   const s = {
-    insert: db.prepare("INSERT INTO grants (kind, recipient, caller, amount, cost, created_at, status, payload) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?)"),
+    insert: db.prepare("INSERT INTO grants (kind, recipient, caller, network, amount, cost, created_at, status, payload) VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', ?)"),
     byRecipient: db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM grants WHERE kind = ? AND recipient = ? AND created_at > ? AND status <> 'cancelled'"),
-    byCaller: db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM grants WHERE kind = ? AND caller = ? AND created_at > ? AND status <> 'cancelled'"),
+    byCaller: db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM grants WHERE kind = ? AND caller IN (?, ?) AND created_at > ? AND status <> 'cancelled'"),
+    byNetwork: db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM grants WHERE kind = ? AND network IN (?, ?) AND created_at > ? AND status <> 'cancelled'"),
+    ofKind: db.prepare("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM grants WHERE kind = ? AND created_at > ? AND status <> 'cancelled'"),
     total: db.prepare("SELECT COALESCE(SUM(cost), 0) AS used, MIN(created_at) AS oldest FROM grants WHERE created_at > ? AND status <> 'cancelled'"),
     recent: db.prepare("SELECT * FROM grants WHERE kind = ? AND recipient = ? AND created_at > ? AND status <> 'cancelled' ORDER BY id DESC LIMIT 5"),
     newest: db.prepare('SELECT MAX(created_at) AS at FROM grants'),
@@ -207,8 +371,10 @@ function openStore(db, { networkId, account, synchronous }) {
     checked: db.prepare('UPDATE grants SET checked_at = ? WHERE id = ?'),
     settle: db.prepare('UPDATE grants SET settled = 1 WHERE id = ?'),
     pruneGrants: db.prepare('DELETE FROM grants WHERE settled = 1 AND created_at < ?'),
+    forgetCallers: db.prepare("UPDATE grants SET caller = '', network = NULL WHERE created_at <= ? AND (caller <> '' OR network IS NOT NULL)"),
+    sponsored: db.prepare("SELECT COUNT(*) AS n FROM grants WHERE kind = 'registration' AND recipient = ? AND created_at > ? AND status <> 'cancelled'"),
     refusalAdd: db.prepare('INSERT INTO refusals (caller, at) VALUES (?, ?)'),
-    refusalCount: db.prepare('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM refusals WHERE caller = ? AND at > ?'),
+    refusalCount: db.prepare('SELECT COUNT(*) AS n, MIN(at) AS oldest FROM refusals WHERE caller IN (?, ?) AND at > ?'),
     pruneRefusals: db.prepare('DELETE FROM refusals WHERE at < ?'),
     cancelGet: db.prepare('SELECT * FROM cancels WHERE item = ?'),
     cancelAdd: db.prepare("INSERT INTO cancels (item, hash, raw, created_at, expires, status) VALUES (?, ?, ?, ?, ?, 'signed')"),
@@ -227,18 +393,30 @@ function openStore(db, { networkId, account, synchronous }) {
     try { const result = work(); db.exec('COMMIT'); return result; } catch (error) { db.exec('ROLLBACK'); throw error; }
   };
   let closed = false;
+  const usageOf = (kind, recipient, given, since) => {
+    const who = typeof given === 'string' ? { caller: given, network: networkOf(given) } : given, network = candidates(who.network);
+    return { recipient: s.byRecipient.get(kind, recipient, since), caller: s.byCaller.get(kind, ...candidates(who.caller), since), network: network[0] === null ? null : s.byNetwork.get(kind, ...network, since), kind: s.ofKind.get(kind, since), total: s.total.get(since) };
+  };
+  // When something was last removed, and when the log of writes was last copied into the store and emptied.
+  let removedSince = false, scrubbedAt = -Infinity;
   return {
-    networkId, account,
+    networkId, account, opened,
     /// The time a new record gets: the block time given, but never before the newest record.
     stamp: (blockMs) => Math.max(blockMs, s.newest.get().at ?? 0),
-    usage: (kind, recipient, caller, since) => ({ recipient: s.byRecipient.get(kind, recipient, since), caller: s.byCaller.get(kind, caller, since), total: s.total.get(since) }),
+    /// What counts against the limits of a request of `kind` for `recipient` by `who` ({ caller, network }: the address
+    /// group and the /48 as callerKey and networkOf give them, never kept as such) since `since`: the recipient's,
+    /// the caller's, its network's (null for IPv4), all requests of the kind, and what was paid in all.
+    usage: (kind, recipient, who, since) => usageOf(kind, recipient, who, since),
     recent: (kind, recipient, since) => s.recent.all(kind, recipient, since),
-    /// Checks the limits and records the request, or neither. `check(usage)` throws to refuse.
-    reserve({ kind, recipient, caller, amount, cost, at, payload, check }) {
+    /// Whether the faucet sponsored the registration of one of `keys` since `since` (block time).
+    sponsoredSince: (keys, since) => keys.some((key) => typeof key === 'string' && s.sponsored.get(key, since).n > 0),
+    /// Checks the limits and records the request, or neither. `check(usage)` throws to refuse. Who asked is `who`, or
+    /// `caller` alone (an address or a caller key: its network is then the one networkOf gives).
+    reserve({ kind, recipient, who: given, caller, amount, cost, at, payload, check }) {
+      const who = given ?? { caller, network: networkOf(caller) };
       return transaction(() => {
-        const since = at - DAY_MS;
-        check({ recipient: s.byRecipient.get(kind, recipient, since), caller: s.byCaller.get(kind, caller, since), total: s.total.get(since) });
-        return Number(s.insert.run(kind, recipient, caller, amount, cost, at, JSON.stringify(payload)).lastInsertRowid);
+        check(usageOf(kind, recipient, who, at - DAY_MS));
+        return Number(s.insert.run(kind, recipient, group(who.caller), group(who.network), amount, cost, at, JSON.stringify(payload)).lastInsertRowid);
       });
     },
     /// Every grant something may still be done for: sent, sent again, or given its last label.
@@ -259,7 +437,7 @@ function openStore(db, { networkId, account, synchronous }) {
     checked: (id, at) => { s.checked.run(at, id); },
     settle: (id) => { s.settle.run(id); },
     /// Requests an address made that cost a proof and were refused for what they asked.
-    refusals: { add: (caller, at) => { s.refusalAdd.run(caller, at); }, count: (caller, since) => s.refusalCount.get(caller, since) },
+    refusals: { add: (caller, at) => { s.refusalAdd.run(group(caller), at); }, count: (caller, since) => s.refusalCount.get(...candidates(caller), since) },
     /// The protective actions the faucet signed for its own account: the cancellation of an item that
     /// waits (`payment:<id>`, `limit:<id>`) and the freeze of an incident (`freeze:<count>:<version>`).
     /// One row, and so one signature, per item or incident, for good.
@@ -276,11 +454,22 @@ function openStore(db, { networkId, account, synchronous }) {
       /// Cancellations signed since (a freeze is not counted: the chain itself spaces freezes).
       count: (since) => s.cancelCount.get(since).n,
     },
-    /// Removes what no limit and no lookup needs any more.
-    prune(blockMs, clockMs) { s.pruneGrants.run(blockMs - KEEP_MS); s.pruneRefusals.run(blockMs - DAY_MS); s.pruneCancels.run(clockMs - KEEP_MS); },
+    /// Removes what no limit and no lookup needs any more: who asked, once the request is 24 hours old (no limit
+    /// looks further back: the per-address and per-network counts take 24 hours, the refusals an hour); the rest of
+    /// a settled record after 30 days, for its lookup. What is removed is overwritten with zeros (secure_delete) in
+    /// the log of writes, and the log is copied into the store and emptied (a TRUNCATE checkpoint) at most every
+    /// SCRUB_MS of this machine's clock while something was removed: the old values then stay in neither file.
+    prune(blockMs, clockMs) {
+      const changes = s.forgetCallers.run(blockMs - DAY_MS).changes + s.pruneGrants.run(blockMs - KEEP_MS).changes + s.pruneRefusals.run(blockMs - HOUR_MS).changes + s.pruneCancels.run(clockMs - KEEP_MS).changes;
+      if (changes > 0) removedSince = true;
+      if (removedSince && clockMs - scrubbedAt >= SCRUB_MS) {
+        try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); removedSince = false; scrubbedAt = clockMs; } catch { /* busy: the next pass tries again */ }
+      }
+    },
     meta: { get: (key) => metaGet.get(key)?.value ?? null, put: (key, value) => { metaPut.run(key, String(value)); } },
     /// Where the light client of the state reader keeps the newest checkpoint it verified.
     checkpointStorage: () => ({ getItem: async (key) => s.kvGet.get(key)?.value ?? null, setItem: async (key, value) => { s.kvPut.run(key, value); } }),
+    /// Closing the last connection copies the log of writes into the store and removes it.
     close() { if (!closed) { closed = true; db.close(); } },
   };
 }
@@ -306,11 +495,20 @@ const REFUSALS = {
   node_refused: [502, 'The node refused the action.'],
 };
 const REFUSAL_TAIL = ' The faucet signs no other action for this request, and the request counts against the limits. The same action is sent one more time, when it is first in line and a few blocks have passed; "lookup" says what became of it.';
+/// What a sponsorship the node refused for good is answered with (see SETTLED_REFUSALS).
+const WITHDRAWN_REFUSALS = Object.freeze({
+  already_committed: 'The node refused the sponsorship: a registration of this key is waiting on the chain already, sent by someone else first. The faucet withdrew its action, will not send it again, and counts it against the limits. Make the registration the waiting commitment names, or sign up with a new key.',
+  already_registered: 'The node refused the sponsorship: this key already belongs to an account. The faucet withdrew its action, will not send it again, and counts it against the limits.',
+});
 
 /// Starts the faucet. Options (see deploy/faucet/README.md for the config file):
-/// - `trust`, `networkId`, `testNetwork` (must be true), `rpc`, `lookup` (an action by hash), `verifier`, `dataFile`;
+/// - `trust`, `networkId`, `testNetwork` (must be true), `rpc`, `lookup` (an action by hash), `verifier`, `dataFile`,
+///   `callerKeyFile` (where the key of the hashes of who asked is kept between starts, on a file system in memory:
+///   see loadCallerKey; without it a restart forgets the counts per caller and per network);
 /// - `account` (the faucet's own), `key` { publicKey, privateKey } (its spend key);
-/// - `grantMicros`, `limits` { perAccountPerDay, perAddressPerDay, totalPerDayMicros, registrationsPerAddressPerDay },
+/// - `grantMicros`, `limits` { perAccountPerDay, perAddressPerDay, totalPerDayMicros, registrationsPerAddressPerDay, and if wanted
+///   perNetworkPerDay and registrationsPerNetworkPerDay (an IPv6 /48: NETWORK_FACTOR times those of an address unless set),
+///   registrationsPerDay (all callers: REGISTRATIONS_FACTOR times registrationsPerAddressPerDay unless set) },
 ///   `minBalanceMicros` (the floor), `maxRecipientBalanceMicros`, `maxChainDailyLimitMicros`, `sponsorRegistrations`,
 ///   `cancelWaiting` (cancel what waits on the account: default true), `freezeOnMisuse` (freeze the account when
 ///   something waits on it that the faucet did not make: default true);
@@ -321,7 +519,7 @@ const REFUSAL_TAIL = ' The faucet signs no other action for this request, and th
 ///   `maxLive` (grants that may wait for a block at once), `refusedPerAddressPerHour`, `maxCancelsPerDay`;
 /// - for tests: `readState`, `now`, `log`, `autoStart`, `storeSynchronous`.
 export async function createFaucetService({
-  trust, networkId, testNetwork, rpc, lookup, verifier, dataFile, account, key, grantMicros, limits, minBalanceMicros, maxRecipientBalanceMicros, maxChainDailyLimitMicros,
+  trust, networkId, testNetwork, rpc, lookup, verifier, dataFile, callerKeyFile, account, key, grantMicros, limits, minBalanceMicros, maxRecipientBalanceMicros, maxChainDailyLimitMicros,
   sponsorRegistrations = false, cancelWaiting = true, freezeOnMisuse = true, host = '127.0.0.1', port = 8940, hosts = [], corsOrigins = [], rateLimit = {}, trustedProxies = [], servePage = true,
   stateTimeoutMs = 15000, reconcileMs = 5000, idleReadMs = 10000, resubmitMs = 30000, supersededAfterMs = 60000, labelMs = 6 * 3600000, maxStallMs = 300000, maxClockSkewMs = 300000, maxWaiting = 16, maxLive = 64,
   refusedPerAddressPerHour = 50, maxCancelsPerDay = 24, readState, now = Date.now, log = () => {}, autoStart = true, storeSynchronous = 'FULL',
@@ -339,11 +537,25 @@ export async function createFaucetService({
   const count = (value, name, min = 1) => { if (!Number.isInteger(value) || value < min || value > 1_000_000) throw new Error(`${name} is out of range`); return value; };
   const perAccount = count(limits.perAccountPerDay, 'limits.perAccountPerDay'), perAddress = count(limits.perAddressPerDay, 'limits.perAddressPerDay');
   const registrationsPerAddress = count(limits.registrationsPerAddressPerDay ?? 1, 'limits.registrationsPerAddressPerDay');
+  // The IPv6 /48 of a caller is counted too, at NETWORK_FACTOR times the limits of one address; and the registrations
+  // of all callers together have a total of their own, apart from the total of the grants (see checkLimits).
+  const perNetwork = count(limits.perNetworkPerDay ?? NETWORK_FACTOR * perAddress, 'limits.perNetworkPerDay');
+  const registrationsPerNetwork = count(limits.registrationsPerNetworkPerDay ?? NETWORK_FACTOR * registrationsPerAddress, 'limits.registrationsPerNetworkPerDay');
+  const registrationsPerDay = count(limits.registrationsPerDay ?? REGISTRATIONS_FACTOR * registrationsPerAddress, 'limits.registrationsPerDay');
+  if (perNetwork < perAddress || registrationsPerNetwork < registrationsPerAddress) throw new Error('limits.perNetworkPerDay and limits.registrationsPerNetworkPerDay are at least the limits of one address');
   if (typeof rpc !== 'function' || typeof lookup !== 'function') throw new Error('The faucet needs the RPC of a node and a way to look an action up by hash');
 
   const page = {};
   if (servePage) for (const [route, [file, type]] of Object.entries(PAGE_FILES)) page[route] = { type, body: readFileSync(new URL(`../web-v4/faucet/${file}`, import.meta.url)) };
-  const store = openFaucetStore({ filename: dataFile, networkId, account, synchronous: storeSynchronous });
+  // The key of the hashes of who asked, which the store does not hold. Said in the log: where it came from, and
+  // what the opening of the store did with what it held (see openFaucetStore). Never the key or its file's content.
+  const callers = await loadCallerKey(callerKeyFile);
+  if (callers.source === 'memory' && callerKeyFile !== undefined && callerKeyFile !== null) log('error', `the key of the hashes of who asked is held in memory only: ${callers.problem}. A restart of the faucet will forget how many requests each caller and each IPv6 /48 made in the last 24 hours; the limits per account and the totals of the day still hold`);
+  if (callers.replaced) log('warn', `the file of the key of the hashes of who asked ${callers.replaced}: it was replaced by a new key`);
+  const store = openFaucetStore({ filename: dataFile, networkId, account, synchronous: storeSynchronous, callerKey: callers.key });
+  if (store.opened.moved) log('info', `the store was moved from version ${store.opened.moved} to ${SCHEMA}: who asked is kept as a hash under a key that is not in the store, and the store holds no key of the version before`, { from: store.opened.moved });
+  if (store.opened.rewritten === false) log('error', 'the store could not be written anew after its move (is the disk full?): what the version before freed without overwriting may still be in its free space. The next start tries again');
+  if (store.opened.forgotten) log(callerKeyFile === undefined || callerKeyFile === null ? 'info' : 'warn', 'who asked in the last 24 hours was hashed under another key (it was held in memory only, or its file was emptied by a reboot): those hashes were removed, and the counts per caller and per IPv6 /48 start afresh; the limits per account and the totals of the day still hold');
   const limiter = createRateLimiter({ perSecond: 5, burst: 20, ...rateLimit, now });
   const proxies = new Set(trustedProxies.map(normalIp).filter(Boolean));
   const origins = new Set(corsOrigins);
@@ -493,7 +705,9 @@ export async function createFaucetService({
     return { reasons, faults, warnings };
   }
   /// What is left of the total of 24 hours at block time `at`.
-  const leftToday = (at) => { const left = totalPerDay - BigInt(store.usage('grant', '', '', at - DAY_MS).total.used); return left > 0n ? left : 0n; };
+  const leftToday = (at) => { const left = totalPerDay - BigInt(store.usage('grant', '', { caller: '', network: null }, at - DAY_MS).total.used); return left > 0n ? left : 0n; };
+  /// How many registrations are left in the current 24 hours at block time `at`.
+  const registrationsLeft = (at) => Math.max(0, registrationsPerDay - store.usage('registration', '', { caller: '', network: null }, at - DAY_MS).kind.n);
 
   // ---- one at a time
   /// Runs `work` after everything queued before it. Requests wait in a bounded line.
@@ -535,6 +749,22 @@ export async function createFaucetService({
     store.signed(id, { nonce, hash, raw: tx, height: String(state.height) });
     const outcome = await send(store.byId(id));
     if (outcome === 'accepted' || outcome === 'unknown') return outcome;
+    // A sponsored registration that the node refuses because its key is taken (an account holds it, or a commitment
+    // of it waits: someone's sponsorship of the same key, sent first) is refused for good: no sending changes that.
+    // Before 2026-11-24 such bytes stayed open, counted and unsent for three blocks and a settling pass, and since
+    // nothing new is signed while earlier bytes have not reached the node, every grant and sign-up of everybody waited
+    // with them: anyone could bring that about at will, with a sponsorship of his own for a key and at once a request
+    // to the faucet for the same key. They are now withdrawn at once, when no other bytes on their way hold a later
+    // nonce (none can: they were signed last). They stay in the store and count against the limits, they are never
+    // sent again, and they are looked up by their hash when their nonce is used (the next action of the faucet uses
+    // it), as every withdrawn action is: a node that said "refused" and kept them cannot make the faucet forget an
+    // action that was paid.
+    const settled = reserved.kind === 'registration' && Object.hasOwn(SETTLED_REFUSALS, outcome.refused) ? SETTLED_REFUSALS[outcome.refused] : null;
+    if (settled && !store.open().some((g) => g.id !== id && SENDABLE.includes(g.status) && BigInt(g.nonce) > BigInt(nonce))) {
+      store.finish(id, 'withdrawn', settled, 0, now());
+      log('warn', 'the node refused a sponsored registration for good at its first sending: it is withdrawn at once, never sent again, and counts', { grant: id, reason: settled, node: outcome.refused });
+      return { refused: settled };
+    }
     // "Refused" is the node's word. The bytes stay open and counted; the settling pass tries them
     // once more three blocks on, and withdraws them if the chain still refuses.
     const reason = classify(outcome.refused);
@@ -550,14 +780,28 @@ export async function createFaucetService({
     nonce: row.nonce, created_at: iso(row.created_at), height: row.height, reason: row.reason, note: NOTES[row.status],
   });
   /// Throws the refusal of a limit that `usage` shows as reached. `cost` is what the request would add to the total.
-  function checkLimits(kind, usage, cost, at, recipient) {
-    const perCaller = kind === 'grant' ? perAddress : registrationsPerAddress, perRecipient = kind === 'grant' ? perAccount : 1;
+  /// - Per caller: an IPv4 address or an IPv6 /56. Per network: the IPv6 /48 around it, at NETWORK_FACTOR times the
+  ///   limits of one address unless set (before 2026-11-24 a /48 counted as 256 callers, and took every grant of the
+  ///   day and 5,120 names).
+  /// - Per recipient: `perRecipient` grants an account (one in the first 24 hours of an account whose registration
+  ///   this faucet sponsored: see giveGrant), one sponsorship a key.
+  /// - The two totals are apart: a grant is refused when the money given in 24 hours would pass `totalPerDayMicros`,
+  ///   which counts the sponsored registrations too; a registration is refused only by the number of registrations in
+  ///   24 hours (`registrationsPerDay`), never by the money. So grants that use up the day do not close sign-up, and
+  ///   sign-ups that use up theirs take from the grants at most their cost.
+  function checkLimits(kind, usage, cost, at, recipient, perRecipient = kind === 'grant' ? perAccount : 1) {
+    const perCaller = kind === 'grant' ? perAddress : registrationsPerAddress, perNet = kind === 'grant' ? perNetwork : registrationsPerNetwork;
     if (usage.caller.n >= perCaller) throw new ApiError(429, 'address_limit', `This address has had its ${perCaller} per 24 hours`, { retryAfter: retryIn(usage.caller.oldest, at) });
+    if (usage.network && usage.network.n >= perNet) throw new ApiError(429, 'address_limit', `The network of this address (its IPv6 /48) has had its ${perNet} per 24 hours`, { retryAfter: retryIn(usage.network.oldest, at) });
     if (recipient !== null && usage.recipient.n >= perRecipient) {
-      throw new ApiError(429, 'account_limit', kind === 'grant' ? `This account has had its ${perRecipient} per 24 hours; "previous" lists what it was given` : 'This key has been sponsored in the last 24 hours; "previous" lists it',
-        { retryAfter: retryIn(usage.recipient.oldest, at), body: { previous: store.recent(kind, recipient, at - DAY_MS).map(publicGrant) } });
+      const words = kind !== 'grant' ? 'This key has been sponsored in the last 24 hours; "previous" lists it'
+        : perRecipient < perAccount ? `This account was registered with this faucet's sponsorship in the last 24 hours, and a new account gets ${perRecipient} in its first 24 hours; "previous" lists what it was given`
+          : `This account has had its ${perRecipient} per 24 hours; "previous" lists what it was given`;
+      throw new ApiError(429, 'account_limit', words, { retryAfter: retryIn(usage.recipient.oldest, at), body: { previous: store.recent(kind, recipient, at - DAY_MS).map(publicGrant) } });
     }
-    if (BigInt(usage.total.used) + cost > totalPerDay) throw new ApiError(429, 'daily_total', 'The faucet has given its total for 24 hours', { retryAfter: retryIn(usage.total.oldest, at) });
+    if (kind === 'registration') {
+      if (usage.kind.n >= registrationsPerDay) throw new ApiError(429, 'daily_total', `The faucet has sponsored its ${registrationsPerDay} registrations for 24 hours`, { retryAfter: retryIn(usage.kind.oldest, at) });
+    } else if (BigInt(usage.total.used) + cost > totalPerDay) throw new ApiError(429, 'daily_total', 'The faucet has given its total for 24 hours', { retryAfter: retryIn(usage.total.oldest, at) });
   }
   /// What a request costs the faucet before any limit counts it is bounded too. A request for
   /// which a proof was read and which was then refused for what it asks (an account that does
@@ -579,16 +823,24 @@ export async function createFaucetService({
   function answer(id, outcome, extra) {
     const row = store.byId(id), lookupPath = `/v1/faucet/grants/${row.hash}`;
     if (outcome !== 'accepted' && outcome !== 'unknown') {
+      // A registration withdrawn at once (see signAndSend) is answered for what it is, and without "sent once more".
+      if (Object.hasOwn(WITHDRAWN_REFUSALS, outcome.refused)) throw new ApiError(409, outcome.refused, WITHDRAWN_REFUSALS[outcome.refused], { body: { hash: row.hash, lookup: lookupPath } });
       const [status, sentence] = REFUSALS[outcome.refused];
       throw new ApiError(status, outcome.refused, sentence + REFUSAL_TAIL, { retryAfter: 30, body: { hash: row.hash, lookup: lookupPath } });
     }
     return { status: 202, body: { ...publicGrant(row), status: outcome === 'accepted' ? 'submitted' : 'pending', ...extra, note: outcome === 'accepted' ? 'Submitted is not included. Look the hash up until it is in a block.' : NOTES.signed, lookup: lookupPath, notice: NOTICE } };
   }
+  /// The grants an account whose registration this faucet sponsored gets in its first 24 hours (block time, from the
+  /// sponsorship). Before 2026-11-24 the faucet's own free registrations made the limit per account worth nothing:
+  /// "register ten accounts, then ask two grants for each". Now each free registration brings one grant on its
+  /// first day: a newcomer who signs up and asks a minute later gets it, and a second the next day.
+  const NEW_ACCOUNT_GRANTS = 1;
   async function giveGrant(wanted, caller) {
+    const who = { caller, network: networkOf(caller) };
     // Before any proof is read: the limits that need none, at the newest block time seen.
     const early = store.stamp(seen.blockMs);
     checkRefusals(caller, early);
-    checkLimits('grant', store.usage('grant', wanted.id ?? '', caller, early - DAY_MS), grant, early, wanted.id ?? null);
+    checkLimits('grant', store.usage('grant', wanted.id ?? '', who, early - DAY_MS), grant, early, wanted.id ?? null);
     return serial(() => counted(caller, async () => {
       const state = await provenState({ ids: wanted.id && wanted.id !== account ? [account, wanted.id] : [account], ...(wanted.name ? { names: [wanted.name] } : {}), include_security: true });
       const view = faucetView(state);
@@ -599,10 +851,14 @@ export async function createFaucetService({
       if (to === account) bad('invalid_account', 'The faucet does not pay itself');
       if (BigInt(recipient.balance) > richAbove) throw new ApiError(409, 'already_funded', `This account already holds more than ${richAbove} microseconds; the faucet gives to accounts that need it`);
       const open = store.open(), cost = grant + view.fee, stamp = store.stamp(view.blockMs);
+      // Any key of the account counts: the one whose registration was sponsored is among them.
+      const keys = [recipient.public_key, ...(Array.isArray(recipient.devices) ? recipient.devices.map((device) => device?.public_key) : [])];
+      const perRecipient = store.sponsoredSince(keys, stamp - DAY_MS) ? Math.min(perAccount, NEW_ACCOUNT_GRANTS) : perAccount;
+      checkLimits('grant', store.usage('grant', to, who, stamp - DAY_MS), cost, stamp, to, perRecipient);
       lineClear(open, view.nonce);
       affordable(view, open, cost);
-      const id = store.reserve({ kind: 'grant', recipient: to, caller, amount: Number(grant), cost: Number(cost), at: stamp, payload: { to, amount: grant.toString() }, check: (usage) => checkLimits('grant', usage, cost, stamp, to) });
-      log('info', 'grant recorded', { grant: id, account: to, caller });
+      const id = store.reserve({ kind: 'grant', recipient: to, who, amount: Number(grant), cost: Number(cost), at: stamp, payload: { to, amount: grant.toString() }, check: (usage) => checkLimits('grant', usage, cost, stamp, to, perRecipient) });
+      log('info', 'grant recorded', { grant: id, account: to });
       return answer(id, await signAndSend(id, view, state, open), { fee_micros: view.fee.toString() });
     }));
   }
@@ -611,9 +867,10 @@ export async function createFaucetService({
     let consented = false;
     try { consented = await crypto.subtle.verify('Ed25519', await crypto.subtle.importKey('raw', SDK.hexToBytes(input.public_key, 32), 'Ed25519', false, ['verify']), SDK.hexToBytes(input.proof, 64), consent); } catch { consented = false; }
     if (!consented) bad('invalid_consent', 'proof is not the signature of public_key over the sponsorship consent that names this faucet\'s account and network (GET /v1/faucet gives both)');
+    const who = { caller, network: networkOf(caller) };
     const early = store.stamp(seen.blockMs);
     checkRefusals(caller, early);
-    checkLimits('registration', store.usage('registration', input.public_key, caller, early - DAY_MS), 1n, early, input.public_key);
+    checkLimits('registration', store.usage('registration', input.public_key, who, early - DAY_MS), 1n, early, input.public_key);
     return serial(() => counted(caller, async () => {
       const state = await provenState({ ids: [account], public_keys: [input.public_key], include_security: true });
       const view = faucetView(state);
@@ -627,8 +884,8 @@ export async function createFaucetService({
       const open = store.open(), cost = BigInt(rules.fee_micros) + view.fee, stamp = store.stamp(view.blockMs);
       lineClear(open, view.nonce);
       affordable(view, open, cost);
-      const id = store.reserve({ kind: 'registration', recipient: input.public_key, caller, amount: Number(rules.fee_micros), cost: Number(cost), at: stamp, payload: input, check: (usage) => checkLimits('registration', usage, cost, stamp, input.public_key) });
-      log('info', 'registration sponsorship recorded', { grant: id, caller });
+      const id = store.reserve({ kind: 'registration', recipient: input.public_key, who, amount: Number(rules.fee_micros), cost: Number(cost), at: stamp, payload: input, check: (usage) => checkLimits('registration', usage, cost, stamp, input.public_key) });
+      log('info', 'registration sponsorship recorded', { grant: id });
       // The commitment is a hash: the faucet cannot tell, and need not, whether it is that of a reveal (kind 2) or of a
       // registration that carries the account's keys (kind 45, on a network with `protected_registration`). It pays for
       // it either way, and the new key's consent, which names the commitment, keeps it from paying for any other.
@@ -878,10 +1135,11 @@ export async function createFaucetService({
       const left = leftToday(store.stamp(seen.blockMs)), { reasons } = conditions(), usable = seen.ok && !seen.problem && seen.balance !== null;
       return { status: 200, body: {
         notice: NOTICE, test_network: true, network_id: networkId, chain_id: trust.chain_id, account,
-        gives: { grant_micros: grant.toString(), fee_paid_by: 'the faucet', window_hours: 24, per_account: perAccount, per_address: perAddress, total_micros: totalPerDay.toString(),
-          not_to_accounts_holding_more_than_micros: richAbove.toString(), floor_micros: floor.toString(), address_means: 'an IPv4 address, or an IPv6 /56' },
+        gives: { grant_micros: grant.toString(), fee_paid_by: 'the faucet', window_hours: 24, per_account: perAccount, per_new_account: Math.min(perAccount, NEW_ACCOUNT_GRANTS), per_address: perAddress, per_network: perNetwork, total_micros: totalPerDay.toString(),
+          not_to_accounts_holding_more_than_micros: richAbove.toString(), floor_micros: floor.toString(), address_means: 'an IPv4 address, or an IPv6 /56; the IPv6 /48 around it is counted too (per_network)',
+          new_account_means: 'an account whose registration this faucet sponsored in the last 24 hours' },
         left: { total_micros: left.toString(), grants: (left / (grant + (seen.fee ?? 0n))).toString() },
-        registrations: { sponsored: sponsorRegistrations, per_address: sponsorRegistrations ? registrationsPerAddress : 0 },
+        registrations: { sponsored: sponsorRegistrations, per_address: sponsorRegistrations ? registrationsPerAddress : 0, per_network: sponsorRegistrations ? registrationsPerNetwork : 0, per_day: sponsorRegistrations ? registrationsPerDay : 0, left: sponsorRegistrations ? registrationsLeft(store.stamp(seen.blockMs)) : 0 },
         giving: reasons.length === 0, reasons,
         chain: usable ? { state_height: seen.height.toString(), block_time: iso(seen.blockMs), balance_micros: seen.balance.toString(), fee_micros: seen.fee.toString(), daily_limit_micros: seen.limit.toString(), daily_limit_left_micros: seen.allowance.toString(), read_at: iso(seen.at) } : null,
       } };
@@ -954,11 +1212,14 @@ export async function createFaucetService({
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) throw new ApiError(415, 'unsupported_media_type', 'Send JSON with Content-Type: application/json');
     const tooLarge = () => new ApiError(413, 'body_too_large', `The body is at most ${MAX_BODY_BYTES} bytes`, { close: true });
     if (Number(request.headers['content-length']) > MAX_BODY_BYTES) throw tooLarge();
+    // A body of at most a kilobyte that takes longer than BODY_MS to arrive is not waited for.
     const bytes = await new Promise((resolve, reject) => {
       const chunks = []; let size = 0, over = false;
-      request.on('data', (chunk) => { if (over) return; size += chunk.length; if (size > MAX_BODY_BYTES) { over = true; chunks.length = 0; reject(tooLarge()); } else chunks.push(chunk); });
-      request.on('end', () => { if (!over) resolve(Buffer.concat(chunks)); });
-      request.on('error', () => reject(new ApiError(400, 'invalid_body', 'The body could not be read')));
+      const timer = setTimeout(() => { over = true; chunks.length = 0; reject(new ApiError(408, 'body_too_slow', `The body did not arrive within ${BODY_MS / 1000} seconds`, { close: true })); }, BODY_MS);
+      timer.unref?.();
+      request.on('data', (chunk) => { if (over) return; size += chunk.length; if (size > MAX_BODY_BYTES) { over = true; clearTimeout(timer); chunks.length = 0; reject(tooLarge()); } else chunks.push(chunk); });
+      request.on('end', () => { clearTimeout(timer); if (!over) resolve(Buffer.concat(chunks)); });
+      request.on('error', () => { clearTimeout(timer); reject(new ApiError(400, 'invalid_body', 'The body could not be read')); });
     });
     let text, body;
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); body = JSON.parse(text); } catch { throw new ApiError(400, 'invalid_json', 'The body is not valid JSON'); }
@@ -968,6 +1229,15 @@ export async function createFaucetService({
   }
   async function handle(request, response) {
     for (const [name, value] of Object.entries(BASE_HEADERS)) response.setHeader(name, value);
+    // A request that carries a body ends its connection with its answer. Answered before its body was read (refused
+    // for its route, method, rate, size or kind of body), a connection used to stay open for as long as the body kept
+    // coming, a byte at a time, whatever the answer was: before 2026-11-24 a caller over its rate limit, whose requests
+    // cost it nothing, could hold every connection of the faucet that way. What is still coming is read and dropped
+    // for a moment after the answer, so that the answer is not lost to a reset, and then the connection is closed.
+    if (carriesBody(request.headers)) {
+      response.setHeader('Connection', 'close');
+      response.once('finish', () => { if (!request.complete) { request.resume(); setTimeout(() => request.destroy(), 1000).unref?.(); } });
+    }
     try {
       if (request.rawHeaders.filter((name, i) => i % 2 === 0 && name.toLowerCase() === 'host').length > 1) throw new ApiError(400, 'invalid_request', 'A request names its host once');
       const bound = server.address()?.port, asked = hostName(request.headers.host);
@@ -981,11 +1251,17 @@ export async function createFaucetService({
       if (origin !== undefined) {
         const own = local.some((name) => origin === `http://${name}` && hostName(name) === asked);
         if (!own && !origins.has(origin)) throw new ApiError(403, 'origin_not_allowed', 'This origin may not call the faucet from a browser');
-        if (!own) { response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Vary', 'Origin'); }
+        // A page of another origin may read how long to wait: a browser hides Retry-After from it unless it is named here.
+        if (!own) { response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Access-Control-Expose-Headers', 'Retry-After'); response.setHeader('Vary', 'Origin'); }
       }
       if (request.method === 'OPTIONS' && origin !== undefined) { response.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600' }); response.end(); return; }
-      const target = request.url || '';
-      if (target.length > MAX_URL_LENGTH) throw new ApiError(414, 'url_too_long', 'The address is too long');
+      const raw = request.url || '';
+      if (raw.length > MAX_URL_LENGTH) throw new ApiError(414, 'url_too_long', 'The address is too long');
+      // The page, with an account named for its field (`/?account=alice`: a link may carry it, and the page shows it
+      // in the field, where the person can change it, and asks for nothing by itself). The one query any address
+      // here takes: `account`, once, in the form the page accepts (web-v4/faucet/app.js, accountFromAddress).
+      // Before 2026-11-24 it was refused like any query, and the page's prefill never worked.
+      const target = servePage && PREFILL.test(raw) ? '/' : raw;
       // A plain path and nothing else: no route here takes a query.
       if (!/^\/[A-Za-z0-9/._-]*$/.test(target) || target.includes('//') || target.includes('..')) throw new ApiError(400, 'invalid_url', 'The address is a plain path such as /v1/faucet, without a query');
       const lookupMatch = /^\/v1\/faucet\/grants\/([0-9A-Fa-f]{64})$/.exec(target);
@@ -1030,7 +1306,8 @@ export async function createFaucetService({
     if (problem) throw new Error(`${problem}: the faucet does not start`);
     // What an earlier run left open is settled before the first request is taken.
     await serial(() => settle(true), false);
-    server = http.createServer((request, response) => { handle(request, response); });
+    // Node holds a request to `requestTimeout` only when it checks, every 30 seconds unless set: every second here.
+    server = http.createServer({ connectionsCheckingInterval: 1000 }, (request, response) => { handle(request, response); });
     server.on('clientError', (error, socket) => {
       if (!socket.writable || socket.bytesWritten > 0) { socket.destroy(); return; }
       const status = error?.code === 'HPE_HEADER_OVERFLOW' ? '431 Request Header Fields Too Large' : error?.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? '408 Request Timeout' : '400 Bad Request';
@@ -1045,6 +1322,8 @@ export async function createFaucetService({
   return {
     url: `http://${address.family === 'IPv6' ? `[${address.address}]` : address.address}:${address.port}`,
     store, close,
+    /// Where the key of the hashes of who asked came from at this start: 'kept', 'new' or 'memory' (loadCallerKey).
+    callerKey: callers.source,
     /// One pass of settling, as the timer runs it (for tests and for the start script).
     settle: () => serial(() => settle(true), false),
   };

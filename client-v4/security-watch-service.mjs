@@ -780,6 +780,22 @@ export function checkWebhookURL(value) {
 }
 export const SIGNATURE_HEADER = 'x-watch-signature';
 export const EVENT_HEADER = 'x-watch-event';
+/// What a webhook secret must be, and the command that makes one. Said in every refusal of a secret.
+export const WEBHOOK_SECRET_RULE = 'A webhook secret is 32 random bytes written as 64 hexadecimal characters, one per webhook, made by a command, never chosen by a person: a delivery is signed with it, and one delivery that someone captures lets them try guesses of a chosen secret offline at billions a second. Make one with: openssl rand -hex 32 (or: node -p "require(\'node:crypto\').randomBytes(32).toString(\'hex\')"), put it in the config, and give the receiver the same';
+/// Why a webhook secret is refused (a few words to follow "the secret"), or null when it is taken. Taken: an even
+/// number of hexadecimal characters, 64 to 256 (32 bytes or more), that look made by a random generator: at least 10
+/// different digits, no pattern that repeats through the whole secret, and bytes that are not all printable characters
+/// (text written in hexadecimal is a secret a person chose). A secret made by `openssl rand -hex 32` fails one of the
+/// last three less often than once in a hundred billion (fewer than 10 digits: at most 11,440 × (9/16)^64). The
+/// answer never says what the secret is.
+export function webhookSecretProblem(secret) {
+  if (typeof secret !== 'string' || !/^(?:[0-9a-fA-F]{2}){32,128}$/.test(secret)) return 'is not 64 hexadecimal characters (32 random bytes)';
+  const digits = secret.toLowerCase();
+  const periodic = Array.from({ length: digits.length / 2 }, (_, i) => i + 1).some((period) => digits.slice(period) === digits.slice(0, digits.length - period));
+  if (new Set(digits).size < 10 || periodic) return 'repeats itself, as no random generator writes';
+  if (Buffer.from(digits, 'hex').every((byte) => byte >= 0x20 && byte <= 0x7e)) return 'is text written in hexadecimal, which a person chose';
+  return null;
+}
 /// The signature header: "t=<unix seconds>,sha256=<hex>", the HMAC-SHA256 under the secret of
 /// "t=<unix seconds>,id=<event id>." followed by the exact body.
 export function signWebhook(body, eventId, secret, unixSeconds) {
@@ -809,7 +825,8 @@ export function verifyWebhookSignature(body, headers, secret, { maxAgeSeconds = 
 /// is final. The answer's body is never read.
 export function webhookAdapter({ url, secret, fetcher = globalThis.fetch, attempts = 4, baseDelayMs = 1000, timeoutMs = 10000, sleep = sleeping, now = Date.now }) {
   const target = checkWebhookURL(url);
-  if (typeof secret !== 'string' || secret.length < 16) throw new Error('A webhook needs a secret of at least 16 characters');
+  const problem = webhookSecretProblem(secret);
+  if (problem) throw new Error(`The secret of a webhook ${problem}. ${WEBHOOK_SECRET_RULE}`);
   return {
     name: 'webhook',
     /// Where events go, without path or query (which may carry a token): safe to log.

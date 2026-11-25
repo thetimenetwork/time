@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
-import { createHash, generateKeyPairSync, sign as edSign } from 'node:crypto';
+import { createHash, randomBytes, generateKeyPairSync, sign as edSign } from 'node:crypto';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +15,7 @@ import { createLightClient } from './light-client.mjs';
 import { fetchLightBlock } from './certified-view.mjs';
 import { verifyWebhookSignature } from './security-watch-service.mjs';
 import { describeAction, IndexerError } from './indexer.mjs';
-import { createApiService, createRateLimiter, clientKey, holderKey, normalIp, webhookTargetId, ROUTES, MAX_PAGE, MAX_BODY_BYTES, REPLAY_PAYMENTS, STREAM_MIN_AGE_MS, NEWER_ACTIONS } from './api.mjs';
+import { createApiService, createRateLimiter, createReadGate, networkKey, clientKey, holderKey, normalIp, webhookTargetId, ROUTES, MAX_PAGE, MAX_BODY_BYTES, REPLAY_PAYMENTS, STREAM_MIN_AGE_MS, STATE_SHARE_MS, NEWER_ACTIONS } from './api.mjs';
 import { validateConfig, start } from '../deploy/api/start.mjs';
 
 const SDK = globalThis.TimeSDK;
@@ -190,8 +190,10 @@ test('every lookup answers from the indexed chain, says so, and gives what verif
     // The fee of the network is known once a state has been verified.
     assert.equal((await call(service, `/v1/actions/${hashOf('2', 0)}`)).body.action.fee_micros, '1000');
     assert.deepEqual([(await call(service, '/v1/status')).body.network.fee_micros, (await call(service, '/v1/status')).body.network.fee_source], ['1000', 'state_proof']);
-    // When no proof can be had, the account is not answered from the index alone.
+    // When no proof can be had, the account is not answered from the index alone. (A moment later: identical requests
+    // within STATE_SHARE_MS share one read, since 2026-11-24 also those of an account.)
     state.stateDown = true;
+    state.clock += STATE_SHARE_MS;
     const down = await call(service, '/v1/accounts/1');
     assert.deepEqual([down.status, down.body.error.code, down.headers.get('retry-after')], [503, 'state_unavailable', '5']);
     assert.equal((await call(service, '/v1/accounts/1/payments')).status, 200);
@@ -232,7 +234,8 @@ test('account state is read through the SDK with a real proof, and the proof is 
   let service;
   try {
     Date.now = () => proven.now_ms; // the proof is fresh at the time of the fixture
-    service = await createApiService({ trust: proven.trust, rpc, verifier, dataFile: path.join(directory, 'index.sqlite'), port: 0, autoStart: false });
+    // The service's clock is the one this test sets (a default of Date.now would keep the function of this moment).
+    service = await createApiService({ trust: proven.trust, rpc, verifier, dataFile: path.join(directory, 'index.sqlite'), port: 0, autoStart: false, now: () => Date.now() });
     const found = await call(service, '/v1/accounts/alice');
     assert.equal(found.status, 200, found.text);
     assert.deepEqual([found.body.source, found.body.state_height, found.body.account.id, found.body.account.name, found.body.account.balance, found.body.account.nonce], ['state_proof', '5', '0', 'alice', '0', '0']);
@@ -253,8 +256,10 @@ test('account state is read through the SDK with a real proof, and the proof is 
     assert.equal((await verifier.verifyViewProof(absent.body.proof.view_proof, proven.trust, absent.body.proof.query, proven.now_ms)).verified, true);
     // The fee was learned from the verified state, not from a setting.
     assert.equal((await call(service, '/v1/status')).body.network.fee_micros, '1000');
-    // A node that lies about the state is not believed: the answer is "unavailable", never the lie.
+    // A node that lies about the state is not believed: the answer is "unavailable", never the lie. (A moment later:
+    // identical requests within STATE_SHARE_MS share one read, since 2026-11-24 also those of an account.)
     proven.proof.entries[0].value_b64 = Buffer.from('{"balance":"999"}').toString('base64');
+    Date.now = () => proven.now_ms + STATE_SHARE_MS;
     const lied = await call(service, '/v1/accounts/alice');
     assert.deepEqual([lied.status, lied.body.error.code], [503, 'state_unavailable']);
     // Stale state (the node stopped a minute ago) is refused as well.
@@ -675,7 +680,7 @@ test('the server\'s own pages may ask it: an origin that is the very address ask
 });
 
 test('incoming payments to configured accounts are delivered as signed webhooks, each receiver on its own', async () => {
-  const SECRET = 'a-webhook-secret-of-the-shop-0123456789', OTHER_SECRET = 'another-secret-for-the-second-receiver';
+  const SECRET = randomBytes(32).toString('hex'), OTHER_SECRET = randomBytes(32).toString('hex');
   const received = [], answers = { '/hook-path-of-the-shop': [], '/dead': [] };
   const receiver = http.createServer((request, response) => {
     let body = ''; request.on('data', (c) => { body += c; });
@@ -909,7 +914,7 @@ test('the OpenAPI description and the routes agree', async () => {
     await indexAll(service);
     assert.deepEqual((await call(service, '/v1/openapi.json')).body, description);
     const samples = { height: ['2', '0', '01'], hash: [hashOf('2', 0), 'abc'], id: ['1', '01', 'alice'], account: ['1', 'payer', '@payer', 'A', 'x'], limit: ['1', '200', '0', '201'], order: ['asc', 'down'], cursor: ['2.0', '2', 'x'], reference: ['ab'.repeat(32), 'AB'.repeat(32)], from: ['7', '07'], after: ['2', '2.0', '0'] };
-    for (const route of ROUTES.filter((r) => r.method === 'GET' && r.path !== '/v1/stream')) {
+    for (const route of ROUTES.filter((r) => r.method === 'GET' && r.path !== '/v1/stream' && r.path !== '/v1/touches')) {
       const operation = description.paths[route.path].get;
       for (const parameter of (operation.parameters || []).map(resolve)) for (const sample of samples[parameter.name]) {
         const fits = parameter.schema.enum ? parameter.schema.enum.includes(sample) : new RegExp(parameter.schema.pattern).test(sample);
@@ -928,7 +933,7 @@ test('the start script checks its config strictly and runs one instance per data
   try {
     const filled = validateConfig(good);
     assert.deepEqual({ ...filled, trust: undefined, data_directory: undefined }, { rpc_url: 'http://127.0.0.1:26657/', trust: undefined, data_directory: undefined, start_height: 1, host: '127.0.0.1', port: 8930, hosts: [], cors_origins: [],
-      rate_limit: { per_second: 20, burst: 60 }, trusted_proxies: [], webhooks: [], max_lag_seconds: 120, rpc_timeout_seconds: 10, max_streams: 100, max_stream_seconds: 900, reserved_stream_clients: [] });
+      rate_limit: { per_second: 20, burst: 60 }, trusted_proxies: [], webhooks: [], max_lag_seconds: 120, rpc_timeout_seconds: 10, max_streams: 100, max_stream_seconds: 900, reserved_stream_clients: [], unfiltered_stream_percent: 20, max_proof_reads_per_client: 2 });
     // The public name is written as clients send it: with or without a port.
     for (const hosts of [['api.example'], ['api.example:443'], ['[2001:db8::1]:8443'], ['a.b-c.example', 'localhost:9000']]) assert.doesNotThrow(() => validateConfig({ ...good, hosts }));
     for (const hosts of [['api.example:'], ['-api.example'], ['api.example/path'], ['https://api.example'], ['api example'], [':443'], 'api.example']) assert.throws(() => validateConfig({ ...good, hosts }), /hosts lists/);
@@ -938,10 +943,16 @@ test('the start script checks its config strictly and runs one instance per data
     for (const [proxy, client] of [['10.0.0.2', '10.0.0.2'], ['::ffff:10.0.0.2', '10.0.0.2'], ['2001:db8::1', '2001:DB8:0:0::1'], ['2001:db8::1', '2001:db8::99']])
       assert.throws(() => validateConfig({ ...good, trusted_proxies: [proxy], reserved_stream_clients: [client] }), /both in trusted_proxies and in reserved_stream_clients/);
     assert.doesNotThrow(() => validateConfig({ ...good, trusted_proxies: ['10.0.0.2'], reserved_stream_clients: ['10.0.0.3'] }));
-    assert.doesNotThrow(() => validateConfig({ ...good, rpc_url: 'https://rpc.example/', cors_origins: ['*'], trusted_proxies: ['10.0.0.1', '::1'], hosts: ['api.example:443'], webhooks: [{ account: '5', url: 'https://hooks.example/x', secret: 'x'.repeat(16) }], rate_limit: { per_second: 5 } }));
+    // A webhook's secret is 32 random bytes in hexadecimal, as `openssl rand -hex 32` writes them.
+    const SECRET = randomBytes(32).toString('hex');
+    assert.doesNotThrow(() => validateConfig({ ...good, rpc_url: 'https://rpc.example/', cors_origins: ['*'], trusted_proxies: ['10.0.0.1', '::1'], hosts: ['api.example:443'], webhooks: [{ account: '5', url: 'https://hooks.example/x', secret: SECRET }], rate_limit: { per_second: 5 } }));
+    // The example is refused until its secret is replaced by one a command made; the refusal says which command.
     const example = JSON.parse(await readFile(new URL('../deploy/api/config.example.json', import.meta.url), 'utf8'));
-    assert.doesNotThrow(() => validateConfig({ ...example, trust: fixture.trust }));
-    const SECRET = 'super-secret-value-0123456789';
+    assert.throws(() => validateConfig({ ...example, trust: fixture.trust }), /^Error: webhook 0: the secret is not 64 hexadecimal characters.*Make one with: openssl rand -hex 32/);
+    assert.doesNotThrow(() => validateConfig({ ...example, trust: fixture.trust, webhooks: example.webhooks.map((hook) => ({ ...hook, secret: randomBytes(32).toString('hex') })) }));
+    // Secrets a person chose: refused whatever their length, and never quoted.
+    const CHOSEN = ['super-secret-value-0123456789', 'a webhook secret that is long enough to pass any rule of length', Buffer.from('our shop says this is the secret').toString('hex'), 'deadbeef'.repeat(8), '0123456789abcdef'.repeat(4), 'a'.repeat(64)];
+    for (const secret of CHOSEN) assert.throws(() => validateConfig({ ...good, webhooks: [{ account: '5', url: 'https://hooks.example/x', secret }] }), (error) => /^webhook 0: the secret .*openssl rand -hex 32/.test(error.message) && !error.message.includes(secret), secret);
     const bad = {
       'not an object': [], 'unknown key': { ...good, webhook: [] }, 'rpc with password': { ...good, rpc_url: `http://user:${SECRET}@127.0.0.1:26657/` }, 'plain http to another machine': { ...good, rpc_url: 'http://rpc.example:26657/' },
       'rpc with a path': { ...good, rpc_url: 'http://127.0.0.1:26657/rpc' }, 'rpc that is no url': { ...good, rpc_url: SECRET }, 'no trust': { ...good, trust: undefined }, 'trust of another application': { ...good, trust: { ...fixture.trust, app_version: '3' } },
@@ -950,10 +961,12 @@ test('the start script checks its config strictly and runs one instance per data
       'proxy by name': { ...good, trusted_proxies: ['proxy.internal'] }, 'unknown rate setting': { ...good, rate_limit: { per_minute: 5 } }, 'rate of zero': { ...good, rate_limit: { per_second: 0 } }, 'burst below rate': { ...good, rate_limit: { per_second: 50, burst: 10 } },
       'webhook without secret': { ...good, webhooks: [{ account: '5', url: 'https://hooks.example/x' }] }, 'webhook with short secret': { ...good, webhooks: [{ account: '5', url: `https://hooks.example/${SECRET}`, secret: 'short' }] },
       'webhook over plain http': { ...good, webhooks: [{ account: '5', url: `http://hooks.example/${SECRET}`, secret: SECRET }] }, 'webhook with extra key': { ...good, webhooks: [{ account: '5', url: 'https://hooks.example/x', secret: SECRET, events: ['all'] }] },
-      'webhook account as number': { ...good, webhooks: [{ account: 5, url: 'https://hooks.example/x', secret: SECRET }] }, 'webhook listed twice': { ...good, webhooks: [{ account: '5', url: 'https://hooks.example/x', secret: SECRET }, { account: '5', url: 'https://hooks.example/x', secret: `${SECRET}2` }] },
+      'webhook account as number': { ...good, webhooks: [{ account: 5, url: 'https://hooks.example/x', secret: SECRET }] }, 'webhook listed twice': { ...good, webhooks: [{ account: '5', url: 'https://hooks.example/x', secret: SECRET }, { account: '5', url: 'https://hooks.example/x', secret: randomBytes(32).toString('hex') }] },
       'host list in upper case': { ...good, hosts: ['API.example:443'] }, 'lag too small': { ...good, max_lag_seconds: 1 },
+      'kept share too large': { ...good, unfiltered_stream_percent: 95 }, 'kept share as text': { ...good, unfiltered_stream_percent: '20' }, 'no proof read at all': { ...good, max_proof_reads_per_client: 0 },
     };
     for (const [name, config] of Object.entries(bad)) assert.throws(() => validateConfig(config), (error) => !error.message.includes(SECRET), name);
+    assert.throws(() => validateConfig(bad['webhook listed twice']), /listed twice/);
 
     // One instance per data directory; the log is JSON lines without the secret, the path or the query of a webhook.
     const lines = [], state = { tip: 4, calls: [], broadcast: () => ({}) };
@@ -1106,7 +1119,7 @@ test('the state reader is moved on by a timer, and a request names one host and 
 test('a webhook starts at the height the chain had when it was configured, and nothing after that is left out', async () => {
   const hooks = [];
   const webhookFetcher = async (_url, init) => { hooks.push(JSON.parse(init.body)); return new Response('', { status: 200 }); };
-  const shop = { account: '1', url: 'https://hooks.example/shop', secret: 'x'.repeat(16) }, books = { account: '1', url: 'https://hooks.example/books', secret: 'y'.repeat(16) };
+  const shop = { account: '1', url: 'https://hooks.example/shop', secret: randomBytes(32).toString('hex') }, books = { account: '1', url: 'https://hooks.example/books', secret: randomBytes(32).toString('hex') };
   await lab(async ({ service, state, directory }) => {
     // A new index on a chain that is at block 3: the two payments of block 2 are history. They are
     // indexed, not sent, counted, and said in the log once.
@@ -1193,7 +1206,8 @@ test('an account answer says when the index holds an action of the account that 
   await lab(async ({ service, state }) => {
     await indexAll(service);
     // The fixture chain: account 7 sent nonce 1 and 2 in block 2 and nonce 3 in block 4. A proof of height h counts the blocks up to h.
-    const proves = (height, nonce, account = { ...ACCOUNTS[7], nonce }) => { state.readState = async (selection) => ({ verified: true, requested: selection, proof: { height, entries: [] }, state: { network_id: NETWORK, height, time_micros: '1000003000000', accounts: [account], config: {} } }); };
+    // Each proof is read a moment after the one before: identical requests within STATE_SHARE_MS share one read.
+    const proves = (height, nonce, account = { ...ACCOUNTS[7], nonce }) => { state.clock += STATE_SHARE_MS; state.readState = async (selection) => ({ verified: true, requested: selection, proof: { height, entries: [] }, state: { network_id: NETWORK, height, time_micros: '1000003000000', accounts: [account], config: {} } }); };
     const third = { hash: hashOf('4', 0), height: '4', nonce: '3', kind: 3 };
     // The proof is from height 3 and shows nonce 2. The index holds block 4, with the account's action of nonce 3:
     // the proven nonce is used already, and the answer says so, as the index's word.
@@ -1278,4 +1292,208 @@ test('a cursor below the start of the index is refused with where the index star
     assert.deepEqual(inside.events.map((e) => e.event), ['hello', 'payment', 'block']);
     await inside.close();
   }, { startHeight: 3 });
+});
+
+// ---- Found by the web audit of 2026-11-24 (A-1, A-4 and what followed from them).
+/// A request with exactly the headers given, over a connection of its own.
+function raw(service, route, headers = {}, method = 'GET') {
+  const { port } = new URL(service.url);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: route, method, headers, agent: false }, (res) => {
+      let text = ''; res.on('data', (c) => { text += c; });
+      res.on('end', () => { let body = null; try { body = JSON.parse(text); } catch { /* not JSON */ } resolve({ status: res.statusCode, headers: res.headers, body }); });
+    });
+    req.on('error', reject); req.end();
+  });
+}
+
+test('A-1: one caller has at most two proof reads under way; with twelve of its own at once, everybody else is answered', async () => {
+  // The proof of the audit (a1-state-slots.mjs) on the test network's settings: rate limit 20 a second, burst 60, behind
+  // a trusted proxy that names each caller. A read of the state takes a moment, as a node read does.
+  await lab(async ({ service, state }) => {
+    let reads = 0;
+    state.readState = async (selection) => {
+      reads += 1;
+      await pause(150);
+      const id = selection.ids?.[0] ?? '1';
+      return { verified: true, requested: selection, proof: { height: '3', entries: [] }, state: { network_id: NETWORK, height: '3', time_micros: '1000003000000', accounts: [{ id, name: `x${id}`, balance: '1', nonce: '0', auth_epoch: '0', devices: [] }], config: {}, pos: { active: [] } } };
+    };
+    const as = (route, caller) => call(service, route, { headers: { 'X-Forwarded-For': caller } });
+    // The attacker: twelve account reads at once, each for another account (its whole burst: 60 tokens, 5 each).
+    const attack = Array.from({ length: 12 }, (_, i) => as(`/v1/accounts/${100 + i}`, '203.0.113.9'));
+    await pause(20);
+    // Before 2026-11-24 the eight places of the whole service were the attacker's, and these three got 503 busy.
+    const [account, accountState, validators] = await Promise.all([as('/v1/accounts/7', '198.51.100.7'), as('/v1/accounts/7/state', '198.51.100.8'), as('/v1/validators', '198.51.100.9')]);
+    assert.deepEqual([account.status, account.body.account.id, accountState.status, validators.status], [200, '7', 200, 200]);
+    const refused = (await Promise.all(attack)).filter((answer) => answer.status !== 200);
+    assert.equal(refused.length, 10, 'two of the twelve are read');
+    for (const answer of refused) assert.deepEqual([answer.status, answer.body.error.code, answer.headers.get('retry-after')], [429, 'too_many_reads', '1']);
+    assert.match(refused[0].body.error.message, /^This address has 2 proof reads under way already/);
+    // An IPv6 caller is its /64, as the rate limit counts it: two at once from one /64, whatever address in it.
+    const sixes = await Promise.all(['2001:db8:9:1::1', '2001:db8:9:1::2', '2001:db8:9:1:ffff::3'].map((caller, i) => as(`/v1/accounts/${200 + i}`, caller)));
+    assert.deepEqual(sixes.map((answer) => answer.status).sort(), [200, 200, 429]);
+    // GET /v1/accounts/{account} shares one read between identical requests, as /state and /validators do. Before, six
+    // identical requests at once were six reads.
+    state.clock += 2000; reads = 0;
+    const same = await Promise.all(['192.0.2.50', '192.0.2.51', '192.0.2.52'].map((caller) => as('/v1/accounts/7', caller)));
+    assert.deepEqual([same.map((answer) => answer.status), reads], [[200, 200, 200], 1]);
+    // When a read is answered, its place is given back: the attacker is answered again.
+    assert.equal((await as('/v1/accounts/150', '203.0.113.9')).status, 200);
+  }, { rateLimit: { perSecond: 20, burst: 60 }, trustedProxies: ['127.0.0.1'] });
+  // The number is a setting of the service.
+  await assert.rejects(createApiService({ trust: fixture.trust, rpc: async () => ({}), verifier, dataFile: ':memory:', port: 0, autoStart: false, maxProofReadsPerClient: 0 }), /maxProofReadsPerClient is a whole number from 1 to 64/);
+});
+
+test('A-1: when every place for proof reads is taken, a reader that has none running goes before one that has, and one network goes after everybody else', async () => {
+  const gate = createReadGate({ slots: 2, line: 3, waitMs: 300 });
+  const order = [], held = new Map();
+  const read = (client, name) => gate.run(client, () => new Promise((resolve) => { held.set(name, resolve); })).then(() => order.push(name), (error) => order.push(`${name}:${error.code}`));
+  const done = async (name) => { held.get(name)(); await pause(5); };
+  // One /48 asks from two /64s and holds both places; a third /64 of it, and the first again, wait.
+  read('2001:db8:1:1::/64', 'a1'); read('2001:db8:1:2::/64', 'a2');
+  read('2001:db8:1:3::/64', 'a3'); read('2001:db8:1:1::/64', 'a1-again');
+  // A reader from elsewhere comes last, and fills the line.
+  read('198.51.100.7', 'victim');
+  await pause(5);
+  assert.deepEqual(gate.status(), { running: 2, waiting: 3 });
+  // A place frees: it goes to the reader whose network runs nothing, not to the first in line.
+  await done('a1');
+  assert(held.has('victim') && !held.has('a3'), 'the reader from elsewhere reads first');
+  // The next: a3 and a1-again each run nothing of their own now, and their /48 runs one: the one that came first.
+  await done('a2');
+  assert(held.has('a3') && !held.has('a1-again'));
+  assert.deepEqual(gate.status(), { running: 2, waiting: 1 });
+  // The line fills again with the /48; a newcomer of a /64 that runs a read already ranks last of all, and is refused.
+  read('2001:db8:1:4::/64', 'a4'); read('2001:db8:1:5::/64', 'a5');
+  read('2001:db8:1:3::/64', 'a3-again');
+  await pause(5);
+  assert.deepEqual(order.slice(-1), ['a3-again:busy']);
+  // A newcomer from elsewhere ranks before the last of the line, and takes its place.
+  read('192.0.2.1', 'second-victim');
+  await pause(5);
+  assert.deepEqual(order.slice(-1), ['a5:busy'], 'the last of the line gave its place');
+  // Nobody waits longer than the line allows: 503 busy.
+  await pause(350);
+  assert.deepEqual(order.filter((name) => name.endsWith(':busy')).sort(), ['a1-again:busy', 'a3-again:busy', 'a4:busy', 'a5:busy', 'second-victim:busy']);
+  assert.deepEqual(['2001:db8:1:2::/64', '203.0.113.9', 'unknown'].map(networkKey), ['2001:db8:1::/48', '203.0.113.0/24', 'unknown']);
+  for (const name of ['victim', 'a3']) held.get(name)();
+});
+
+test('A-1, A-4: a page of another site cannot make the browsers of its visitors load the API; programs, links and allowed pages can', async () => {
+  await lab(async ({ service }) => {
+    const img = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'image' };
+    // An <img>, a <script>, an <object>, a frame: no Origin is sent, and before 2026-11-24 each was answered.
+    for (const [route, headers] of [['/v1/accounts/7', img], ['/v1/stream?account=1', img], ['/v1/validators', { ...img, 'Sec-Fetch-Dest': 'script' }], ['/v1/status', { ...img, 'Sec-Fetch-Dest': 'object' }],
+      ['/v1/accounts/7', { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'iframe' }], ['/v1/accounts/7', { ...img, 'Sec-Fetch-Site': 'same-site' }], ['/v1/nothing', img]]) {
+      const answer = await raw(service, route, headers);
+      assert.deepEqual([answer.status, answer.body?.error.code], [403, 'cross_site_refused'], `${route} ${JSON.stringify(headers)}`);
+    }
+    // A person who follows a link to an address of the API; a page of an allowed origin (CORS); the page's own
+    // requests; a program, which sends none of these headers.
+    for (const headers of [{ 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' }, { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty', Origin: 'https://explorer.example' },
+      { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'image' }, { 'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' }, {}]) {
+      assert.equal((await raw(service, '/v1/accounts/7', headers)).status, 200, JSON.stringify(headers));
+    }
+    // CORS from an origin that is not allowed is the origin rule's, as before.
+    assert.equal((await raw(service, '/v1/accounts/7', { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors', Origin: 'https://evil.example' })).body.error.code, 'origin_not_allowed');
+  }, { corsOrigins: ['https://explorer.example'] });
+});
+
+test('A-4: readers that follow an account never take the places kept for readers that follow none', async () => {
+  // The proof of the audit (a3-stream-pool.mjs), at a quarter of the test network's 200 places: ten addresses with five
+  // streams each, every one following account 1. Before 2026-11-24 they held all fifty places, and the explorer's live
+  // view (no account) was refused, since no stream that follows an account is put out for one that follows none.
+  await lab(async ({ service, state }) => {
+    const as = (client, route) => openStream(service, route, { 'X-Forwarded-For': client });
+    const held = [];
+    for (let a = 1; a <= 10; a++) for (let i = 0; i < 5; i++) held.push(await as(`203.0.113.${a}`, '/v1/stream?account=1'));
+    assert.equal(held.filter((s) => s.status === 200).length, 40, 'a fifth of the places is kept');
+    const refused = held.find((s) => s.status !== 200);
+    assert.deepEqual([refused.status, refused.body.error.code], [503, 'too_many_streams']);
+    state.clock += 60000;
+    const live = [await as('198.51.100.30', '/v1/stream'), await as('198.51.100.31', '/v1/stream')];
+    assert.deepEqual(live.map((s) => s.status), [200, 200]);
+    // A newcomer that follows an account still gets in, in the place of another such stream (the busiest holder's oldest).
+    const deposits = await as('198.51.100.32', '/v1/stream?account=5');
+    assert.equal(deposits.status, 200);
+    const open = held.filter((s) => s.status === 200);
+    await open[0].waitFor(2);
+    assert.deepEqual([open[0].events[1].event, open[0].events[1].data.reason], ['bye', 'evicted']);
+    assert.equal((await call(service, '/v1/health')).body.streams, 42);
+    for (const stream of [...held, ...live, deposits]) await stream.close?.();
+  }, { maxStreams: 50, maxStreamsPerClient: 5, trustedProxies: ['127.0.0.1'] });
+  await assert.rejects(createApiService({ trust: fixture.trust, rpc: async () => ({}), verifier, dataFile: ':memory:', port: 0, autoStart: false, unfilteredStreamPercent: 95 }), /unfilteredStreamPercent is a whole number from 0 to 90/);
+});
+
+test('a request answered before its body was read ends its connection: a slow body holds nothing, also when it is refused for its rate', async () => {
+  await lab(async ({ service }) => {
+    const { port } = new URL(service.url);
+    for (let i = 0; i < 2; i++) await call(service, '/v1/status'); // the budget is used up: the next requests are refused for their rate
+    const slow = (head) => new Promise((resolve) => {
+      const started = Date.now(); let answer = '', ticker = null;
+      const socket = net.connect(Number(port), '127.0.0.1', () => { socket.write(head); ticker = setInterval(() => { if (!socket.destroyed) socket.write('a'); }, 200); });
+      socket.on('data', (chunk) => { answer += chunk; });
+      socket.on('close', () => { clearInterval(ticker); resolve({ status: answer.split('\r\n')[0], ms: Date.now() - started, close: /\r\nConnection: close\r\n/i.test(answer) }); });
+      socket.on('error', () => {});
+      setTimeout(() => socket.destroy(), 6000);
+    });
+    const host = `127.0.0.1:${port}`;
+    // Before 2026-11-24 each of these held its connection for as long as the body kept coming.
+    for (const head of [`POST /v1/transactions HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n`,
+      `GET /v1/status HTTP/1.1\r\nHost: ${host}\r\nContent-Length: 100000\r\n\r\n`, `POST /v1/nothing HTTP/1.1\r\nHost: ${host}\r\nTransfer-Encoding: chunked\r\n\r\n`]) {
+      const answer = await slow(head);
+      assert.deepEqual([answer.status, answer.close], ['HTTP/1.1 429 Too Many Requests', true], head);
+      assert(answer.ms < 2500, `the connection was closed after ${answer.ms} ms`);
+    }
+  }, { rateLimit: { perSecond: 1, burst: 2 } });
+});
+
+test('two state reads that cross a block boundary in the one client the service shares are both answered', async () => {
+  // The real state reader over a node whose tip moves, with a stand-in verifier that accepts every light block and
+  // whose check of a state takes as long as the test says. Read A gets the state below the next block and is slow to
+  // check it; read B starts after that block and is checked first. The SDK's client then refuses A ("Chain proof rolled
+  // back"): before 2026-11-24 the API answered it 503, every time two reads crossed a block boundary in this order.
+  const trust = { ...fixture.trust, checkpoint: null }, root = (h) => String(h).padStart(64, '0'), delays = [];
+  let tip = 10;
+  const rpc = async (method, p = {}) => {
+    if (method === '/status') return { node_info: { network: CHAIN }, sync_info: { latest_block_height: String(tip) } };
+    if (method === '/commit') { const h = p.height ?? String(tip); return { signed_header: { header: { height: String(h), app_hash: root(h) } } }; }
+    if (method === '/validators') return { block_height: p.height, total: '1', validators: [{ address: 'aa' }] };
+    if (method === '/abci_query') return { response: { code: 0, height: p.height, value: Buffer.from(JSON.stringify({ height: p.height, root: root(Number(p.height) + 1), entries: [] })).toString('base64') } };
+    throw new IndexerError('RPC_REFUSED', 'not available on this node');
+  };
+  const standIn = {
+    verifyTrust: async () => ({ verified: true }),
+    verifyLightUpdate: async (candidate) => ({ verified: true, status: 'VERIFIED', checkpoint: { height: candidate.signed_header.header.height, block_hash: root(candidate.signed_header.header.height), block: candidate } }),
+    verifyViewProof: async (proof) => { await pause(delays.shift() ?? 0); return { verified: true, completeAccountSet: false, state: { network_id: NETWORK, height: proof.height, time_micros: '1000000000000', accounts: [{ id: '1', name: 'shop', balance: '1', nonce: '0' }], config: {}, pos: { active: [] } } }; },
+  };
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'time-api-rollback-')), logs = [];
+  const service = await createApiService({ trust, rpc, verifier: standIn, dataFile: path.join(directory, 'index.sqlite'), port: 0, autoStart: false, rateLimit: { perSecond: 1000, burst: 100000 }, log: (level, message, fields) => logs.push({ message, ...fields }) });
+  try {
+    delays.push(150, 0);
+    const slow = call(service, '/v1/accounts/1/state');
+    await pause(40);
+    tip += 1;
+    const fast = await call(service, '/v1/validators');
+    assert.deepEqual([(await slow).status, fast.status], [200, 200]);
+    assert.deepEqual(logs.filter((line) => line.message === 'a verified state read failed'), []);
+  } finally { await service.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('a request whose body is still arriving at the time limit is answered 408 and its connection closed, within a second of the limit', async () => {
+  await lab(async ({ service }) => {
+    const { port } = new URL(service.url), started = Date.now();
+    const answer = await new Promise((resolve) => {
+      let text = '', ticker = null;
+      const socket = net.connect(Number(port), '127.0.0.1', () => { socket.write(`POST /v1/transactions HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n{"tx":"`); ticker = setInterval(() => { if (!socket.destroyed) socket.write('A'); }, 200); });
+      socket.on('data', (chunk) => { text += chunk; });
+      socket.on('close', () => { clearInterval(ticker); resolve(text); });
+      socket.on('error', () => {});
+      setTimeout(() => socket.destroy(), 10000);
+    });
+    // Before 2026-11-24 Node looked at the limit only every 30 seconds: a body sent a byte at a time within the rate
+    // limit held its connection that long (measured: 30.0 s with the limit at 15 s).
+    assert.match(answer, /^HTTP\/1\.1 408 /);
+    assert(Date.now() - started < 3500, `answered after ${Date.now() - started} ms`);
+  }, { requestTimeoutMs: 1000 });
 });

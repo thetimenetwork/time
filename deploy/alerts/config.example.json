@@ -1,0 +1,20 @@
+{
+  "rpc_url": "http://127.0.0.1:26657/",
+  "trust": {
+    "app_version": "4",
+    "network_id": "REPLACE_WITH_THE_NETWORK_ID_OF_THE_INDEPENDENTLY_VERIFIED_MANIFEST",
+    "chain_id": "time-devnet-v4-REPLACE",
+    "nodes_report_upgrades": true,
+    "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
+  },
+  "data_directory": "/var/lib/time-alerts",
+  "origin": "https://wallet.example",
+  "hosts": [],
+  "host": "127.0.0.1",
+  "port": 8950,
+  "trusted_proxies": ["127.0.0.1"],
+  "contact": "https://wallet.example",
+  "rate_limit": { "per_second": 2, "burst": 30 },
+  "rpc_timeout_seconds": 10,
+  "max_subscriptions": 50000
+}

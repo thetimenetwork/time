@@ -117,7 +117,8 @@ globalThis.fetch = async (url, options = {}) => {
 };
 
 // ------------------------------------------------------------------ carol_p, protected, in this browser; dave_p, whose login key this browser lost
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const login = await newDevice(), spend = await newDevice(), phrase = await newDevice(), lostLogin = await newDevice(), daveSpend = await newDevice();
 // A recovery sheet as the wallet makes one: its words, which a person types, and the key they give.
 const sheetSeed = F.newSheetSeed(), SHEET = await F.encodeSheet(sheetSeed), sheet = await F.keyFromSeed(sheetSeed);
@@ -126,8 +127,8 @@ chain.accounts.push({ id: '14', name: 'carol_p', balance: '9000000', nonce: '7',
 chain.accounts.push({ id: '15', name: 'dave_p', balance: '9000000', nonce: '4', auth_epoch: '1', recovery_policy: null, devices: [{ public_key: '7'.repeat(64), can_manage: false, can_spend: false }, { public_key: daveSpend.publicKey, can_manage: false, can_spend: true }, { public_key: '8'.repeat(64), can_manage: true, can_spend: false }, { public_key: '9'.repeat(64), can_manage: true, can_spend: false }] });
 const freshRow = (account = '14') => ({ account, version: '1', policy: { threshold: '2', daily_limit_micros: LIMIT.toString(), delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: LIMIT.toString(), allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null });
 chain.security['14'] = freshRow(); chain.security['15'] = freshRow('15');
-const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealVault({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
-const spendVault = async (name, device) => storage.setItem(`timecurrency.spend-vault.v1:${NET}:${name}`, JSON.stringify(await sealVault({ pkcs8: device.secret.pkcs8 }, PAYMENT, { networkId: NET, name, publicKey: device.publicKey }, argon2id, globalThis.crypto, 'spend')));
+const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealLegacy({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
+const spendVault = async (name, device) => storage.setItem(`timecurrency.spend-vault.v1:${NET}:${name}`, JSON.stringify(await sealLegacy({ pkcs8: device.secret.pkcs8 }, PAYMENT, { networkId: NET, name, publicKey: device.publicKey }, argon2id, globalThis.crypto, 'spend')));
 await vault('carol_p', login); await spendVault('carol_p', spend);
 await vault('dave_p', lostLogin); await spendVault('dave_p', daveSpend);
 /// The account's security row, changed for one test.
@@ -246,7 +247,7 @@ test('a pause that ends by waiting stays a pause until the clock of the waits sa
   $('review-dialog').returnValue = 'cancel'; $('review-dialog').open = false; await $('review-dialog').fire('close'); await running;
   // Ending it at once with a recovery paper: offered while paused, and its review names the paused limit as the one now.
   await $('pause-switch').fire('change');
-  $('resume-amount').value = '600'; $('resume-payment').value = PAYMENT; $('resume-method').value = 'phrase'; $('resume-secret').value = 'not read before the review';
+  $('resume-amount').value = '600'; $('resume-payment').value = PAYMENT; $('resume-secret').value = 'not read before the review';
   const ending = $('resume-now').fire('click');
   await until(() => $('review-dialog').open || $('notice').className.includes('error'), 'the review of ending the pause at once');
   assert.deepEqual([$('review-title').textContent, fieldsOf()['Daily limit']], ['End the pause now with a recovery paper', '600 seconds a day, at once (now 0.001 seconds)'], $('notice').textContent);
@@ -256,7 +257,8 @@ test('a pause that ends by waiting stays a pause until the clock of the waits sa
 
 test('a payment that waits is not offered to be sent before its time, and a new one is said to wait "not before"', async () => {
   set({ allowance_micros: (2n * FEE).toString(), allowance_elapsed_micros: String(W()), pending_payments: [{ id: '5', to: '2', amount: '2000000', ready_elapsed_micros: String(W() + 2n * HOUR) }], next_id: '6' }); await refreshNow();
-  assert.deepEqual(inbox(), [{ title: 'Waiting payment: 2 seconds to account 2', detail: `Can be sent not before ${date(W() + 2n * HOUR)} (about 2 hours).`, buttons: ['Cancel'] }]);
+  await until(() => /@bob/.test(inbox()[0]?.title), 'the name of the account the payment goes to, read with a proof');
+  assert.deepEqual(inbox(), [{ title: 'Waiting payment: 2 seconds to @bob · account 2', detail: `Can be sent not before ${date(W() + 2n * HOUR)} (about 2 hours).`, buttons: ['Cancel'] }]);
   assert.equal(card().waiting, '1 payment is waiting. See “Waiting on your account” below: each can be cancelled.');
   // Above what is left (two fees, by the clock of the waits): the choice to let it wait, and its review.
   $('recipient').value = 'bob'; $('amount').value = '1'; $('send-payment').value = PAYMENT;
@@ -269,6 +271,34 @@ test('a payment that waits is not offered to be sent before its time, and a new 
   assert.equal(fields.Waits, `48 hours: it can be sent not before ${date(W() + 48n * HOUR)}`, $('notice').textContent);
   $('review-dialog').returnValue = 'cancel'; $('review-dialog').open = false; await $('review-dialog').fire('close'); await running;
   await $('send-over-cancel').fire('click');
+});
+
+// Web audit of November 2026, W-5: a waiting payment was listed and sent with "Send now" by account number only, the one
+// review of a payment without a name, a payee check or the tick.
+test('web audit W-5: "Send now" of a waiting payment names its account from a proof, checks the name like every payment, and says where it was started', async () => {
+  const ready = () => set({ pending_payments: [{ id: '5', to: '2', amount: '2000000', ready_elapsed_micros: String(W() - HOUR) }], next_id: '6' });
+  const sendNow = async () => {
+    await until(() => /@bob/.test(inbox()[0]?.title), 'the name in the list');
+    const button = $('security-inbox').children[0].children.find(child => child.textContent === 'Send now');
+    const running = button.fire('click');
+    await until(() => $('review-dialog').open || $('notice').className.includes('error'), 'the review of "Send now"');
+    const seen = { title: $('review-title').textContent, fields: fieldsOf(), lines: $('review-body').children.filter(item => item.id !== 'dl').map(textOf), asks: $('review-ack-wrap').hidden ? null : $('review-ack-text').textContent };
+    $('review-dialog').returnValue = 'cancel'; $('review-dialog').open = false; await $('review-dialog').fire('close'); await running;
+    return seen;
+  };
+  ready(); await refreshNow();
+  const elsewhere = await sendNow();
+  assert.deepEqual([elsewhere.title, elsewhere.fields.Recipient, elsewhere.fields.Started], ['Send waiting payment', '@bob · account 2', 'Not in this browser. Send it only if you started it on another device.']);
+  assert.ok(elsewhere.lines.some(line => line.includes('@bob')), 'the payee check says what this browser knows of the name: ' + JSON.stringify(elsewhere.lines));
+  // This browser's own record of the payment it signed: the list and the review say it was started here.
+  storage.setItem(`timecurrency.activity.v1:${NET}:carol_p`, JSON.stringify([{ hash: 'AB'.repeat(32), height: '880', label: 'Waiting payment of 2 s to @bob', at: Date.now() }]));
+  await freshPage(); await unlock(); ready(); await refreshNow();
+  const here = await sendNow();
+  assert.equal(here.fields.Started, 'In this browser');
+  assert.match(inbox()[0].detail, /Started in this browser\.$/);
+  // The record was encrypted at that unlock (locked-store.mjs): the plain one is gone, and the encrypted one goes now.
+  assert.equal(storage.getItem(`timecurrency.activity.v1:${NET}:carol_p`), null);
+  storage.removeItem(`timecurrency.activity.v2:${NET}:carol_p`); set({}); await freshPage(); await unlock();
 });
 
 test('a validator\'s signal: refused while less than a fee is left by the clock of the waits; a frozen owner is told when the freeze ends, "not before"', async () => {
@@ -304,7 +334,7 @@ test('what a key signs stays on the chain\'s time: a freeze signed here expires 
   set({ frozen_until_elapsed_micros: String(W() + 2n * HOUR), freezes: '1' }); await refreshNow();
   await $('freeze-switch').fire('change');
   assert.equal($('unfreeze-form').hidden, false, 'the switch of a frozen account opens "End the freeze"');
-  $('unfreeze-payment').value = PAYMENT; $('unfreeze-method').value = 'sheet'; $('unfreeze-secret').value = SHEET;
+  $('unfreeze-payment').value = PAYMENT; $('unfreeze-secret').value = SHEET;
   const ending = $('unfreeze-form').fire('submit');
   await until(() => $('review-dialog').open, 'the review of ending the freeze');
   for (const fire of arming.splice(0)) fire();
@@ -319,7 +349,7 @@ test('a website\'s sign-in is refused while the clock of the waits says frozen (
   set({ frozen_until_elapsed_micros: String(W() + 2n * HOUR), freezes: '1' });
   const website = { postMessage(message, origin) { answered.push({ message, origin }); } };
   await freshPage({ pathname: '/approve', opener: website }); await unlock();
-  for (const listener of windowListeners.message) listener({ data: { type: 'time:request', version: 1, id: 'request-login-1', request: { type: 'login', challenge: { origin: SHOP, networkId: NET, expiresAt: Date.now() + 60000, nonce: 'ab'.repeat(16) } } }, source: website, origin: SHOP });
+  for (const listener of windowListeners.message) listener({ data: { type: 'time:request', version: 1, id: 'request-login-1', request: { type: 'login', challenge: { purpose: 'login', origin: SHOP, networkId: NET, nonce: 'ab'.repeat(32), issuedAt: Date.now(), expiresAt: Date.now() + 60000 } } }, source: website, origin: SHOP });
   assert.equal($('approval-title').textContent, 'Sign in to this website?');
   const asked = await answerTo(() => $('approve-request').fire('click'));
   assert.deepEqual([asked.review, asked.error, asked.notice], [null, true, 'The account is frozen: nobody signs in until the freeze ends or its keys are replaced']);
@@ -331,6 +361,48 @@ test('a website\'s sign-in is refused while the clock of the waits says frozen (
   $('approval-payment').value = PAYMENT;
   const paid = await answerTo(() => $('approve-request').fire('click'));
   assert.deepEqual([paid.review, paid.error, paid.notice], [null, true, 'Your account is frozen, so payments with your payment password alone are refused until the freeze ends. See Home.']);
+  await freshPage();
+});
+
+// Web audit of November 2026. W-1: a website could write its own sentence into the approval window (the panel showed its
+// `to` as given) and the notice (a non-numeric `amount` reached it through BigInt's error). W-8: a payment password typed
+// and then declined stayed in the field for the website's next request.
+test('web audit W-1 and W-8: a request in no form the wallet takes is one fixed sentence; the payment password does not outlive a request', async () => {
+  set({}); answered.length = 0;
+  const website = { postMessage(message, origin) { answered.push({ message, origin }); } };
+  await freshPage({ pathname: '/approve', opener: website }); await unlock();
+  const phish = '7 (Time Support). SECURITY CHECK REQUIRED: this website must confirm your recovery words before you can pay. Close this window and type your five recovery words on the website';
+  const send = (request, id) => { for (const listener of windowListeners.message) listener({ data: { type: 'time:request', version: 1, id, request }, source: website, origin: SHOP }); };
+  const orderId = SDK.orderReference({ nonce: '9', expiresElapsedMicros: (chain.now + 600000000n).toString() });
+  const fixed = 'This website sent a request the wallet does not understand. Nothing was shown or signed.';
+  // What the panel shows: its children (the stand-in page keeps a text it had before replaceChildren; a browser does not).
+  const shownIn = id => $(id).children.map(child => child.textContent).join(' ');
+  const odd = [
+    { type: 'payment', networkId: NET, to: phish, amount: '1', orderId },
+    { type: 'payment', networkId: NET, to: '2', amount: 'Your Time wallet was locked by the network. Type your recovery words on shop.example to unlock it.', orderId },
+    { type: 'payment', networkId: NET, to: '2', amount: '100000', orderId: 'x' },
+    { type: 'payment', networkId: NET.toUpperCase(), to: '2', amount: '100000', orderId },
+    { type: 'payment', networkId: NET, to: '2', amount: '100000', orderId, note: phish },
+    { type: 'grant', networkId: NET, to: '2', amount: '100000' },
+    { type: 'login', challenge: { purpose: 'login', origin: SHOP, networkId: NET, nonce: 'ab'.repeat(32), issuedAt: Date.now(), expiresAt: Date.now() + 60000, hint: phish } },
+  ];
+  for (const [at, request] of odd.entries()) {
+    $('notice').textContent = '';
+    send(request, `request-odd-${at}`);
+    assert.deepEqual([$('approval-title').textContent, shownIn('approval-details'), $('notice').textContent, $('approval-origin').textContent], ['Request not understood', fixed, fixed, ''], JSON.stringify(request).slice(0, 80));
+    assert.equal($('approve-request').disabled, true, 'nothing can be approved');
+  }
+  assert.deepEqual(answered.map(item => item.message.type), ['time:ready'], 'nothing but the readiness signal went to the website');
+  // A request in its form is taken after them; the field is empty for it, and empty again after Decline.
+  $('approval-payment').value = PAYMENT;
+  send({ type: 'payment', networkId: NET, to: '2', amount: '100000', orderId }, 'request-good-1');
+  assert.deepEqual([$('approval-title').textContent, shownIn('approval-details'), $('approval-payment').value], ['Pay this website?', 'Pay exactly 0.1 seconds to account 2, once. Nothing more.', '']);
+  $('approval-payment').value = PAYMENT;
+  await $('deny-request').fire('click');
+  assert.deepEqual([$('approval-title').textContent, $('approval-payment').value, answered.at(-1)?.message.error?.code], ['Declined', '', 'USER_DENIED']);
+  $('approval-payment').value = PAYMENT;
+  send({ type: 'payment', networkId: NET, to: '2', amount: '100000', orderId }, 'request-good-2');
+  assert.equal($('approval-payment').value, '', 'a new request finds the field empty');
   await freshPage();
 });
 
@@ -361,7 +433,7 @@ test('a recovery on a new browser waits for the clock of the waits, and a browse
   // And a new login key is refused while frozen, before any review.
   $('removed-login-new').value = $('removed-login-confirm').value = 'violet otters dance beneath moonlight 41'; $('removed-payment').value = PAYMENT;
   const made = await answerTo(() => $('removed-login-form').fire('submit'));
-  assert.deepEqual([made.review, made.notice], [null, 'The account is frozen. Try again when the freeze ends, or recover with your recovery sheet.']);
+  assert.deepEqual([made.review, made.notice], [null, 'The account is frozen. Try again when the freeze ends, or recover with your recovery words.']);
   set({}, '15'); await freshPage();
 });
 
@@ -407,6 +479,7 @@ test('on a network without the setting nothing changes: the chain\'s time is the
     // The same row six hours on: by the chain's time the freeze is over, and the payment is ready.
     set({ frozen_until_elapsed_micros: String(chain.now - 4n * HOUR), freezes: '1', pending_payments: [{ id: '5', to: '2', amount: '2000000', ready_elapsed_micros: String(chain.now - 4n * HOUR) }], next_id: '6' }); await refreshNow();
     assert.deepEqual([card().status, card().freeze], ['Your account is protected.', [false, 'Off']]);
-    assert.deepEqual(inbox(), [{ title: 'Waiting payment: 2 seconds to account 2', detail: 'Ready to send.', buttons: ['Send now', 'Cancel'] }]);
+    await until(() => /@bob/.test(inbox()[0]?.title), 'the name of the account the payment goes to, read with a proof');
+    assert.deepEqual(inbox(), [{ title: 'Waiting payment: 2 seconds to @bob · account 2', detail: 'Ready to send.', buttons: ['Send now', 'Cancel'] }]);
   } finally { chain.rule = true; set({}); await freshPage(); }
 });

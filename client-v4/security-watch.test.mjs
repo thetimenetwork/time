@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import './time-sdk.js';
 import { diffSecurity, reminders, snapshotOf, settle, EVENT_TYPES } from './security-watch.mjs';
-import { createSecurityWatch, batches, memoryStore, fileStore, webhookAdapter, checkWebhookURL, verifyWebhookSignature, signWebhook, createFeed, createAlertServer, SIGNATURE_HEADER, EVENT_HEADER } from './security-watch-service.mjs';
+import { createSecurityWatch, batches, memoryStore, fileStore, webhookAdapter, checkWebhookURL, verifyWebhookSignature, signWebhook, webhookSecretProblem, createFeed, createAlertServer, SIGNATURE_HEADER, EVENT_HEADER } from './security-watch-service.mjs';
 import { validateConfig, start, readConfig, boundedFetch, claim, targetId } from '../deploy/watch/start.mjs';
 import { spawn } from 'node:child_process';
 
@@ -571,8 +572,28 @@ async function receiver(statuses = []) {
 }
 const sample = () => diffSecurity(snap({ height: 10, elapsed: T0 }), snap({ height: 11, elapsed: T0 + 5n * S, security: withPayment }))[0];
 
+/// A webhook secret as the READMEs say to make one: 32 random bytes in hexadecimal (openssl rand -hex 32).
+const HOOK_SECRET = randomBytes(32).toString('hex');
+
+test('a webhook secret is 32 random bytes or more in hexadecimal; one a person chose or could type from memory is refused, with the command that makes one, and never quoted', async () => {
+  // Made by a command: taken, in either case, up to 128 bytes.
+  for (const secret of [HOOK_SECRET, randomBytes(32).toString('hex').toUpperCase(), randomBytes(48).toString('hex'), randomBytes(128).toString('hex')]) assert.equal(webhookSecretProblem(secret), null);
+  // A thousand made by the command are all taken: the checks for a pattern do not refuse what a generator writes.
+  for (let i = 0; i < 1000; i++) assert.equal(webhookSecretProblem(randomBytes(32).toString('hex')), null);
+  const refused = {
+    'is not 64 hexadecimal characters (32 random bytes)': ['x'.repeat(16), 'subscription-secret-0123456789', 'correct horse battery staple and then some more words to be long', randomBytes(24).toString('hex'), randomBytes(32).toString('base64'), `${randomBytes(32).toString('hex')}0`, randomBytes(129).toString('hex'), '', undefined, 42, Buffer.alloc(32)],
+    'repeats itself, as no random generator writes': ['a'.repeat(64), '0'.repeat(64), 'deadbeef'.repeat(8), '0123456789abcdef'.repeat(4), 'c0ffee'.repeat(10) + 'c0ff', `${'1234567890ab'.repeat(5)}1234`],
+    'is text written in hexadecimal, which a person chose': [Buffer.from('our shop says this is the secret').toString('hex'), Buffer.from('Tr0ub4dor&3 is my webhook secret!!').toString('hex')],
+  };
+  for (const [problem, secrets] of Object.entries(refused)) for (const secret of secrets) assert.equal(webhookSecretProblem(secret), problem, String(secret));
+  // The adapter refuses it before anything is sent, says what to run, and never repeats the secret.
+  for (const secret of [...refused['repeats itself, as no random generator writes'], 'subscription-secret-0123456789']) {
+    assert.throws(() => webhookAdapter({ url: 'https://hooks.example/x', secret }), (error) => /^The secret of a webhook .*openssl rand -hex 32.*randomBytes\(32\)/.test(error.message) && !error.message.includes(secret), secret);
+  }
+});
+
 test('the webhook POSTs the event as JSON with an HMAC-SHA256 signature the receiver verifies with the secret', async () => {
-  const hook = await receiver(), secret = 'subscription-secret-0123456789';
+  const hook = await receiver(), secret = HOOK_SECRET;
   try {
     const event = sample();
     await webhookAdapter({ url: hook.url, secret }).deliver(event);
@@ -602,7 +623,7 @@ test('the webhook POSTs the event as JSON with an HMAC-SHA256 signature the rece
 test('the webhook retries a first delivery with backoff, tries a failed event once per poll, and gives up on a refusal', async () => {
   const hook = await receiver([503, 503, 200, 503]), slept = [];
   try {
-    const adapter = webhookAdapter({ url: hook.url, secret: 'x'.repeat(16), sleep: async (ms) => slept.push(ms) });
+    const adapter = webhookAdapter({ url: hook.url, secret: HOOK_SECRET, sleep: async (ms) => slept.push(ms) });
     await adapter.deliver(sample());
     assert.equal(hook.received.length, 3);
     assert.deepEqual(slept, [1000, 2000]);
@@ -612,7 +633,7 @@ test('the webhook retries a first delivery with backoff, tries a failed event on
     // A 4xx is a refusal: no retry inside the call, not final (the watch retries it later).
     const refused = await receiver([401, 410]);
     try {
-      const refuser = webhookAdapter({ url: refused.url, secret: 'x'.repeat(16), sleep: async (ms) => slept.push(ms) });
+      const refuser = webhookAdapter({ url: refused.url, secret: HOOK_SECRET, sleep: async (ms) => slept.push(ms) });
       const refusal = await refuser.deliver(sample()).catch((e) => e);
       assert.match(refusal.message, /answered 401/);
       assert.deepEqual([refusal.refused, refusal.permanent], [true, undefined]);
@@ -630,7 +651,7 @@ test('the webhook never reads the answer: a receiver streaming without end canno
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const before = process.memoryUsage().rss, started = Date.now();
-    await webhookAdapter({ url: `http://127.0.0.1:${server.address().port}/h`, secret: 'x'.repeat(16), timeoutMs: 1500 }).deliver({ id: 'e', account: '5' });
+    await webhookAdapter({ url: `http://127.0.0.1:${server.address().port}/h`, secret: HOOK_SECRET, timeoutMs: 1500 }).deliver({ id: 'e', account: '5' });
     assert.ok(Date.now() - started < 1000, 'delivered without waiting for the body');
     assert.ok(process.memoryUsage().rss - before < 64 * 2 ** 20, 'the body was not buffered');
   } finally { server.closeAllConnections(); server.close(); }
@@ -640,7 +661,7 @@ test('webhooks must be https:// (http:// only for localhost)', () => {
   for (const bad of ['http://example.com/hook', 'http://10.0.0.5/hook', 'ftp://example.com/', 'ws://localhost/', 'https://user:pass@example.com/', 'http://user@localhost/', 'not a url'])
     assert.throws(() => checkWebhookURL(bad), /webhook/i, bad);
   for (const good of ['https://hooks.example.com/time', 'http://localhost:9000/x', 'http://127.0.0.1:9000/x', 'http://[::1]:9000/x']) assert.equal(checkWebhookURL(good).href, new URL(good).href);
-  assert.throws(() => webhookAdapter({ url: 'http://example.com/', secret: 'x'.repeat(16) }), /https/);
+  assert.throws(() => webhookAdapter({ url: 'http://example.com/', secret: HOOK_SECRET }), /https/);
   assert.throws(() => webhookAdapter({ url: 'https://example.com/', secret: 'short' }), /secret/);
 });
 
@@ -722,7 +743,7 @@ test('the health of the watch names no account', async () => {
 
 // ------------------------------------------------------------------ the deployable entry point
 const trust = { app_version: '4', network_id: fixture.network_id, chain_id: 'time-devnet-v4-test' };
-const config = (directory, extra = {}) => ({ gateway: 'https://wallet.example', trust, data_directory: directory, port: 18_000 + Math.floor(Math.random() * 1000), subscriptions: [{ account: '5', webhook: 'https://hooks.example/time/SECRETPATH', secret: 'subscription-secret-0123456789' }], ...extra });
+const config = (directory, extra = {}) => ({ gateway: 'https://wallet.example', trust, data_directory: directory, port: 18_000 + Math.floor(Math.random() * 1000), subscriptions: [{ account: '5', webhook: 'https://hooks.example/time/SECRETPATH', secret: HOOK_SECRET }], ...extra });
 
 test('the watch config: defaults, and refusals', () => {
   const ok = validateConfig(config(path.resolve('/watch-data'), { port: undefined }));
@@ -735,10 +756,18 @@ test('the watch config: defaults, and refusals', () => {
   // Beyond this machine only with a token.
   assert.equal(validateConfig(config(path.resolve('/watch-data'), { host: '0.0.0.0', feed_token: 'f'.repeat(24), hosts: ['watch.example:8920'] })).feed_token, 'f'.repeat(24));
   // An error never repeats a value of the config.
-  for (const patch of [{ subscriptions: [{ account: '5', webhook: 'http://hooks.example/SECRETPATH', secret: 'TOPSECRET-0123456789' }] }, { TOPSECRET: 1 }]) {
+  for (const patch of [{ subscriptions: [{ account: '5', webhook: 'http://hooks.example/SECRETPATH', secret: 'TOPSECRET-0123456789' }] }, { subscriptions: [{ account: '5', webhook: 'https://hooks.example/SECRETPATH', secret: 'TOPSECRET-0123456789' }] }, { TOPSECRET: 1 }]) {
     const error = (() => { try { validateConfig(config(path.resolve('/watch-data'), patch)); } catch (e) { return e; } })();
     assert.doesNotMatch(error.message, /SECRETPATH|TOPSECRET/);
   }
+  // A secret a person chose is refused, and the refusal says how to make one; the example is refused until its secret
+  // is replaced by one that a command made.
+  assert.throws(() => validateConfig(config(path.resolve('/watch-data'), { subscriptions: [{ account: '5', webhook: 'https://hooks.example/x', secret: 'subscription-secret-0123456789' }] })), /^Error: subscription 0: the secret is not 64 hexadecimal characters.*openssl rand -hex 32/);
+  assert.throws(() => validateConfig(config(path.resolve('/watch-data'), { subscriptions: [{ account: '5', webhook: 'https://hooks.example/x', secret: 'ab'.repeat(32) }] })), /subscription 0: the secret repeats itself/);
+  const example = JSON.parse(readFileSync(new URL('../deploy/watch/config.example.json', import.meta.url), 'utf8'));
+  const filled = { ...example, trust, data_directory: path.resolve('/watch-data') };
+  assert.throws(() => validateConfig(filled), /subscription 0: the secret is not 64 hexadecimal characters/);
+  assert.equal(validateConfig({ ...filled, subscriptions: filled.subscriptions.map((s) => (s.secret ? { ...s, secret: randomBytes(32).toString('hex') } : s)) }).subscriptions.length, 2);
 });
 
 test('a config file that is not JSON is reported by position only, never by its text', async () => {
@@ -798,7 +827,8 @@ test('the watch process serves recent events, delivers webhooks and logs no secr
     const log = lines.join('\n');
     assert.match(log, /security watch started/);
     assert.match(log, /https:\/\/hooks\.example/);
-    assert.doesNotMatch(log, /subscription-secret|SECRETPATH/);
+    assert.equal(log.includes(HOOK_SECRET), false);
+    assert.doesNotMatch(log, /SECRETPATH/);
   } finally { await running?.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

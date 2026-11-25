@@ -469,9 +469,10 @@ test('identical questions share one read of the state for a moment; a failed rea
     assert.equal(reads, 4);
     for (let i = 0; i < 5; i++) assert.equal((await raw(service, '/v1/accounts/7/state')).status, 200);
     assert.equal(reads, 5);
-    // The account route the API had is not shared: every request reads, as before.
+    // The account route shares its read too, since 2026-11-24: before, every request read, and twelve requests of one
+    // caller for twelve accounts held every place for proofs of the service (audit A-1).
     await raw(service, '/v1/accounts/7'); await raw(service, '/v1/accounts/7');
-    assert.equal(reads, 7);
+    assert.equal(reads, 6);
     // A read that fails is not kept: the next request reads again.
     down = true; clock += 1500;
     assert.equal((await raw(service, '/v1/validators')).status, 503);

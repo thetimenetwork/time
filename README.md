@@ -15,7 +15,7 @@ Read this before anything else.
 - **There has been no external audit.** The code has had internal reviews; their findings, fixed and open, are in [AUDIT-2026-11.md](AUDIT-2026-11.md). That document is the project's own review, not an audit by an outside party.
 - **Nothing here holds real value, and nothing built from it should.** What must be done before any launch with real value is listed at the end of the same document.
 
-Some parts have been written and tested but never run for real: the version-5 image has not been built with Docker, the deployment kit has not run on several hosts with a remote signer, and no genesis ceremony has been held with real operators. The wallet's account-security screens have not been run in a browser against a live network. The repository says so where it matters; please keep it that way.
+Some parts have run only in the project's own rehearsals, never with real operators: the deployment kit and its remote signers have run on laboratory networks that a test harness started and operated, and no genesis ceremony has been held with real operators. The wallet has run against live networks in one browser only (Chrome, headless), and some of its account-security screens have not run in any browser: a second browser, a recovery carried to its end (the browser check takes one up to its review), replacing keys and unfreezing. The repository says so where it matters; please keep it that way.
 
 ## What is in the repository
 
@@ -154,3 +154,5 @@ node tools/export-public.mjs --out ../time-public-copy
 ```
 
 `--forbid-file FILE` adds your own list of strings that must not appear (one per line; keep the file outside the repository).
+
+Each publication is one commit of the public repository, made as [docs/publishing.md](docs/publishing.md) says; [CHANGELOG.md](CHANGELOG.md) lists what each one brought.

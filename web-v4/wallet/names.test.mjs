@@ -77,8 +77,11 @@ test('what the review says about a name: paid before, a first payment, or a name
   assert.deepEqual(N.payeeCheck('b0b', ['carol', 'bob']), { kind: 'alike', other: 'bob', reason: 'skeleton' });
   assert.deepEqual(N.payeeCheck('b1nance', ['binance']), { kind: 'alike', other: 'binance', reason: 'loose' });
   assert.deepEqual(N.payeeCheck('karol', ['carol']), { kind: 'alike', other: 'carol', reason: 'edit' });
-  // A name that was paid is not warned about, although it looks like another paid name: the person has dealt with both.
-  assert.deepEqual(N.payeeCheck('b0b', ['bob', 'b0b']), { kind: 'paid' });
+  // A name that was paid, and looks like another paid name: said again, with the tick. One of the two may have been
+  // written into this browser's list by someone else (web audit of November 2026, W-4).
+  assert.deepEqual(N.payeeCheck('b0b', ['bob', 'b0b']), { kind: 'paid-alike', other: 'bob' });
+  assert.deepEqual(N.payeeCheck('bob', ['bob', 'b0b', 'carol']), { kind: 'paid-alike', other: 'b0b' });
+  assert.deepEqual(N.payeeCheck('carol', ['bob', 'b0b', 'carol']), { kind: 'paid' });
   // The words. A piece that begins with @ is a name; together the pieces are the sentence.
   assert.equal(N.firstPaymentWords('dave').join(''), 'First payment to @dave.');
   assert.equal(N.alikeWords('paypa1', 'paypal').join(''), 'You have not paid @paypa1 before. It looks like @paypal, which you have paid. Check every letter.');

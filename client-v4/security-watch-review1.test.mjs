@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import './time-sdk.js';
 import { diffSecurity, snapshotOf } from './security-watch.mjs';
@@ -151,7 +152,7 @@ test('F-H a store snapshot newer than the chain (re-genesis, restored store) sil
 test('F-I one dead webhook delays every other account\'s urgent alert (head-of-line), with the default timings', async () => {
   // Real time: account 42's receiver accepts and never answers (default 10 s timeout, retries with backoff).
   const t0 = Date.now(); const deliveredAt = {}; let hanging = 0;
-  const dead = webhookAdapter({ url: 'https://dead.example/hook', secret: 'x'.repeat(16), fetcher: (_u, o) => { hanging += 1; return new Promise((_, reject) => o.signal.addEventListener('abort', () => reject(o.signal.reason), { once: true })); } });
+  const dead = webhookAdapter({ url: 'https://dead.example/hook', secret: randomBytes(32).toString('hex'), fetcher: (_u, o) => { hanging += 1; return new Promise((_, reject) => o.signal.addEventListener('abort', () => reject(o.signal.reason), { once: true })); } });
   const good = { deliver: async (e) => { deliveredAt[e.id] = Date.now() - t0; } };
   const targets = [{ id: 'feed', accounts: null, adapter: good }, { id: 'webhook-42', accounts: new Set(['42']), adapter: dead }];
   // Three events of account 42 left in the outbox (its receiver is down).
@@ -172,7 +173,7 @@ test('F-I2 real time: the next poll is held up by retries to a hanging receiver'
   await new Promise((r) => hang.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${hang.address().port}/hook`;
   try {
-    const dead = webhookAdapter({ url, secret: 'x'.repeat(16), timeoutMs: 200, baseDelayMs: 50 });
+    const dead = webhookAdapter({ url, secret: randomBytes(32).toString('hex'), timeoutMs: 200, baseDelayMs: 50 });
     const targets = [{ id: 'w42', accounts: new Set(['42']), adapter: dead }, { id: 'feed', accounts: null, adapter: { deliver: async () => {} } }];
     const stuck = [1, 2, 3].map((n) => ({ id: `42:frozen:${n}`, account: '42', type: 'frozen', urgent: true, message: 'x' }));
     const watch = createSecurityWatch({ verifiedState: async () => verified({ height: 10, elapsed: T0 }), accounts: ['5'], targets, store: memoryStore({ format: 1, snapshots: {}, delivered: {}, outbox: stuck }), now: () => chainMs(T0) });

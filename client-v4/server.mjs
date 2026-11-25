@@ -1,7 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, rename, open } from 'node:fs/promises';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { readFile, readdir, writeFile, rename, open } from 'node:fs/promises';
 import { createLoginService, createOrderService } from './server-auth.mjs';
 import { fetchCertifiedView,fetchLightBlock } from './certified-view.mjs';
 import './time-sdk.js';
@@ -11,9 +12,10 @@ import {createArchive} from './archive.mjs';
 import {createOrderStore} from './order-store.mjs';
 import {createBlogStore} from './blog-store.mjs';
 import {ownNodeOptions,OWN_NODE_UNAVAILABLE,OWN_NODE_MISMATCH} from './own-node.mjs';
+import {normalIp,callerKey,networkKey,isLoopback,createBuckets,createFairLine,retrySeconds} from './callers.mjs';
 
 const SDK = globalThis.TimeSDK;
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const cookie = (request, name) => (request.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(name + '='))?.slice(name.length + 1) || '';
 function cookieHeader(name,value,maxAge,secure){return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure?'; Secure':''}`;}
 function requireOrigin(request, origin) { if (request.headers.origin !== origin) throw new Error('Request origin rejected'); }
@@ -22,7 +24,7 @@ async function body(request) {
   if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) throw new Error('Expected JSON content type');
   let size = 0; const chunks = [];
   for await (const chunk of request) { size += chunk.length; if (size > 768*1024) throw new Error('Request body exceeds 768 KiB'); chunks.push(chunk); }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('The request body is not JSON'); }
 }
 
 // The shop's price list: item name -> price in whole microseconds. The buyer's page names an
@@ -36,12 +38,104 @@ export function priceOf(catalog, item) {
   if (typeof item !== 'string' || !Object.hasOwn(catalog, item)) throw Error('Unknown item');
   return catalog[item];
 }
-// The answer to a refused request. An own-node refusal also carries its code, so the shop page
-// can tell "retry later" (OWN_NODE_UNAVAILABLE) from "do not ship" (OWN_NODE_MISMATCH).
-export function errorBody(error) {
-  return { error: String(error?.message).slice(0, 240), ...(error?.code === OWN_NODE_UNAVAILABLE || error?.code === OWN_NODE_MISMATCH ? { code: error.code } : {}) };
+// The gateway's limits.
+// - What it can do: a verified read (/api/notifications: a verified state and a second proof) took 16 ms one at a time
+//   and 68 a second ran with eight at once on a laptop's i9-12900H (2026-11-24, the verifier's fixture, its node
+//   answering in the same process). The test network's services machine, a t3.medium, has two vCPUs of a Xeon at
+//   2.5 to 3.5 GHz, about two to two and a half times slower for one thread, and shares them with the API, the faucet,
+//   the alert service and the proxy: about 15 verified reads a second for the gateway. Of what an open wallet asks,
+//   about three requests in ten make the gateway verify (/api/notifications, /api/light-block, /api/receipt); the rest
+//   ask the node for a proof the wallet checks itself, or nothing.
+// - The defence of everybody's checks is the line (`verifying`), not a low rate per address: the light client checks
+//   one step at a time for both origins (light-client.mjs, `serial`), and each step of a request, with the verifier's
+//   own checks, waits its turn in a fair line (callers.mjs, createFairLine). The caller with fewest checks under way
+//   goes first; one caller may have half the line under way, one /48 three quarters; when the line is full the caller
+//   that asks most is refused, with 503 GATEWAY_BUSY and Retry-After, not the caller that comes next. Unsaturated, the
+//   line refuses nobody.
+// - Rates, which keep one caller from taking a large part of what the gateway can do. Without trusted proxies every
+//   request arrives from 127.0.0.1 and nothing tells two callers apart: each origin takes 50 requests a second that ask
+//   the node or a store (`work`: every /api/ route and every request but a GET) and 1000 of its page's own files
+//   (`files`), from everybody together, as before. With trustedProxies (the test network's proxy, or an operator's
+//   nginx, writing the caller's address in X-Forwarded-For) work is counted per caller as well: an IPv4 address or an
+//   IPv6 /64 15 a second with a burst of 300, a /48 30 with a burst of 600: a backstop half again above the proxy's own
+//   per caller (testnet/proxy.mjs, SITE_LIMITS: 10 a second, a burst of 200), which is what a person meets first. And
+//   everybody together 1000 a second of work and 4000 of files: never within reach of one caller's or one /48's burst,
+//   so that a caller at its limit cannot use up everybody's second (with 200, as here until the trial of 24 November,
+//   one caller's burst could).
+export const GATEWAY_LIMITS = Object.freeze({ work: 50, files: 1000, perCaller: Object.freeze({ work: 1000, files: 4000, caller: Object.freeze({ perSecond: 15, burst: 300 }), network: Object.freeze({ perSecond: 30, burst: 600 }) }), verifying: Object.freeze({ slots: 1, size: 256, callerShare: 1 / 2, networkShare: 3 / 4, waitMs: 8000, retryAfterSeconds: 2 }) });
+export const GATEWAY_BUSY = 'GATEWAY_BUSY', RATE_LIMITED = 'RATE_LIMITED';
+// The refusal of a request that may be asked again: status 429 (RATE_LIMITED, too many from this caller) or 503
+// (GATEWAY_BUSY, too many from everybody), the header Retry-After in whole seconds from 1 to 30, and the body
+// {"error":"<fixed sentence>","code":"...","retryAfterSeconds":<the same number>}. The wallet waits that long and asks
+// again (testnet/proxy.mjs answers its own refusals the same way).
+export const LIMIT_SENTENCE = 'Local request limit reached', BUSY_SENTENCE = 'The gateway is checking many requests just now. Try again in a few seconds.';
+export function limitRefusal(code, seconds) {
+  const after = retrySeconds(seconds * 1000);
+  return { body: { error: code === GATEWAY_BUSY ? BUSY_SENTENCE : LIMIT_SENTENCE, code, retryAfterSeconds: after }, headers: { 'Retry-After': String(after) } };
 }
-export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, merchantPort = 8908, recipient = '0', catalog = { 'test-purchase': '100000' }, checkpointPath, ordersPath, archivePath, onRegtestBid, onSponsorRegistration, registrationService, publicOrigins, onPorts, ownNode, upgradeCheck = {}, onUpgradeNotice = event => (event.level === 'error' ? console.error : console.warn)(JSON.stringify(event)) }) {
+// What the pages may use of the browser: nothing that a wallet or a blog does not need. The wallet's own origin may
+// make and use keys of the device (WebAuthn: its trial page device-check.html); the blog may not.
+const NONE = 'accelerometer=(), bluetooth=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=(), xr-spatial-tracking=()';
+export const PERMISSIONS_POLICY = Object.freeze({ wallet: `${NONE}, publickey-credentials-create=(self), publickey-credentials-get=(self)`, merchant: `${NONE}, publickey-credentials-create=(), publickey-credentials-get=()` });
+// The answer to a refused request, and whether its words were replaced. A caller is told the gateway's own sentence.
+// What can carry a file path, an address of this machine or of the node, or the words of the node (the certified
+// view and the verifier quote what the node sent after their first words) is replaced with a fixed sentence for its
+// case; the full text then goes to the error log (createV4Servers, onRefusal). An own-node refusal says its fixed first
+// half and carries its code, so the shop page can tell "retry later" (OWN_NODE_UNAVAILABLE) from "do not ship"
+// (OWN_NODE_MISMATCH); a busy gateway's carries GATEWAY_BUSY.
+// The one text of the node a caller is told: the reason the node gives for refusing a submitted action (CheckTx),
+// which the wallet reads ("too close to an existing name: ...") and shows as its gateway's words, never as its own.
+const OWN_NODE_SAYS = Object.freeze({ [OWN_NODE_UNAVAILABLE]: 'Own node has not confirmed the payment; the order stays unsettled, retry later', [OWN_NODE_MISMATCH]: 'Own node contradicts the light-client receipt; the order stays unsettled' });
+const QUOTING = ['Could not obtain compatible certified V4 state', 'Pinned state unavailable'];
+const CODE_SAYS = Object.freeze({ UPGRADE_REQUIRED: 'the network runs a protocol version this gateway does not implement', CHECKPOINT_REFRESH_REQUIRED: "this gateway's trust anchor has expired; its operator must install a new one", CHECKPOINT_STORAGE_INVALID: "this gateway's stored checkpoint cannot be used; its operator must look at it", STALE_STATE: "the network's answer is older than allowed", LIGHT_UPDATE_BUDGET: 'the gateway is still catching up with the network; try again' });
+// The words of the SDK's own refusal of a version (TimeSDK.upgradeRequired): numbers only, from a verified state.
+const SDK_UPGRADE = /^UPGRADE_REQUIRED: the network runs protocol version [0-9]{1,20}; this software implements versions [0-9]{1,20} to [0-9]{1,20}\. Install a release that implements version [0-9]{1,20}\.$/;
+export function publicError(error) {
+  const message = String(error?.message ?? error);
+  if (error?.code === OWN_NODE_UNAVAILABLE || error?.code === OWN_NODE_MISMATCH) return { body: { error: OWN_NODE_SAYS[error.code], code: error.code }, replaced: message !== OWN_NODE_SAYS[error.code] };
+  if (error?.code === GATEWAY_BUSY) return { body: limitRefusal(GATEWAY_BUSY, GATEWAY_LIMITS.verifying.retryAfterSeconds).body, replaced: false, status: 503 };
+  // An error of the system (a file, a socket): its words name paths and addresses.
+  if (typeof error?.syscall === 'string' || typeof error?.errno === 'number' || /^E[A-Z0-9]{2,}$/.test(String(error?.code ?? ''))) return { body: { error: 'The gateway could not complete the request' }, replaced: true, status: 500 };
+  // JSON this gateway could not read is an answer of the node (a request's body has its own sentence), and a path that
+  // does not decode is the caller's.
+  if (error instanceof SyntaxError) return { body: { error: 'An answer of the network could not be read' }, replaced: true };
+  if (error instanceof URIError) return { body: { error: 'Not found' }, replaced: true, status: 404 };
+  for (const lead of QUOTING) if (message.startsWith(lead + ':')) return { body: { error: lead }, replaced: true };
+  const coded = /^([A-Z][A-Z0-9_]{2,40}):/.exec(message);
+  if (coded && !(coded[1] === 'UPGRADE_REQUIRED' && SDK_UPGRADE.test(message))) {
+    const said = `${coded[1]}: ${Object.hasOwn(CODE_SAYS, coded[1]) ? CODE_SAYS[coded[1]] : 'the answer of the network did not verify'}`;
+    return { body: { error: said }, replaced: said !== message };
+  }
+  return { body: { error: message.slice(0, 240) }, replaced: false };
+}
+export function errorBody(error) { return publicError(error).body; }
+// The page's own files of one role, by the path a browser asks for: what the role's folder holds, the shared verifier
+// and menu, and the four modules of the SDK, read once at start. Only these paths reach the file system, by their exact
+// spelling: a test (*.test.mjs, anything in a folder named tests, however it is written), a file of a type that is not
+// served, and another spelling the file system would also answer to (other letter case, a short name) are not on it.
+const SDK_FILES = Object.freeze({ '/sdk/proof-verifier.js': 'proof-verifier.mjs', '/sdk/time-sdk.js': 'time-sdk.js', '/sdk/light-client.mjs': 'light-client.mjs', '/sdk/account-security.mjs': 'account-security.mjs' });
+export async function pageFiles(root, role) {
+  const files = new Map();
+  for (const [base, prefix, json] of [[path.join(root, 'web-v4', role), '', false], [path.join(root, 'web-v4', 'shared'), '/web-v4/shared', true]]) {
+    let entries = [];
+    try { entries = await readdir(base, { withFileTypes: true, recursive: true }); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    for (const entry of entries) {
+      const type = MIME[path.extname(entry.name)];
+      if (!entry.isFile() || !type || (type === MIME['.json'] && !json) || /\.test\.mjs$/i.test(entry.name)) continue;
+      const parts = path.relative(base, path.join(entry.parentPath, entry.name)).split(path.sep);
+      if (parts.some(part => part.toLowerCase() === 'tests' || part.startsWith('.'))) continue;
+      files.set(`${prefix}/${parts.join('/')}`, { location: path.join(base, ...parts), type });
+    }
+  }
+  for (const [address, file] of Object.entries(SDK_FILES)) files.set(address, { location: path.join(root, 'client-v4', file), type: MIME[path.extname(file)] });
+  return files;
+}
+export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, merchantPort = 8908, recipient = '0', catalog = { 'test-purchase': '100000' }, checkpointPath, ordersPath, archivePath, onRegtestBid, onSponsorRegistration, registrationService, publicOrigins, onPorts, ownNode, trustedProxies = [], upgradeCheck = {}, onUpgradeNotice = event => (event.level === 'error' ? console.error : console.warn)(JSON.stringify(event)), onRefusal = event => console.error(JSON.stringify(event)) }) {
+  // `trustedProxies`: the loopback addresses of this machine's own reverse proxy, which writes the caller's address in
+  // X-Forwarded-For (askerOf). Only for its requests, and only for the limits, is that header read. This server
+  // answers 127.0.0.1 only, so that is the one address that can ever match.
+  if(!Array.isArray(trustedProxies)||trustedProxies.some(address=>typeof address!=='string'||!isLoopback(address))||typeof onRefusal!=='function')throw Error('trustedProxies lists loopback addresses of your own reverse proxy, such as 127.0.0.1; onRefusal is a function');
+  const proxies=new Set(trustedProxies.map(normalIp));
   // `registrationService`: the origin of a service that sponsors the registration of a new account, such as the
   // faucet of a test network (deploy/faucet/README.md, "Sponsored registrations"). The gateway holds no key for it
   // and never calls it: it only tells the wallet page where it is and lets that page connect there. HTTPS, or
@@ -95,7 +189,19 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     getItem:async()=>{try{return await readFile(checkpointPath,'utf8');}catch(e){if(e.code==='ENOENT')return null;throw e;}},
     setItem:async(_,serialized)=>{checkpointWrites=checkpointWrites.catch(()=>{}).then(async()=>{const file=await open(checkpointPath+'.tmp','w',0o600);try{await file.writeFile(serialized);await file.sync();}finally{await file.close();}await rename(checkpointPath+'.tmp',checkpointPath);});await checkpointWrites;},
   }:undefined;
-  const light=createLightClient({trust:manifest.trust,verifier:installedVerifier,storage,fetchBlock:height=>fetchLightBlock({rpc,height})});
+  // ---- The line of checks (GATEWAY_LIMITS.verifying). Every step of the light client (which checks one at a time for
+  // both origins) and every check of the verifier on behalf of a request waits its turn in a fair line: the caller with
+  // fewest checks under way goes first, and when the line is full the one that asks most is refused (503 GATEWAY_BUSY,
+  // Retry-After). What is verified does not change. Who asks is the store of `asking`, set for each request; the
+  // gateway's own work (the look for an upgrade, the archive of receipts) runs outside any request, outside the line.
+  // The light client is given the verifier itself: its own checks run inside the step that waited.
+  const asking=new AsyncLocalStorage(),V=GATEWAY_LIMITS.verifying;
+  const busy=()=>Object.assign(new Error(BUSY_SENTENCE),{code:GATEWAY_BUSY,httpStatus:503,retryAfter:V.retryAfterSeconds});
+  const line=createFairLine({slots:V.slots,size:V.size,callerShare:V.callerShare,networkShare:V.networkShare,waitMs:V.waitMs,busy});
+  const inLine=step=>(...given)=>line.run(asking.getStore(),()=>step(...given));
+  const lightClient=createLightClient({trust:manifest.trust,verifier:installedVerifier,storage,fetchBlock:height=>fetchLightBlock({rpc,height})});
+  const light=Object.freeze({...lightClient,ready:inLine(lightClient.ready),updateTo:inLine(lightClient.updateTo),updateToBlock:inLine(lightClient.updateToBlock)});
+  const verifier=Object.freeze({verifyViewProof:inLine(installedVerifier.verifyViewProof),verifyReceipt:inLine(installedVerifier.verifyReceipt),verifyFastReceipt:inLine(installedVerifier.verifyFastReceipt)});
   async function getStateProof(query={}){
     // Native and verifier independently enforce exact fields, counts and types.
     const arrays=['names','ids','public_keys','owners','candidates','epochs','blocks'],flags=['include_pos','include_bitcoin','include_policy','include_security','include_upgrade'];
@@ -108,7 +214,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
   }
   async function verifyProof(proof,query){
     await light.ready();await light.updateToBlock(proof.light_block);
-    return installedVerifier.verifyViewProof(proof,light.getTrust(),query);
+    return verifier.verifyViewProof(proof,light.getTrust(),query);
   }
   // The action fee is a setting of the network's genesis (`fee_micros`, left out for the
   // protocol-4 fee) and never changes. /api/network reports it once this gateway has verified a
@@ -250,7 +356,8 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
   const archiving=new Set();
   function archiveLater(hash){
     const key=hash.toUpperCase();if(archiving.has(key)||archiving.size>=256)return;archiving.add(key);
-    (async()=>{for(const delay of [2000,6000,20000]){await pause(delay);if(closed)break;try{const proof=await getReceipt(key,{canonical:true});if(!proof.pending)break;}catch{}}archiving.delete(key);})();
+    // The gateway's own work, outside the request that started it: not that caller's share of the line of checks.
+    asking.exit(()=>(async()=>{for(const delay of [2000,6000,20000]){await pause(delay);if(closed)break;try{const proof=await getReceipt(key,{canonical:true});if(!proof.pending)break;}catch{}}archiving.delete(key);})());
   }
   // Returns null when the block is not final yet for this gateway, or too far below
   // its checkpoint for a short header chain (the canonical receipt then applies).
@@ -269,7 +376,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     const top=BigInt(checkpoint.height);if(top-height>=BigInt(FAST_HEADERS))return null;
     const headers=[];for(let h=height;h<top;h++)headers.push(recent.get(h)?.header||(await rpc('/header',{height:h.toString()})).header);
     headers.push(checkpoint.block.signed_header.header);
-    const checked=await installedVerifier.verifyFastReceipt({tx,headers},trust);
+    const checked=await verifier.verifyFastReceipt({tx,headers},trust);
     if(checked.verified!==true||checked.executionVerified!==true||checked.txHash.toLowerCase()!==hash.toLowerCase())throw Error('Receipt proof does not match the requested transaction');
     archiveLater(hash);
     return {fast:true,tx,headers,light_block:checkpoint.block};
@@ -303,7 +410,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     const anchor=await getStateProof({blocks});
     if(BigInt(anchor.height)<BigInt(blocks[1]))return {pending:true,hash:hash.toUpperCase()};
     const proof={tx,signed_header:signed.signed_header,next_signed_header:next.signed_header,anchor};
-    await light.ready();await light.updateToBlock(anchor.light_block);const bound=await installedVerifier.verifyReceipt(proof,light.getTrust());if(bound.txHash.toLowerCase()!==hash.toLowerCase())throw Error('Receipt proof does not match the requested transaction');
+    await light.ready();await light.updateToBlock(anchor.light_block);const bound=await verifier.verifyReceipt(proof,light.getTrust());if(bound.txHash.toLowerCase()!==hash.toLowerCase())throw Error('Receipt proof does not match the requested transaction');
     const evidence={tx:{hash:tx.hash,height:tx.height,index:tx.index,tx:tx.tx,proof:tx.proof},signed_header:signed.signed_header,next_signed_header:next.signed_header};
     await archive.putReceipt(hash,evidence);return proof;
   }
@@ -311,7 +418,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     await light.ready();let last;
     for(let attempt=0;attempt<4;attempt++)try{
       const proof=await getReceipt(hash,{canonical:true});if(proof.pending)throw Error('Payment is awaiting canonical finality');
-      await light.updateToBlock(proof.anchor.light_block);const checked=await installedVerifier.verifyReceipt(proof,light.getTrust());
+      await light.updateToBlock(proof.anchor.light_block);const checked=await verifier.verifyReceipt(proof,light.getTrust());
       const raw=Buffer.from(checked.rawHex,'hex'),action=SDK.decodeAction(raw),computed=await SDK.transactionHash(raw);
       if(checked.verified!==true||checked.executionVerified!==true||checked.txHash.toUpperCase()!==computed||computed!==hash.toUpperCase()||action.networkId!==manifest.networkId)throw Error('Receipt verification failed');
       return {...checked,hash:computed,action,networkId:action.networkId,code:0};
@@ -365,7 +472,9 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       if (Object.keys(payload).join(',') !== 'tx' || typeof payload.tx !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload.tx)) throw new Error('Invalid signed transaction');
       const raw = Buffer.from(payload.tx, 'base64'); if (raw.length > 512*1024+512 || raw.length < 64 || raw.toString('base64') !== payload.tx) throw new Error('Invalid transaction encoding');
       const result = await rpc('/broadcast_tx_sync', { tx: '0x' + raw.toString('hex') });
-      if (Number(result.code || 0)) throw new Error(result.log || 'Transaction rejected by CheckTx');
+      // The node's reason is passed on (the wallet reads it, as its gateway's words: publicError), as one line of
+      // visible text.
+      if (Number(result.code || 0)) throw new Error(String(result.log || 'Transaction rejected by CheckTx').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, ' ').trim() || 'Transaction rejected by CheckTx');
       json(response, 200, { hash: result.hash, pending: true }); return true;
     }
     return false;
@@ -389,11 +498,16 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       const page = blog.list(before === null ? {} : { before }), mark = supporterMark();
       json(response, 200, { posts: page.posts.map(mark), more: page.more, limits: blogLimits() }); return true;
     }
-    if (request.method === 'POST' && ['/api/logout', '/api/order', '/api/order/settle', '/api/posts', '/api/posts/delete'].includes(url.pathname)) {
+    // Signing out reads nothing of the chain: the session is deleted as it is kept, also when the chain cannot be read.
+    if (request.method === 'POST' && url.pathname === '/api/logout') {
+      requireOrigin(request, merchantOrigin); const session = login.session(cookie(request, sessionCookie)); if (!session) { json(response, 401, { error: 'Sign in first' }); return true; }
+      login.checkCsrf(session, request.headers['x-csrf-token']); await body(request);
+      login.logout(cookie(request, sessionCookie)); json(response, 200, { ok: true }, { 'Set-Cookie': setCookie(sessionCookie, '', 0) }); return true;
+    }
+    if (request.method === 'POST' && ['/api/order', '/api/order/settle', '/api/posts', '/api/posts/delete'].includes(url.pathname)) {
       requireOrigin(request, merchantOrigin); const current = await login.current(cookie(request, sessionCookie)); if (!current) { json(response, 401, { error: 'Sign in first' }); return true; }
       login.checkCsrf(current.session, request.headers['x-csrf-token']); const payload = await body(request);
-      if (url.pathname === '/api/logout') { login.logout(cookie(request, sessionCookie)); json(response, 200, { ok: true }, { 'Set-Cookie': setCookie(sessionCookie, '', 0) }); }
-      else if (url.pathname === '/api/order') json(response, 200, await orders.issue(current.session.accountId, priceOf(catalog, payload.item)));
+      if (url.pathname === '/api/order') json(response, 200, await orders.issue(current.session.accountId, priceOf(catalog, payload.item)));
       else if (url.pathname === '/api/order/settle') json(response, 200, await orders.fulfill(current.session.accountId, payload.orderId, payload.hash));
       else {
         const only = key => { if (!payload || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).join(',') !== key) throw new Error(`Expected a JSON object with the one field "${key}"`); };
@@ -412,42 +526,82 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
   // verified the payment (server-auth.mjs, fulfill). Asked once per account for a list.
   function supporterMark() { const known = new Map(); return post => { if (!known.has(post.accountId)) known.set(post.accountId, orderRepository.paidBy(post.accountId)); return { ...post, supporter: known.get(post.accountId) }; }; }
   const blogLimits = () => ({ maxChars: blog.limits.maxChars, perAccount: blog.limits.perAccount, hours: blog.limits.windowMs / 3600000, keep: blog.limits.keep });
+  // The page's files: only those of the list made at start (pageFiles), by their exact path. Server modules and the
+  // tests are never on it. A file that cannot be read is a fixed 404 or 500; what the system said goes to the log.
   async function serveStatic(response, url, role) {
-    let pathname = decodeURIComponent(url.pathname); let location; let allowedBase;
-    if (pathname.includes('\\') || pathname.includes('\0')) { json(response, 404, { error: 'Not found' }); return; }
+    let pathname; try { pathname = decodeURIComponent(url.pathname); } catch { json(response, 404, { error: 'Not found' }); return; }
     if (role === 'wallet' && pathname.startsWith('/wallet/')) pathname = pathname.slice('/wallet'.length);
     if(pathname==='/trust-manifest.json'&&role==='wallet'){json(response,200,manifest.trust);return;}
-    if (pathname === '/sdk/proof-verifier.js') { allowedBase = path.join(root, 'client-v4'); location = path.join(allowedBase, 'proof-verifier.mjs'); }
-    else if (pathname === '/sdk/time-sdk.js') { allowedBase = path.join(root, 'client-v4'); location = path.join(allowedBase, 'time-sdk.js'); }
-    else if (pathname==='/sdk/light-client.mjs') {allowedBase=path.join(root,'client-v4');location=path.join(allowedBase,'light-client.mjs');}
-    else if (pathname==='/sdk/account-security.mjs') {allowedBase=path.join(root,'client-v4');location=path.join(allowedBase,'account-security.mjs');}
-    else if (pathname.startsWith('/sdk/')) { json(response, 404, { error: 'Not found' }); return; }
-    else if (pathname.startsWith('/web-v4/shared/')) { allowedBase = path.join(root, 'web-v4', 'shared'); location = path.resolve(root, '.' + pathname); }
-    else { if (pathname === '/' || pathname === '/approve') pathname = '/index.html'; allowedBase = path.join(root, 'web-v4', role); location = path.resolve(allowedBase, '.' + pathname); }
-    if (!location.startsWith(allowedBase + path.sep) || !MIME[path.extname(location)] || path.extname(location) === '.json' && allowedBase !== path.join(root, 'web-v4', 'shared')) { json(response, 404, { error: 'Not found' }); return; }
-    // Server modules and their security tests are never exposed as browser assets.
-    if (location.includes(path.sep + 'tests' + path.sep) || location.endsWith('.test.mjs')) { json(response, 404, { error: 'Not found' }); return; }
-    try { const content = await readFile(location); response.writeHead(200, { 'Content-Type': MIME[path.extname(location)] }); response.end(content); } catch (error) { if (error.code !== 'ENOENT') throw error; json(response, 404, { error: 'Not found' }); }
+    if (pathname === '/' || pathname === '/approve') pathname = '/index.html';
+    const file = pages[role].get(pathname);
+    if (!file) { json(response, 404, { error: 'Not found' }); return; }
+    let content;
+    try { content = await readFile(file.location); } catch (error) { const gone = error?.code === 'ENOENT', said = { error: gone ? 'Not found' : 'The file could not be read' }; refused(error, said); json(response, gone ? 404 : 500, said); return; }
+    response.writeHead(200, { 'Content-Type': file.type }); response.end(content);
   }
-  const servers = [];
+  // What a caller was not told: the full words of a refusal whose words were replaced, on the error log (onRefusal), at
+  // most 60 lines a minute.
+  let told={minute:0,lines:0};
+  function refused(error,said){const minute=Math.floor(Date.now()/60000);if(told.minute!==minute)told={minute,lines:0};if(++told.lines>60)return;try{onRefusal({event:'REFUSAL_WORDS_REPLACED',said:said.error,detail:String(error?.message??error).slice(0,500)});}catch{}}
+  const servers = [], pages = { wallet: await pageFiles(root, 'wallet'), merchant: await pageFiles(root, 'merchant') };
+  // Who asks, for the limits only, never for a decision about what may be done. Only when this gateway was told the
+  // address of its own reverse proxy (trustedProxies) and the request comes from that address, a loopback one, is the
+  // right-most address of X-Forwarded-For, the one that proxy wrote, the caller. In no other case is a forwarded header
+  // read: without trustedProxies every request is the same caller, as it was before 24 November 2026, and a request
+  // from that proxy without an address in the header is the proxy's own.
+  function askerOf(request) {
+    if (!proxies.size) return null;
+    const peer = normalIp(request.socket.remoteAddress);
+    if (peer === null || !isLoopback(peer) || !proxies.has(peer)) return { caller: callerKey(peer), network: null };
+    const address = normalIp(String(request.headers['x-forwarded-for'] ?? '').split(',').at(-1));
+    return address === null ? { caller: callerKey(peer), network: null } : { caller: callerKey(address), network: networkKey(address) };
+  }
   async function start(role, preferred) {
-    const rates = new Map(); let origin;
+    const rates = new Map(), L = GATEWAY_LIMITS, callers = createBuckets({ ...L.perCaller.caller }), networks = createBuckets({ ...L.perCaller.network }); let origin;
+    // A caller's work, per caller and per /48 (only when callers are told apart): both must have a token left, else the
+    // milliseconds until both have. The /48 first, so that what it refuses never reaches the table of its /64s.
+    const workWait = who => {
+      const network = who.network ? networks.wait(who.network) : 0; if (network) return network;
+      const caller = callers.wait(who.caller); if (caller) return caller;
+      callers.take(who.caller); if (who.network) networks.take(who.network); return 0;
+    };
     const server = http.createServer(async (request, response) => {
       response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff'); response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('X-Frame-Options', 'DENY'); response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-      // The wallet page may connect to its own origin and, when one is configured, to the registration service.
-      response.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'${role === 'wallet' && registrationService ? ' ' + registrationService : ''}; img-src 'self' data:; font-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
-      try {
+      // The wallet page may connect to its own origin and, when one is configured, to the registration service. It
+      // alone has a web app manifest (web-v4/wallet/manifest.webmanifest, for a phone's Home Screen), from its own origin.
+      response.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'${role === 'wallet' && registrationService ? ' ' + registrationService : ''}; img-src 'self' data:; font-src 'self'; worker-src 'self' blob:;${role === 'wallet' ? " manifest-src 'self';" : ''} frame-ancestors 'none'; base-uri 'none'; form-action 'self'`);
+      response.setHeader('Permissions-Policy', PERMISSIONS_POLICY[role]);
+      // The wallet's pages keep no tie to a page that opened them, which could otherwise send the wallet's tab to a
+      // look-alike later; except /approve, the window a website opens to ask for a sign-in or a payment, which answers
+      // its opener by postMessage (web-v4/merchant/app.js, TimeSDK.requestWallet; the wallet's setupApproval).
+      if (role === 'wallet' && String(request.url).split('?')[0] !== '/approve') response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      const who = askerOf(request);
+      await asking.run(who ?? { caller: null, network: null }, async () => { try {
         if (request.headers.host !== new URL(origin).host || request.socket.remoteAddress !== '127.0.0.1') { json(response, 403, { error: 'Loopback host rejected' }); return; }
         if (!['GET', 'POST'].includes(request.method)) { json(response, 405, { error: 'Method not allowed' }); return; }
         if (request.headers.origin && request.headers.origin !== origin) { json(response, 403, { error: 'Cross-origin request rejected' }); return; }
-        const second = Math.floor(Date.now() / 1000); const count = (rates.get(second) || 0) + 1; rates.clear(); rates.set(second, count); if (count > 50) { json(response, 429, { error: 'Local request limit reached' }); return; }
         const url = new URL(request.url, origin);
+        // Two limits a second for everyone together: one for what asks the node or a store (every /api/ route and
+        // every POST), one for the page's own files, which are only read from the disk. Opening the wallet asks for
+        // about forty files; while files counted against the first, two openings in the same second left a page with
+        // some of its parts refused, which never started and said nothing (seen in a real browser on 2026-11-23). When
+        // callers are told apart, the work of each is limited first, and only what passes counts for everyone
+        // (GATEWAY_LIMITS).
+        const work = request.method !== 'GET' || url.pathname.startsWith('/api/'), kind = work ? 'work' : 'file', second = Math.floor(Date.now() / 1000);
+        if (work && who) { const wait = workWait(who); if (wait) { const refused = limitRefusal(RATE_LIMITED, wait / 1000); json(response, 429, refused.body, refused.headers); return; } }
+        if (rates.get('second') !== second) { rates.clear(); rates.set('second', second); }
+        const count = (rates.get(kind) || 0) + 1; rates.set(kind, count);
+        if (count > (who ? (work ? L.perCaller.work : L.perCaller.files) : (work ? L.work : L.files))) { const refused = limitRefusal(RATE_LIMITED, 1); json(response, 429, refused.body, refused.headers); return; }
         if (role === 'wallet' && await chainRoute(request, response, url)) return;
         if (role === 'merchant' && await merchantRoute(request, response, url)) return;
         if (url.pathname.startsWith('/api/')) { json(response, 404, { error: 'Unknown API route' }); return; }
         if (request.method !== 'GET') { json(response, 405, { error: 'Method not allowed' }); return; }
         await serveStatic(response, url, role);
-      } catch (error) { if (!response.headersSent) json(response, 400, errorBody(error)); else response.destroy(); }
+      } catch (error) {
+        const { body: said, replaced, status } = publicError(error);
+        if (replaced) refused(error, said);
+        if (!response.headersSent) json(response, status ?? error?.httpStatus ?? 400, said, error?.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {}); else response.destroy();
+      } });
     });
     server.requestTimeout = 10000; server.headersTimeout = 5000; server.maxRequestsPerSocket = 100;
     async function listen(port) { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); }); }); }
@@ -471,6 +625,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     } : async () => { throw new Error('Durable order storage is not configured'); } });
     await onPorts?.({ walletOrigin, merchantOrigin,walletListenOrigin:listeners.wallet,merchantListenOrigin:listeners.merchant });
     scheduleUpgradeCheck(upgradeCheck.firstMs);
-    return { walletOrigin, merchantOrigin,walletListenOrigin:listeners.wallet,merchantListenOrigin:listeners.merchant, nodesReportUpgrades:reportsUpgrades, getStateProof, verifiedState, verifiedView: verifiedState, getReceipt, verifiedReceipt, checkUpgrade, close };
+    const verificationLine=()=>line.status();
+    return { walletOrigin, merchantOrigin,walletListenOrigin:listeners.wallet,merchantListenOrigin:listeners.merchant, verificationLine, nodesReportUpgrades:reportsUpgrades, getStateProof, verifiedState, verifiedView: verifiedState, getReceipt, verifiedReceipt, checkUpgrade, close };
   } catch (error) { await close(); throw error; }
 }

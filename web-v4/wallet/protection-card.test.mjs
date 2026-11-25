@@ -53,7 +53,7 @@ const HIDDEN = [...page.matchAll(/<[a-z0-9]+\b[^>]*>/g)].map(found => found[0]).
 globalThis.document = { getElementById: $, createElement: tag => new El(tag), querySelectorAll: selector => (selector === '.workspace-panel' ? PANELS.map(name => $('panel-' + name)) : []), addEventListener() {}, body: { append() {}, classList: { add() {}, remove() {} } }, title: '' };
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new Proxy(storage, { ownKeys: t => [...t.m.keys()], getOwnPropertyDescriptor: (t, k) => t.m.has(k) ? { enumerable: true, configurable: true, value: t.m.get(k) } : Reflect.getOwnPropertyDescriptor(t, k), get: (t, k) => typeof t[k] === 'function' ? t[k].bind(t) : t[k] }) });
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: { request: (name, options, fn) => fn() }, clipboard: { writeText: async () => {} } } });
-globalThis.window = { addEventListener() {}, opener: null };
+globalThis.window = { addEventListener() {}, opener: null, print() {} };
 globalThis.location = { origin: 'https://wallet.example', pathname: '/' };
 globalThis.isSecureContext = true;
 globalThis.hashwasm = { argon2id };
@@ -127,7 +127,8 @@ globalThis.fetch = async (url, options = {}) => {
 };
 
 // ------------------------------------------------------------------ the wallet: alice with one key, carol_p protected
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const aliceKey = await newDevice(), login = await newDevice(), spend = await newDevice(), phrase = await newDevice();
 // A recovery sheet as the wallet makes one: its words on paper, and the key they give.
 const sheetSeed = F.newSheetSeed(), SHEET = await F.encodeSheet(sheetSeed), sheet = await F.keyFromSeed(sheetSeed);
@@ -137,9 +138,9 @@ const LIMIT = 600000000n;
 chain.accounts.push({ id: '14', name: 'carol_p', balance: '9000000', nonce: '7', auth_epoch: '2', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }] });
 const freshRow = () => ({ account: '14', version: '1', policy: { threshold: '2', daily_limit_micros: LIMIT.toString(), delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: LIMIT.toString(), allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null });
 chain.security['14'] = freshRow();
-const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealVault({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
+const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealLegacy({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
 await vault('alice', aliceKey); await vault('carol_p', login);
-storage.setItem(`timecurrency.spend-vault.v1:${NET}:carol_p`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET, name: 'carol_p', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+storage.setItem(`timecurrency.spend-vault.v1:${NET}:carol_p`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET, name: 'carol_p', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
 const pauseRecord = () => { const raw = storage.getItem(P.pauseKey(NET, 'carol_p')); return raw === null ? null : JSON.parse(raw); };
 const mine = () => chain.security['14'];
 const postedBy = action => (action.publicKey === spend.publicKey ? 'payment key' : action.publicKey === sheet.publicKey ? 'recovery sheet' : action.publicKey === login.publicKey ? 'login key' : 'another key');
@@ -210,7 +211,7 @@ test('the page: the card is on Home with real switches, their labels and one sen
   // Freeze, the end of a freeze and the daily limit are in the card, and nowhere else.
   for (const id of ['freeze-form', 'unfreeze-form', 'limit-form', 'pause-form', 'resume-step']) assert.equal(page.split(`id="${id}"`).length - 1, 1, id);
   for (const id of ['freeze-form', 'unfreeze-form', 'limit-form']) assert.ok(home.includes(`id="${id}"`) && !change.includes(`id="${id}"`), id);
-  assert.deepEqual([...change.matchAll(/<h3>([^<]+)<\/h3>/g)].map(found => found[1]).filter(title => /^New /.test(title)), ['New login password', 'New recovery papers', 'New payment password']);
+  assert.deepEqual([...change.matchAll(/<h3>([^<]+)<\/h3>/g)].map(found => found[1]).filter(title => /^New /.test(title)), ['New login password', 'New recovery words', 'New payment password']);
   assert.doesNotMatch(change, /Freeze my account|<h3>Daily limit<\/h3>/);
   // The card and every step of it are hidden until the script has read the account.
   for (const id of ['protect-card', 'protect-none', 'protect-on', 'freeze-form', 'unfreeze-form', 'limit-form', 'pause-form', 'resume-step', 'freeze-more']) assert.ok(HIDDEN.includes(id), id);
@@ -235,7 +236,8 @@ test('an account that is not protected yet: Home says so with one button, which 
   assert.deepEqual([$('tab-home').textContent, $('send-payment-wrap').hidden, $('security-inbox-card').hidden], ['Home', true, true]);
   // The button: Keys, with the form open and the focus on its first field.
   await $('protect-start').fire('click');
-  assert.deepEqual([$('panel-security').hidden, $('panel-home').hidden, $('secure-open').open, focused], [false, true, true, 'secure-login']);
+  // This stand-in page cannot lock keys to a device: the wallet makes the passwords, and the first field is the limit.
+  assert.deepEqual([$('panel-security').hidden, $('panel-home').hidden, $('secure-open').open, focused, $('secure-chosen').hidden], [false, true, true, 'secure-limit', true]);
   // The daily limit is there already, and said in words; both come from one constant.
   assert.equal(F.DEFAULT_DAILY_LIMIT_SECONDS, '600');
   assert.deepEqual([$('secure-limit').value, $('secure-limit-suggested').textContent], ['600', 'Suggested: 10 minutes of seconds a day (600). Change it if you like.']);
@@ -249,14 +251,14 @@ test('an account that is not protected yet: Home says so with one button, which 
   for (const id of ['secure-payment', 'secure-payment-confirm']) $(id).value = PAYMENT;
   $('secure-delay').value = $('secure-freeze').value = '48'; $('secure-threshold').value = '2';
   $('notice').textContent = ''; await $('secure-form').fire('submit');
-  await until(() => $('secure-sheet').textContent.length > 20 || $('notice').className.includes('error'), 'the recovery papers');
-  assert.match($('secure-sheet').textContent, /^([0-9A-Z]{4} ){13}[0-9A-Z]{4}$/, $('notice').textContent);
-  const groups = $('secure-sheet').textContent.split(' '), words = $('secure-phrase-shown').textContent;
-  await $('secure-sheet-done').fire('click');
-  // The papers are still asked back before anything is signed.
-  assert.deepEqual([$('secure-sheet').textContent, $('secure-confirm-step').hidden], ['', false]);
-  for (const id of ['secure-confirm-a', 'secure-confirm-b']) $(id).value = groups[Number($(id + '-label').textContent.replace('Group ', '')) - 1];
-  $('secure-confirm-phrase').value = words;
+  // The passwords the wallet made come first, in their dialog, before the words (the rule, vault.mjs RULE).
+  await until(() => $('made-dialog').open || $('notice').className.includes('error'), 'the passwords the wallet made');
+  assert.deepEqual([/^[a-z]{6}(-[a-z]{6}){3}$/.test($('made-login-shown').textContent), /^[a-z]{6}(-[a-z]{6}){3}$/.test($('made-payment-shown').textContent)], [true, true], $('notice').textContent);
+  $('made-dialog').returnValue = 'done'; $('made-dialog').open = false; await $('made-dialog').fire('close');
+  await until(() => $('secure-phrase-shown').textContent.length > 20 || $('notice').className.includes('error'), 'the recovery words');
+  assert.match($('secure-phrase-shown').textContent, /^[a-z]{6}( [a-z]{6}){4}$/, $('notice').textContent);
+  // The step: the five words, and the button that goes on, from the start. Nothing is asked back: the review comes next.
+  assert.deepEqual([$('secure-submit').hidden, $('notice').textContent], [false, 'Write down your recovery words. They are shown only now.']);
   const running = await reviewAfter(() => $('secure-submit').fire('click')), seen = await cancel(); await running();
   assert.equal(seen.title, 'Protect my account');
   assert.match(seen.fields.Payments, /^Up to 600 seconds at once with your payment password, fees included\. The limit refills over 24 hours, so up to about 1200 seconds can leave in any 24 hours\. More waits 48 hours, or needs a recovery paper too\.$/);
@@ -319,7 +321,7 @@ test('"Change" opens the limit change, which says before anything is confirmed w
   assert.deepEqual([mine().policy.daily_limit_micros, mine().pending_limit.daily_limit_micros], ['300000000', '600000000']);
   assert.match(card().limit, / A raise to 600 seconds is waiting: it applies at /);
   assert.deepEqual([card().waiting, $('tab-home').textContent, $('security-inbox-card').hidden], ['1 change is waiting. See “Waiting on your account” below: each can be cancelled.', 'Home (1)', false]);
-  await $('limit-open').fire('click'); await says('600', SHEET); $('limit-payment').value = PAYMENT; $('limit-method').value = 'sheet';
+  await $('limit-open').fire('click'); await says('600', SHEET); $('limit-payment').value = PAYMENT; 
   running = await reviewAfter(() => $('limit-form').fire('submit')); seen = await confirm(); await running();
   assert.deepEqual([seen.title, seen.confirm, seen.fields['Approved by']], ['Raise the daily limit now', 'Raise the limit now', 'Your payment password and one recovery paper']);
   assert.equal(seen.fields.Also, 'What is waiting on your account (1 change) is cancelled. Websites sign you out.');
@@ -377,7 +379,9 @@ test('pause on: the switch asks for the payment password only, signs a limit of 
   assert.deepEqual([chain.posted.at(-1).kind, chain.posted.at(-1).payload, mine().pending_payments.length, row('bob').balance], [75, { type: 'request', to: '2', amount: '500000' }, 1, bob]);
   // It is listed under the card with its "Cancel", and counted on Home.
   assert.deepEqual([card().waiting, $('tab-home').textContent, $('security-inbox-card').hidden, $('inbox-keys').hidden], ['1 payment is waiting. See “Waiting on your account” below: each can be cancelled.', 'Home (1)', false, false]);
-  assert.match(waitingRows()[0], /^Waiting payment: 0\.5 seconds to account 2 Can be sent after /);
+  // The name of the account it goes to is read with a proof; this browser's own record says it was started here (W-5).
+  await until(() => /@bob/.test(waitingRows()[0]), 'the name of the account the payment goes to');
+  assert.match(waitingRows()[0], /^Waiting payment: 0\.5 seconds to @bob · account 2 Can be sent after .* Started in this browser\.$/);
   assert.equal(cancelButton('Waiting payment').textContent, 'Cancel');
   // The fee of that step used what the paused limit covers in a day: the card says when the next one fits.
   assert.match($('pause-note').textContent, /^Nothing can be paid at once\. A payment started now waits 48 hours and you can cancel it\. Starting one costs a fee, and your paused limit covers one fee a day: the next one in about 24 hours\.$/);
@@ -412,7 +416,7 @@ test('pause off: the limit that was is offered again, by waiting or at once with
   // The other way, at once: the payment password and one recovery paper.
   await flip('pause-switch');
   assert.deepEqual([steps(), $('resume-amount').value], [['resume-step'], '600']);
-  $('resume-payment').value = PAYMENT; $('resume-method').value = 'sheet'; $('resume-secret').value = SHEET;
+  $('resume-payment').value = PAYMENT; $('resume-secret').value = SHEET;
   running = await reviewAfter(() => $('resume-now').fire('click')); seen = await confirm(); await running();
   assert.deepEqual([seen.title, seen.confirm], ['End the pause now with a recovery paper', 'End the pause now']);
   assert.deepEqual(seen.fields, { 'Daily limit': '600 seconds a day, at once (now 0.001 seconds)', 'Approved by': 'Your payment password and one recovery paper',
@@ -487,7 +491,7 @@ test('the freeze switch: on at once with the payment password or a recovery pape
   await $('freeze-again').fire('click');
   assert.deepEqual(steps(), ['freeze-form']);
   // This time with a recovery paper alone: it freezes too.
-  $('freeze-method').value = 'sheet'; $('freeze-secret').value = SHEET;
+  $('freeze-method').value = 'paper'; $('freeze-secret').value = SHEET;
   running = await reviewAfter(() => $('freeze-form').fire('submit')); await confirm(); await running();
   assert.deepEqual([chain.posted.at(-1).kind, postedBy(chain.posted.at(-1)), mine().freezes, BigInt(mine().frozen_until_elapsed_micros)], [72, 'recovery sheet', '2', chain.now - 1000000n + 172800000000n]);
   // Switching it off: the switch stays on, and "End the freeze" asks for the payment password and one recovery paper.
@@ -495,7 +499,7 @@ test('the freeze switch: on at once with the payment password or a recovery pape
   assert.deepEqual([$('freeze-switch').checked, steps(), focused], [true, ['unfreeze-form'], 'unfreeze-payment']);
   await $('unfreeze-cancel').fire('click'); await $('unfreeze-open').fire('click');
   assert.deepEqual(steps(), ['unfreeze-form']);
-  $('unfreeze-payment').value = PAYMENT; $('unfreeze-method').value = 'sheet'; $('unfreeze-secret').value = SHEET;
+  $('unfreeze-payment').value = PAYMENT; $('unfreeze-secret').value = SHEET;
   running = await reviewAfter(() => $('unfreeze-form').fire('submit')); seen = await confirm(); await running();
   assert.deepEqual([seen.title, seen.fields['Approved by'], chain.posted.at(-1).kind, chain.posted.at(-1).payload.op.type, chain.posted.at(-1).payload.approvals.length, mine().frozen_until_elapsed_micros], ['Unfreeze account', 'Your payment password and one recovery key', 73, 'unfreeze', 2, '0']);
   assert.deepEqual([card().status, card().alert, card().freeze, $('freeze-more').hidden, steps(), $('unfreeze-payment').value, $('unfreeze-secret').value], ['Your account is protected.', false, [false, 'Off'], true, [], '', '']);

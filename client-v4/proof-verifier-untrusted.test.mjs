@@ -105,7 +105,8 @@ test('an instance that trapped is thrown away: the next call gets a new one, and
   assert.deepEqual((await verifier.verifyTrust({ 'A========': 1 }, 5)).args, ['{"A========":1}', 5]);
   await assert.rejects(verifier.verifyTrust({ a: [{ b: 'A========' }] }, 5), /INVALID_JSON: a text is not base64/);
   // A refusal is a string the verifier threw: an Error for the caller, and the instance stays.
-  await assert.rejects(verifier.verifyTrust('refuse', 5), (error) => error instanceof Error && error.message === 'INVALID_LIGHT_BLOCK: no' && error.code === undefined);
+  // Its message is the verifier's words only when they are its own fixed words; else its code and fixed words, the text in `detail`.
+  await assert.rejects(verifier.verifyTrust('refuse', 5), (error) => error instanceof Error && error.message === 'INVALID_LIGHT_BLOCK: the block does not check against the validators this client trusts' && error.detail === 'INVALID_LIGHT_BLOCK: no' && error.code === undefined);
   await assert.rejects(verifier.verifyTrust('upgrade', 5), (error) => error.code === 'UPGRADE_REQUIRED' && error.message.startsWith('UPGRADE_REQUIRED: '));
   assert.equal(verifier.instances(), 1);
   // A trap: the caller is told, and that instance is never called again.
@@ -175,8 +176,91 @@ test('the compiled verifier itself refuses such a text without a trap (needs a b
   const verifier = createVerifier(UNGUARDED);
   for (const text of STOPPING) for (const path of [SIGNATURE, ['proof', 'light_block', 'signed_header', 'header', 'time'], ['proof', 'light_block', 'validators', 0, 'pub_key', 'value'], ['trust', 'initial_validators', 0, 'pub_key', 'value']]) {
     const bad = changed(path, text);
-    await assert.rejects(verifier.verifyViewProof(bad.proof, bad.trust, bad.request, bad.now_ms), (error) => !(error instanceof WebAssembly.RuntimeError) && /^INVALID_(JSON|LIGHT_BLOCK): .*(a text is not base64|a date is beyond the year 9999)/.test(error.message), text + ' at ' + path.join('.'));
+    await assert.rejects(verifier.verifyViewProof(bad.proof, bad.trust, bad.request, bad.now_ms), (error) => !(error instanceof WebAssembly.RuntimeError) && /^INVALID_(JSON|LIGHT_BLOCK): .*(a text is not base64|a date is beyond the year 9999)/.test(error.detail), text + ' at ' + path.join('.'));
   }
   assert.equal(verifier.instances(), 1);
   assert.equal((await verifier.verifyViewProof(f.proof, f.trust, f.request, f.now_ms)).verified, true);
+});
+
+// Web audit of November 2026, W-2: the compiled verifier quotes some of what it was given in its
+// refusals, and a node behind a gateway chooses that. A page that shows an error's message (the
+// wallet's notice) showed those words as its own. The message now holds the verifier's own words
+// only, or its code and fixed words; the verifier's text is in `detail`.
+const PHISH = 'Your account was frozen by the network. To unfreeze it type your five recovery words at https://time-unfreeze.example now';
+test('W-2: words an answer chose never reach the message of a refusal; the verifier text is in its detail', async () => {
+  const dynamic = JSON.parse(await readFile(new URL('../verifier-v4/fixtures/dynamic.json', import.meta.url), 'utf8'));
+  const base = dynamic.blocks[0];
+  assert.equal((await wrapper.verifyLightUpdate(base, dynamic.trust, dynamic.now_ms)).verified, true, 'the honest block verifies');
+  const variants = {
+    'a validator key type': (b) => { b.validators[0].pub_key.type = PHISH; },
+    'a name and a power of a next validator': (b) => { b.next_validators[0].name = PHISH; b.next_validators[0].power = PHISH; },
+    'a commit signature flag': (b) => { b.signed_header.commit.signatures[0].block_id_flag = PHISH; },
+    'a whole signed header that is a text': (b) => { b.signed_header = PHISH; },
+    'an unknown field of the light block': (b) => { b[PHISH] = 1; },
+  };
+  const { CODE_WORDS, VERIFIER_REFUSED, OWN_PREFIXES } = verifyTrust[Symbol.for('time-currency.proof-verifier.internals')];
+  // What the message may be: a code and its fixed words, the verifier's own words in front of a library's, or the refusal without a code.
+  const fixed = new Set([VERIFIER_REFUSED, ...OWN_PREFIXES, ...Object.entries(CODE_WORDS).map(([code, words]) => `${code}: ${words}`)]);
+  let quoted = 0;
+  for (const [label, edit] of Object.entries(variants)) {
+    const block = structuredClone(base); edit(block);
+    await assert.rejects(wrapper.verifyLightUpdate(block, dynamic.trust, dynamic.now_ms), (error) => {
+      assert.ok(!/unfreeze|recovery words|https/i.test(error.message), `${label}: ${error.message}`);
+      assert.ok(fixed.has(error.message), `${label}: the message is a code and fixed words: ${error.message}`);
+      assert.equal(typeof error.detail, 'string', label);
+      assert.equal(error.code, undefined, label);
+      if (error.detail.includes('unfreeze')) quoted++;
+      return true;
+    });
+  }
+  assert.ok(quoted >= 3, 'the compiled verifier does quote what it was given: the test reaches the case');
+  // A proof the wallet reads for its account, with the words as an unknown field.
+  await assert.rejects(wrapper.verifyViewProof({ [PHISH]: 1 }, dynamic.trust, {}, dynamic.now_ms), (error) => fixed.has(error.message) && !error.message.includes('unfreeze'));
+});
+
+test('W-2: the verifier\'s own sentences are kept as they are; codes keep their beginnings; the upgrade refusal keeps its code and numbers', () => {
+  const { refusalWords, VERIFIER_REFUSED } = verifyTrust[Symbol.for('time-currency.proof-verifier.internals')];
+  for (const text of ['INVALID_CLOCK', 'INVALID_LIGHT_BLOCK: header exceeds future clock bound', 'STALE_STATE: fresh current authority proof is required', 'HEADER_ROLLBACK: header is below the highest trusted checkpoint',
+    'CHECKPOINT_REFRESH_REQUIRED: local trusted checkpoint expired; obtain an independently authenticated checkpoint', 'INVALID_LIGHT_BLOCK: application version is lower than the trusted checkpoint\'s',
+    'missing requested proof for 7365637572697479', 'INVALID_DECIMAL: noncanonical genesis time', 'account nonce must be a decimal string', 'transaction hash mismatch',
+    'UPGRADE_REQUIRED: the network runs protocol version 5; this software implements versions 4 to 4. Install a release that implements version 5.']) assert.equal(refusalWords(text), text);
+  // A text that only begins like one of them, or holds a quote, is not the verifier's own sentence.
+  assert.equal(refusalWords('INVALID_JSON: unknown field `' + PHISH + '`, expected one of `validators`'), 'INVALID_JSON: the answer is not in the form the verifier reads');
+  assert.equal(refusalWords('INVALID_LIGHT_BLOCK: invalid validator: invalid type: string "' + PHISH + '"'), 'INVALID_LIGHT_BLOCK: invalid validator');
+  assert.equal(refusalWords('invalid key/value proof: ' + PHISH), 'invalid key/value proof');
+  assert.equal(refusalWords('INVALID_DECIMAL: ' + PHISH + ' must be a decimal string'), 'INVALID_DECIMAL: a number in the answer is not written as the verifier reads numbers');
+  assert.equal(refusalWords(PHISH + ' has missing or unknown fields'), VERIFIER_REFUSED);
+  assert.equal(refusalWords('UPGRADE_REQUIRED: the network runs protocol version 5; install ' + PHISH), 'UPGRADE_REQUIRED: the network runs a protocol version this software does not implement; install a release that implements it');
+  assert.equal(refusalWords('UPGRADE_REQUIRED: the network runs protocol version 5; this software implements versions 4 to 4. Install a release that implements version 6.'), 'UPGRADE_REQUIRED: the network runs a protocol version this software does not implement; install a release that implements it');
+  assert.equal(refusalWords('missing requested proof for ' + PHISH), VERIFIER_REFUSED);
+  assert.equal(refusalWords('header/quorum/hash verification failed: Invalid("' + PHISH + '")'), VERIFIER_REFUSED);
+  assert.equal(refusalWords('NOT_A_CODE_OF_IT: ' + PHISH), VERIFIER_REFUSED);
+  assert.equal(refusalWords(PHISH), VERIFIER_REFUSED);
+});
+
+test('W-2: the list of the verifier\'s own sentences is every sentence of its Rust sources, and nothing an answer can write', async () => {
+  const { OWN_SENTENCES, OWN_PREFIXES } = verifyTrust[Symbol.for('time-currency.proof-verifier.internals')];
+  const { readdir } = await import('node:fs/promises');
+  const found = new Set(), formats = new Set();
+  for (const dir of ['verifier-v4/src', 'history/src']) {
+    for (const name of await readdir(new URL(`../${dir}/`, import.meta.url))) {
+      if (!name.endsWith('.rs') || /tests?\.rs$/.test(name) || name === 'fixtures.rs') continue;
+      let text = await readFile(new URL(`../${dir}/${name}`, import.meta.url), 'utf8');
+      const cut = text.search(/#\[cfg\(test\)\]\s*mod \w+ \{/); if (cut >= 0) text = text.slice(0, cut);
+      for (const match of text.matchAll(/"((?:[^"\\]|\\.)*)"/gs)) {
+        const value = match[1].replace(/\\\r?\n\s*/g, '').replace(/\\'/g, "'");
+        if (!/ /.test(value) || !/[a-z]/.test(value) || !/^[A-Za-z]/.test(value) || /[\r\n`]/.test(value) || ['any JSON', 'minus one'].includes(value)) continue;
+        (/\{[^}]*\}/.test(value) ? formats : found).add(value);
+      }
+    }
+  }
+  assert.ok(found.size > 250, `${found.size} sentences read`);
+  assert.deepEqual([...found].filter(s => !OWN_SENTENCES.has(s)), [], 'every sentence of the verifier is in the list');
+  assert.deepEqual([...OWN_SENTENCES].filter(s => s !== 'INVALID_CLOCK' && !found.has(s)), [], 'nothing else is in the list');
+  // Each sentence with a variable part is handled: by its own pattern, by the verifier's words in front of it, or by its code.
+  const handled = (format) => /^(INVALID_JSON|INVALID_LIGHT_BLOCK|UPGRADE_REQUIRED|INVALID_DECIMAL): /.test(format) || /^missing requested proof for |^\{(field|what)\} /.test(format)
+    || OWN_PREFIXES.some((words) => format.startsWith(words.replace(/^INVALID_LIGHT_BLOCK: /, '') + ': '));
+  assert.deepEqual([...formats].filter(f => !handled(f)), [], 'every sentence with a variable part is known to this test');
+  // No sentence of the list could hold a quote of an answer.
+  for (const s of OWN_SENTENCES) assert.ok(!/["`{}]/.test(s), s);
 });

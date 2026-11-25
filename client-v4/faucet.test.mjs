@@ -6,14 +6,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHash, generateKeyPairSync, sign as edSign } from 'node:crypto';
-import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
+import { createHash, createHmac, randomBytes, generateKeyPairSync, sign as edSign } from 'node:crypto';
+import { readFile, writeFile, mkdtemp, rm, stat, chmod, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import './time-sdk.js';
 import * as verifier from './proof-verifier.mjs';
 import { IndexerError } from './indexer.mjs';
-import { createFaucetService, callerKey, readSpendKey, createTxLookup, openFaucetStore, isTestChain, TEST_CHAINS, MAX_BODY_BYTES, DAY_MS, ROUTES } from './faucet.mjs';
+import { createFaucetService, callerKey, readSpendKey, createTxLookup, openFaucetStore, loadCallerKey, isTestChain, TEST_CHAINS, MAX_BODY_BYTES, DAY_MS, ROUTES } from './faucet.mjs';
 import { validateConfig, start } from '../deploy/faucet/start.mjs';
 import { seconds, describe } from '../web-v4/faucet/app.js';
 
@@ -167,13 +168,15 @@ const OPTIONS = () => ({
   storeSynchronous: 'OFF',
 });
 /// A faucet over a fake node. `reopen()` stops the service and starts another on the same store, as after a crash.
+/// The key of the hashes of who asked is kept in a file of the test's folder (`world.keyFile`), as the test network
+/// keeps it in /dev/shm: a restart finds it again.
 /// `day(world)` lets 24 hours and a second pass, on the chain and on the machine's clock.
 const day = (world, days = 1) => { world.node.elapsed += BigInt(days) * 86400000000n + 1000000n; world.clock += days * DAY_MS + 1000; world.node.mine(); };
 async function lab(run, options = {}, prepare = () => {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'time-faucet-'));
-  const node = fakeNode(), world = { node, clock: 1700000000000, logs: [], service: null };
+  const node = fakeNode(), world = { node, clock: 1700000000000, logs: [], service: null, directory, keyFile: path.join(directory, 'callers.key') };
   prepare(node);
-  const open = async (more = {}) => createFaucetService({ ...OPTIONS(), verifier, rpc: (...a) => node.rpc(...a), lookup: (...a) => node.lookup(...a), readState: (...a) => node.readState(...a), dataFile: path.join(directory, 'faucet.sqlite'), now: () => world.clock, log: (level, message, fields) => world.logs.push({ level, message, ...fields }), ...options, ...more });
+  const open = async (more = {}) => createFaucetService({ ...OPTIONS(), verifier, rpc: (...a) => node.rpc(...a), lookup: (...a) => node.lookup(...a), readState: (...a) => node.readState(...a), dataFile: path.join(directory, 'faucet.sqlite'), callerKeyFile: world.keyFile, now: () => world.clock, log: (level, message, fields) => world.logs.push({ level, message, ...fields }), ...options, ...more });
   try {
     world.service = await open();
     world.reopen = async (more) => { await world.service.close(); world.service = await open(more); };
@@ -384,6 +387,14 @@ test('it starts on a test network only: the statement, the network id, and the n
     [{ sponsor_registrations: undefined }, /sponsor_registrations/], [{ cors_origins: ['*'] }, /no wildcard/], [{ trusted_proxies: ['proxy.example'] }, /IP addresses/], [{ surprise: 'hunter2-secret-value' }, /Unknown config setting \(1\)/],
   ]) {
     assert.throws(() => validateConfig({ ...config, ...change }), (error) => expected.test(error.message) && !error.message.includes('hunter2') && !error.message.includes(NETWORK), JSON.stringify(Object.keys(change)));
+  }
+  // The file of the key of the hashes of who asked: optional, an absolute path, never in the data directory (a copy of
+  // the directory would hold the key beside the hashes), never the spend key's file.
+  assert.equal('caller_key_file' in validateConfig(config), false);
+  for (const fine of [path.resolve('/dev/shm/time-faucet-callers.key'), path.resolve('/var/lib/time-faucet-keys/callers.key'), path.resolve('/var/lib/..time-faucet/callers.key')]) assert.equal(validateConfig({ ...config, caller_key_file: fine }).caller_key_file, fine);
+  for (const [value, expected] of [['shm/who.key', /absolute path/], [7, /absolute path/], [path.resolve('/var/lib/time-faucet/callers.key'), /must not be inside data_directory/], [path.resolve('/var/lib/time-faucet/sub/callers.key'), /must not be inside/],
+    [path.resolve('/var/lib/time-faucet'), /must not be inside/], [path.resolve('/etc/time-faucet/spend.key'), /two different files/]]) {
+    assert.throws(() => validateConfig({ ...config, caller_key_file: value }), (error) => expected.test(error.message) && !error.message.includes(String(value)), String(value));
   }
 });
 
@@ -1230,7 +1241,7 @@ test('the lookup of an action on the node: found, not found, and a node that can
     assert.throws(() => openFaucetStore({ filename: path.join(directory, 'garbage.sqlite'), networkId: NETWORK, account: '5' }), /not a store of the faucet/);
     await rm(other); await rm(path.join(directory, 'garbage.sqlite'));
     // The store does not grow for ever: records that nothing waits for are removed after 30 days
-    // of block time, refused requests after one day. What is still open is kept whatever its age.
+    // of block time, refused requests after an hour (their limit counts one). What is still open is kept whatever its age.
     const store = openFaucetStore({ filename: path.join(directory, 'f.sqlite'), networkId: NETWORK, account: '5', synchronous: 'OFF' });
     const day0 = 1700000000000, record = (at) => store.reserve({ kind: 'grant', recipient: '7', caller: '203.0.113.1', amount: 5, cost: 6, at, payload: { to: '7', amount: '5' }, check: () => {} });
     const [old, oldOpen, recent, cancelled] = [record(day0), record(day0), record(day0 + 29 * DAY_MS), record(day0 + 29 * DAY_MS)];
@@ -1386,4 +1397,474 @@ test('after a stop, the faucet\'s freeze against a payment that waits stays vali
     assert.equal(freeze.payload.expires_elapsed_micros, (ready + node.stopped + HOUR).toString());
     assert.ok(BigInt(freeze.payload.expires_elapsed_micros) > at + 12n * HOUR);
   }, {}, onWaitsClock);
+});
+
+// ---- Found by the web audit of 2026-11-24 (F-2, F-4, F-6, the page's prefill, and slow bodies).
+const newKey = () => { const pair = generateKeyPairSync('ed25519'); return { publicKey: pair.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex'), privateKey: pair.privateKey }; };
+const consentOf = (node, who, commitment = createHash('sha256').update(who.publicKey).digest('hex')) => {
+  const expires = (node.elapsed + 300000000n).toString();
+  return { public_key: who.publicKey, commitment, expires_elapsed_micros: expires, proof: edSign(null, Buffer.from(SDK.sponsorConsentBytes({ networkId: NETWORK, sponsorAccount: FAUCET, publicKey: who.publicKey, commitment, expiresElapsedMicros: expires })), who.privateKey).toString('hex') };
+};
+const sponsorOf = (service, json, headers = {}) => call(service, '/v1/faucet/registrations', { method: 'POST', json, headers });
+/// The i-th /56 of the /48 2001:db8:aa00::/48, as the test network's proxy names a caller.
+const slash56 = (i, of = 'aa00') => ({ 'X-Forwarded-For': `2001:db8:${of}:${(i << 8).toString(16)}::1` });
+/// The test network's numbers (testnet/plan.mjs FAUCET) for what is counted; a grant of one second, so that a day of
+/// them fits the fake chain's daily limit.
+const PUBLIC = { perAccountPerDay: 2, perAddressPerDay: 20, totalPerDayMicros: 200000000n, registrationsPerAddressPerDay: 20 };
+
+test('F-2: one IPv6 /48 takes at most three /56s worth of grants and of names a day, not 256', async () => {
+  // The proof of the audit (drain.mjs, parts A and B). Before 2026-11-24 every /56 of a /48 was a caller of its own:
+  // six of them took every grant of the day, and the /48 could have 5,120 names sponsored a day.
+  await lab(async (world) => {
+    const { node, service } = world;
+    let granted = 0, refused = null;
+    for (let id = 100; id < 160; id++) {
+      for (let k = 0; k < 2; k++) {
+        const answer = await ask(service, String(id), slash56(10 + Math.floor((id - 100) / 10)));
+        if (answer.status === 202) granted += 1; else refused ??= answer;
+        if (node.mempool.length >= 30) { node.mine(); await service.settle(); }
+      }
+    }
+    node.mine(); await service.settle();
+    assert.equal(granted, 60, 'three /56s worth: 20 each');
+    assert.deepEqual([refused.status, refused.body.error.code], [429, 'address_limit']);
+    assert.match(refused.body.error.message, /^The network of this address \(its IPv6 \/48\) has had its 60 per 24 hours/);
+    // The rest of the day is there for everybody else: another /48, and an IPv4 address.
+    assert.equal((await ask(service, '160', slash56(0, 'bb00'))).status, 202);
+    assert.equal((await ask(service, '161', { 'X-Forwarded-For': '198.51.100.7' })).status, 202);
+    const facts = (await call(service, '/v1/faucet')).body;
+    assert.deepEqual([facts.gives.per_address, facts.gives.per_network, facts.registrations.per_network, facts.registrations.per_day, facts.giving], [20, 60, 60, 200, true]);
+    // Registrations: twenty from each of four /56s of one /48 give sixty, and the rest is refused for the /48.
+    let sponsored = 0;
+    const refusals = [];
+    for (let s = 0; s < 4; s++) {
+      for (let n = 0; n < 20; n++) {
+        const answer = await sponsorOf(service, consentOf(node, newKey()), slash56(s, 'cc00'));
+        if (answer.status === 202) sponsored += 1; else refusals.push(answer.body.error.message);
+        if (node.mempool.length >= 30) { node.mine(); await service.settle(); }
+      }
+    }
+    assert.equal(sponsored, 60);
+    assert.deepEqual([...new Set(refusals)], ['The network of this address (its IPv6 /48) has had its 60 per 24 hours']);
+  }, { grantMicros: 1000000n, limits: PUBLIC, trustedProxies: ['127.0.0.1'] }, (node) => devs(node, 100, 170));
+});
+
+test('F-2: sign-ups and grants have totals of their own: with the grants of the day gone, the wallet still signs people up, and the reverse', async () => {
+  await lab(async (world) => {
+    const { node, service } = world;
+    // The total of the grants: two of them, with their fees.
+    for (const id of ['20', '21']) assert.equal((await ask(service, id, { 'X-Forwarded-For': `198.51.100.${id}` })).status, 202);
+    assert.equal((await ask(service, '22', { 'X-Forwarded-For': '198.51.100.22' })).body.error.code, 'daily_total');
+    node.mine(); await service.settle();
+    // The wallet's sign-up (POST /v1/faucet/registrations) goes on. Before 2026-11-24 both shared one total, and the
+    // day's grants closed sign-up too.
+    const signup = await sponsorOf(service, consentOf(node, newKey()), { 'X-Forwarded-For': '198.51.100.30' });
+    assert.equal(signup.status, 202, signup.text);
+    assert.equal((await sponsorOf(service, consentOf(node, newKey()), { 'X-Forwarded-For': '198.51.100.31' })).status, 202);
+    node.mine(); await service.settle();
+    // The registrations have their own total (here two): the third is refused, for that total.
+    const third = await sponsorOf(service, consentOf(node, newKey()), { 'X-Forwarded-For': '198.51.100.32' });
+    assert.deepEqual([third.status, third.body.error.code, third.body.error.message], [429, 'daily_total', 'The faucet has sponsored its 2 registrations for 24 hours']);
+    const facts = (await call(service, '/v1/faucet')).body;
+    assert.deepEqual([facts.registrations.per_day, facts.registrations.left], [2, 0]);
+  }, { limits: { perAccountPerDay: 1, perAddressPerDay: 3, totalPerDayMicros: 2n * (GRANT + FEE), registrationsPerAddressPerDay: 1, registrationsPerDay: 2 }, trustedProxies: ['127.0.0.1'] }, devs);
+  // The reverse: sign-ups that use up their total leave the grants alone.
+  await lab(async (world) => {
+    const { node, service } = world;
+    for (let i = 0; i < 2; i++) assert.equal((await sponsorOf(service, consentOf(node, newKey()), { 'X-Forwarded-For': `198.51.100.${40 + i}` })).status, 202);
+    assert.equal((await sponsorOf(service, consentOf(node, newKey()), { 'X-Forwarded-For': '198.51.100.42' })).body.error.code, 'daily_total');
+    node.mine(); await service.settle();
+    assert.equal((await ask(service, '20', { 'X-Forwarded-For': '198.51.100.43' })).status, 202);
+  }, { limits: { perAccountPerDay: 1, perAddressPerDay: 3, totalPerDayMicros: 500000000n, registrationsPerAddressPerDay: 1, registrationsPerDay: 2 }, trustedProxies: ['127.0.0.1'] }, devs);
+});
+
+test('F-2: an account whose registration this faucet sponsored gets one grant in its first day: a newcomer is served at once, "register ten, ask two each" is not', async () => {
+  await lab(async (world) => {
+    const { node, service } = world;
+    const from = { 'X-Forwarded-For': '198.51.100.9' };
+    // A newcomer signs up through the faucet, and asks for test time a minute later, from the same address.
+    const alice = newKey();
+    assert.equal((await sponsorOf(service, consentOf(node, alice), from)).status, 202);
+    node.mine(2); await service.settle();
+    node.accounts.set('300', { id: '300', name: 'alice', balance: 0n, nonce: 0n, auth_epoch: '0', devices: [{ public_key: alice.publicKey, can_manage: true, can_spend: true }] });
+    world.clock += 60000; node.elapsed += 60000000n; node.mine();
+    const first = await ask(service, 'alice', from);
+    assert.equal(first.status, 202, first.text);
+    node.mine(); await service.settle();
+    // The second grant of its first day is refused, in words that say why.
+    const second = await ask(service, 'alice', from);
+    assert.deepEqual([second.status, second.body.error.code, second.body.previous[0].hash], [429, 'account_limit', first.body.hash]);
+    assert.match(second.body.error.message, /^This account was registered with this faucet's sponsorship in the last 24 hours, and a new account gets 1 in its first 24 hours/);
+    // An account the faucet did not sponsor has its two, as before.
+    for (let k = 0; k < 2; k++) { assert.equal((await ask(service, '20', from)).status, 202); node.mine(); await service.settle(); }
+    // A day later the new account is like any other: two a day.
+    day(world); await service.settle();
+    for (let k = 0; k < 2; k++) { assert.equal((await ask(service, 'alice', from)).status, 202); node.mine(); await service.settle(); }
+    assert.equal((await call(service, '/v1/faucet')).body.gives.per_new_account, 1);
+  }, { limits: { perAccountPerDay: 2, perAddressPerDay: 10, totalPerDayMicros: 500000000n, registrationsPerAddressPerDay: 2 }, trustedProxies: ['127.0.0.1'] }, devs);
+});
+
+test('F-4: a sponsorship the node refuses for good is withdrawn at once and never sent again; nobody else waits for it', async () => {
+  // The proof of the audit (drain.mjs, part D): someone sends his own sponsorship of a key and at once asks the faucet
+  // for the same key. The node refuses the faucet's (its commitment waits). Before 2026-11-24 the faucet signed nothing
+  // new until that action had been tried again three blocks on: every request got 503 node_unavailable meanwhile.
+  const taken = new Set(), held = new Set();
+  const guarded = (node) => {
+    devs(node);
+    const check = node.check;
+    node.check = async (raw) => {
+      const action = SDK.decodeAction(new Uint8Array(raw));
+      if (action.kind === 44 && taken.has(action.payload.public_key)) return 'unexpired registration commitment already exists';
+      if (action.kind === 44 && held.has(action.payload.public_key)) return 'registration key already belongs to an account';
+      return check(raw);
+    };
+  };
+  await lab(async (world) => {
+    const { node, service } = world;
+    const victim = newKey();
+    taken.add(victim.publicKey);
+    const blocked = await sponsorOf(service, consentOf(node, victim), { 'X-Forwarded-For': '198.51.100.1' });
+    assert.deepEqual([blocked.status, blocked.body.error.code], [409, 'already_committed']);
+    assert.match(blocked.body.error.message, /^The node refused the sponsorship: a registration of this key is waiting on the chain already, sent by someone else first\. The faucet withdrew its action, will not send it again/);
+    assert.equal(blocked.headers['retry-after'], undefined);
+    const withdrawn = (await call(service, `/v1/faucet/grants/${blocked.body.hash}`)).body;
+    assert.deepEqual([withdrawn.status, withdrawn.reason], ['withdrawn', 'already_committed']);
+    // At once, in the same block, an honest grant: it is signed with the nonce the withdrawn action had.
+    const honest = await ask(service, '20', { 'X-Forwarded-For': '198.51.100.2' });
+    assert.deepEqual([honest.status, honest.body.status, honest.body.nonce], [202, 'submitted', withdrawn.nonce]);
+    // The withdrawn bytes are never sent again, whatever passes; and they still count: the key is not sponsored twice.
+    for (let b = 0; b < 4; b++) { node.mine(); await service.settle(); }
+    const sent = Buffer.from(node.submissions.find((hex) => sha(Buffer.from(hex, 'hex')) === blocked.body.hash), 'hex').toString('hex');
+    assert.equal(node.submissions.filter((hex) => hex === sent).length, 1);
+    assert.equal((await sponsorOf(service, consentOf(node, victim), { 'X-Forwarded-For': '198.51.100.3' })).body.error.code, 'account_limit');
+    assert.equal((await call(service, `/v1/faucet/grants/${honest.body.hash}`)).body.status, 'included');
+    // A key that belongs to an account already: the same, with its own code.
+    const owner = newKey();
+    held.add(owner.publicKey);
+    const owned = await sponsorOf(service, consentOf(node, owner), { 'X-Forwarded-For': '198.51.100.4' });
+    assert.deepEqual([owned.status, owned.body.error.code], [409, 'already_registered']);
+    assert.equal((await ask(service, '21', { 'X-Forwarded-For': '198.51.100.5' })).status, 202);
+  }, { trustedProxies: ['127.0.0.1'] }, guarded);
+  // A node that said "refused" and kept the bytes after all: a block takes them, with the nonce the next grant was
+  // signed with. The faucet labels the withdrawn sponsorship included and that grant superseded: nothing it paid is
+  // forgotten, and nothing is paid twice.
+  await lab(async (world) => {
+    const { node, service } = world;
+    const victim = newKey();
+    taken.add(victim.publicKey);
+    const blocked = await sponsorOf(service, consentOf(node, victim), { 'X-Forwarded-For': '198.51.100.1' });
+    assert.equal(blocked.body.error.code, 'already_committed');
+    const kept = Buffer.from(node.submissions.find((hex) => sha(Buffer.from(hex, 'hex')) === blocked.body.hash), 'hex');
+    node.mempool.push(kept);
+    // The node holds the kept bytes ahead of it: it refuses the grant for its nonce, and the grant stays counted.
+    const next = await ask(service, '20', { 'X-Forwarded-For': '198.51.100.2' });
+    assert.deepEqual([next.status, next.body.error.code], [502, 'node_refused']);
+    node.mine(); await service.settle();
+    world.clock += 61000; node.mine(); await service.settle();
+    assert.deepEqual([(await call(service, `/v1/faucet/grants/${blocked.body.hash}`)).body.status, (await call(service, `/v1/faucet/grants/${next.body.hash}`)).body.status], ['included', 'superseded']);
+    assert.equal(node.account('20').balance, 0n);
+  }, { trustedProxies: ['127.0.0.1'] }, guarded);
+});
+
+test('F-6: who asked is kept as a keyed hash for 24 hours and logged nowhere; the limits count as before across a restart', async () => {
+  await lab(async (world) => {
+    const { node, service } = world;
+    const from = (n) => ({ 'X-Forwarded-For': `203.0.113.${n}` });
+    for (const id of ['20', '21', '22']) assert.equal((await ask(service, id, from(9))).status, 202);
+    assert.equal((await sponsorOf(service, consentOf(node, newKey()), slash56(3))).status, 202);
+    node.mine(); await service.settle();
+    // No address in the store, and none in the log.
+    const { DatabaseSync } = await import('node:sqlite');
+    const look = () => { const db = new DatabaseSync(path.join(world.directory, 'faucet.sqlite')); try { return db.prepare('SELECT caller, network FROM grants ORDER BY id').all(); } finally { db.close(); } };
+    const rows = look();
+    assert.equal(rows.length, 4);
+    for (const row of rows) assert.match(row.caller, /^[0-9a-f]{32}$/);
+    assert.equal(new Set(rows.slice(0, 3).map((row) => row.caller)).size, 1, 'one caller, one hash');
+    assert.deepEqual([rows[0].network, typeof rows[3].network], [null, 'string']);
+    assert.doesNotMatch(JSON.stringify(rows) + JSON.stringify(world.logs), /203\.0\.113|2001:db8|198\.51\.100/);
+    // A restart: the same caller is counted under the same hash, and refused as before.
+    await world.reopen();
+    assert.equal((await ask(world.service, '23', from(9))).body.error.code, 'address_limit');
+    // After 24 hours no limit needs to know who asked: the fields are emptied, the records kept for their lookup.
+    day(world); await world.service.settle();
+    assert.deepEqual(look().slice(0, 4).map((row) => [row.caller, row.network]), [['', null], ['', null], ['', null], ['', null]]);
+    assert.equal((await ask(world.service, '23', from(9))).status, 202);
+  }, { limits: { perAccountPerDay: 1, perAddressPerDay: 3, totalPerDayMicros: 500000000n, registrationsPerAddressPerDay: 1 }, trustedProxies: ['127.0.0.1'] }, devs);
+  // A store of the version before (3), which kept the address groups themselves, is moved in place: the callers become
+  // hashes, and the requests in it count against the same callers as before.
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'time-faucet-move-'));
+  try {
+    const file = path.join(directory, 'f.sqlite'), { DatabaseSync } = await import('node:sqlite');
+    const before = new DatabaseSync(file);
+    before.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+      CREATE TABLE grants (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('grant', 'registration')), recipient TEXT NOT NULL, caller TEXT NOT NULL, amount INTEGER NOT NULL, cost INTEGER NOT NULL, created_at INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('reserved', 'signed', 'submitted', 'included', 'withdrawn', 'superseded', 'unconfirmed', 'cancelled')), reason TEXT, payload TEXT NOT NULL, nonce TEXT, hash TEXT, raw BLOB, signed_height TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, accepted INTEGER NOT NULL DEFAULT 0, refusal_height TEXT, consumed_at INTEGER, ended_at INTEGER, checked_at INTEGER, settled INTEGER NOT NULL DEFAULT 0, height TEXT);
+      CREATE TABLE refusals (caller TEXT NOT NULL, at INTEGER NOT NULL);
+      INSERT INTO meta VALUES ('schema', '3'), ('network_id', '${NETWORK}'), ('account', '5');
+      INSERT INTO grants (kind, recipient, caller, amount, cost, created_at, status, payload, settled) VALUES ('grant', '7', '203.0.113.1', 5, 6, 1700000000000, 'included', '{}', 1), ('grant', '8', '2001:db8:1:200::/56', 5, 6, 1700000000000, 'included', '{}', 1);
+      INSERT INTO refusals VALUES ('203.0.113.1', 1700000000000);`);
+    before.close();
+    const store = openFaucetStore({ filename: file, networkId: NETWORK, account: '5', synchronous: 'OFF' });
+    const since = 1700000000000 - 1;
+    assert.deepEqual([store.usage('grant', '7', '203.0.113.1', since).caller.n, store.usage('grant', '8', callerKey('2001:db8:1:2ff::1'), since).caller.n, store.usage('grant', '8', callerKey('2001:db8:1:3ff::1'), since).network.n, store.refusals.count('203.0.113.1', since).n], [1, 1, 1, 1]);
+    assert.deepEqual([store.meta.get('schema'), store.meta.get('caller_key'), store.opened.moved], ['5', null, '3']);
+    store.close();
+    const after = new DatabaseSync(file);
+    assert.doesNotMatch(JSON.stringify([after.prepare('SELECT caller, network FROM grants').all(), after.prepare('SELECT caller FROM refusals').all()]), /203\.0\.113|2001:db8/);
+    after.close();
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+const hmac32 = (key, text) => createHmac('sha256', key).update(text).digest('hex').slice(0, 32);
+/// The bytes of a store and of its log of writes, as a copy of the data directory would hold them.
+const storeBytes = async (file) => Buffer.concat([await readFile(file), await readFile(`${file}-wal`).catch(() => Buffer.alloc(0))]);
+
+test('the store alone gives back nobody: the key of the hashes of who asked is not in it, a restart finds the key in its file, and an emptied hash stays in neither the store nor its log', async () => {
+  await lab(async (world) => {
+    const { node } = world, from = (n) => ({ 'X-Forwarded-For': `203.0.113.${n}` });
+    for (const id of ['20', '21', '22']) assert.equal((await ask(world.service, id, from(9))).status, 202);
+    assert.equal((await sponsorOf(world.service, consentOf(node, newKey()), slash56(3))).status, 202);
+    node.mine(); await world.service.settle();
+    assert.equal(world.service.callerKey, 'new');
+    const { DatabaseSync } = await import('node:sqlite');
+    const file = path.join(world.directory, 'faucet.sqlite');
+    const read = () => { const db = new DatabaseSync(file); try { return { rows: db.prepare('SELECT caller, network FROM grants ORDER BY id').all(), meta: db.prepare('SELECT key, value FROM meta').all() }; } finally { db.close(); } };
+    const { rows, meta } = read();
+    // Whoever has the file tries every IPv4 address under every value the file holds, in vain: none is the key.
+    assert.deepEqual([meta.some((row) => row.key === 'caller_key'), meta.some((row) => row.key === 'caller_key_check')], [false, true]);
+    for (const { value } of meta) for (const key of [value, Buffer.from(value, 'hex')]) assert.notEqual(hmac32(key, '203.0.113.9'), rows[0].caller);
+    // The key is the one in its file, which nobody else may read; and the store does not hold it.
+    const kept = (await readFile(world.keyFile, 'latin1')).trim();
+    assert.match(kept, /^[0-9a-f]{64}$/);
+    assert.equal(hmac32(Buffer.from(kept, 'hex'), '203.0.113.9'), rows[0].caller);
+    if (process.platform !== 'win32') assert.equal((await stat(world.keyFile)).mode & 0o777, 0o600);
+    const before = await storeBytes(file);
+    assert.deepEqual([before.includes(kept), before.includes(Buffer.from(kept, 'hex'))], [false, false]);
+    // A restart: the key is found again in its file, and the same caller is refused as before.
+    await world.reopen();
+    assert.equal(world.service.callerKey, 'kept');
+    assert.equal((await ask(world.service, '23', from(9))).body.error.code, 'address_limit');
+    // After 24 hours the hashes are emptied, overwritten in the store, and its log of writes is emptied too.
+    day(world); await world.service.settle();
+    assert.deepEqual(read().rows.slice(0, 4).map((row) => [row.caller, row.network]), [['', null], ['', null], ['', null], ['', null]]);
+    const after = await storeBytes(file);
+    for (const row of rows) for (const value of [row.caller, row.network]) if (value) assert.equal(after.includes(value), false, 'an emptied hash is still in the store or its log');
+  }, { trustedProxies: ['127.0.0.1'] }, devs);
+});
+
+test('without its key the store counts nobody it counted before: after a reboot (the file in memory emptied), or with no file at all, the counts per caller start afresh, and the limits per account and the totals of the day still hold', async () => {
+  await lab(async (world) => {
+    const from = (n) => ({ 'X-Forwarded-For': `203.0.113.${n}` });
+    for (const id of ['20', '21', '22']) assert.equal((await ask(world.service, id, from(9))).status, 202);
+    assert.equal((await ask(world.service, '23', from(9))).body.error.code, 'address_limit');
+    world.node.mine(); await world.service.settle();
+    // A reboot empties /dev/shm: the faucet makes a new key, says so, and removes the hashes it can no longer match.
+    await world.service.close();
+    await rm(world.keyFile);
+    await world.reopen();
+    assert.equal(world.service.callerKey, 'new');
+    assert.ok(world.logs.some((line) => line.level === 'warn' && /counts per caller and per IPv6 \/48 start afresh/.test(line.message)));
+    assert.equal(world.service.store.usage('grant', '', '203.0.113.9', 0).caller.n, 0);
+    // The caller is a new caller. What knows no caller holds: the account that had its grant gets no second one,
+    // and the total of the day (six grants here) is the total, whoever asks.
+    assert.equal((await ask(world.service, '20', from(9))).body.error.code, 'account_limit');
+    for (const id of ['23', '24', '25']) assert.equal((await ask(world.service, id, from(9))).status, 202, id);
+    assert.equal((await ask(world.service, '26', from(10))).body.error.code, 'daily_total');
+    // With no file the key is in memory only: every restart forgets the counts per caller, said at the info level.
+    await world.reopen({ callerKeyFile: undefined });
+    assert.equal(world.service.callerKey, 'memory');
+    assert.ok(world.logs.some((line) => line.level === 'info' && /start afresh/.test(line.message)));
+    assert.equal(world.service.store.usage('grant', '', '203.0.113.9', 0).caller.n, 0);
+    assert.equal((await ask(world.service, '26', from(9))).body.error.code, 'daily_total');
+    assert.doesNotMatch(JSON.stringify(world.logs), /203\.0\.113/);
+  }, { limits: { perAccountPerDay: 1, perAddressPerDay: 3, totalPerDayMicros: 6n * (GRANT + FEE), registrationsPerAddressPerDay: 1 }, trustedProxies: ['127.0.0.1'] }, devs);
+});
+
+test('a store of version 4, which held the key of its hashes, is moved at its first start: the key out of the file, the requests of the last 24 hours counted for their callers in that run, and nothing of the old file left', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'time-faucet-move4-'));
+  try {
+    const file = path.join(directory, 'f.sqlite'), { DatabaseSync } = await import('node:sqlite');
+    const oldKey = randomBytes(32), old = (text) => hmac32(oldKey, text), T = 1700000000000;
+    // As version 4 left it: its key in `meta`, the hashes of three requests (one of them emptied already), a refusal.
+    const before = new DatabaseSync(file);
+    before.exec(`PRAGMA journal_mode=WAL; CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+      CREATE TABLE grants (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK(kind IN ('grant', 'registration')), recipient TEXT NOT NULL, caller TEXT NOT NULL, network TEXT, amount INTEGER NOT NULL, cost INTEGER NOT NULL, created_at INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('reserved', 'signed', 'submitted', 'included', 'withdrawn', 'superseded', 'unconfirmed', 'cancelled')), reason TEXT, payload TEXT NOT NULL, nonce TEXT, hash TEXT, raw BLOB, signed_height TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, accepted INTEGER NOT NULL DEFAULT 0, refusal_height TEXT, consumed_at INTEGER, ended_at INTEGER, checked_at INTEGER, settled INTEGER NOT NULL DEFAULT 0, height TEXT);
+      CREATE INDEX grants_caller ON grants (kind, caller, created_at); CREATE INDEX grants_network ON grants (kind, network, created_at) WHERE network IS NOT NULL;
+      CREATE TABLE refusals (caller TEXT NOT NULL, at INTEGER NOT NULL);
+      INSERT INTO meta VALUES ('schema', '4'), ('network_id', '${NETWORK}'), ('account', '5'), ('caller_key', '${oldKey.toString('hex')}');
+      INSERT INTO grants (kind, recipient, caller, network, amount, cost, created_at, status, payload, settled) VALUES
+        ('grant', '7', '${old('203.0.113.1')}', NULL, 5, 6, ${T}, 'included', '{}', 1), ('grant', '8', '${old('2001:db8:1:200::/56')}', '${old('2001:db8:1::/48')}', 5, 6, ${T}, 'included', '{}', 1), ('grant', '9', '${old('198.51.100.20')}', NULL, 5, 6, ${T - DAY_MS}, 'included', '{}', 1);
+      INSERT INTO refusals VALUES ('${old('203.0.113.1')}', ${T}), ('${old('198.51.100.21')}', ${T - DAY_MS});`);
+    // Emptied and removed as version 4 did it, without overwriting: what it freed is still in the file's free space.
+    before.exec(`UPDATE grants SET caller = '' WHERE recipient = '9'; DELETE FROM refusals WHERE at < ${T};`);
+    before.close();
+    const key = randomBytes(32), since = T - 1;
+    const store = openFaucetStore({ filename: file, networkId: NETWORK, account: '5', synchronous: 'OFF', callerKey: key });
+    assert.deepEqual([store.opened.moved, store.opened.forgotten, store.opened.rewritten, store.meta.get('schema'), store.meta.get('caller_key'), store.meta.get('rewrite_pending')], ['4', false, true, '5', null, null]);
+    // This run counts the requests made before the move for the callers that made them, and for nobody else.
+    assert.deepEqual([store.usage('grant', '7', '203.0.113.1', since).caller.n, store.usage('grant', '8', callerKey('2001:db8:1:2ff::1'), since).caller.n, store.usage('grant', '8', callerKey('2001:db8:1:3ff::1'), since).network.n,
+      store.refusals.count('203.0.113.1', since).n, store.usage('grant', '7', '198.51.100.7', since).caller.n, store.usage('grant', '7', '203.0.113.1', since).total.used], [1, 1, 1, 1, 0, 12]);
+    store.close();
+    // Nothing of version 4 is left: not its key, not one of its hashes, not even a part of one (any 10 characters of
+    // them), in the store or in its log of writes.
+    const bytes = await storeBytes(file), parts = (text) => Array.from({ length: text.length - 9 }, (_, i) => text.slice(i, i + 10));
+    for (const value of [oldKey.toString('hex'), old('203.0.113.1'), old('2001:db8:1:200::/56'), old('2001:db8:1::/48'), old('198.51.100.20'), old('198.51.100.21')]) for (const part of parts(value)) assert.equal(bytes.includes(part), false, 'a value of version 4 is still in the file');
+    assert.equal(bytes.includes(oldKey.subarray(0, 8)) || bytes.includes(oldKey.subarray(24)), false);
+    // The next start holds the old key no more: those requests count for no caller now. The totals still count them.
+    const again = openFaucetStore({ filename: file, networkId: NETWORK, account: '5', synchronous: 'OFF', callerKey: key });
+    assert.deepEqual([again.opened.moved, again.opened.forgotten, again.opened.rewritten, again.usage('grant', '7', '203.0.113.1', since).caller.n, again.usage('grant', '7', '203.0.113.1', since).total.used], [null, false, null, 0, 12]);
+    again.close();
+    // Opened with another key (its file was emptied by a reboot): the hashes are removed, and that is said.
+    const other = openFaucetStore({ filename: file, networkId: NETWORK, account: '5', synchronous: 'OFF', callerKey: randomBytes(32) });
+    assert.equal(other.opened.forgotten, true);
+    const db = new DatabaseSync(file);
+    assert.deepEqual([db.prepare("SELECT COUNT(*) AS n FROM grants WHERE caller <> '' OR network IS NOT NULL").get().n, db.prepare('SELECT COUNT(*) AS n FROM refusals').get().n], [0, 0]);
+    db.close(); other.close();
+    assert.throws(() => openFaucetStore({ filename: file, networkId: NETWORK, account: '5', callerKey: Buffer.alloc(16) }), /callerKey is 32 bytes/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('the first start after the update: a faucet whose store held its key (version 4) moves it, makes its key in memory, and goes on refusing the callers that had their grants', async () => {
+  await lab(async (world) => {
+    const from = (n) => ({ 'X-Forwarded-For': `203.0.113.${n}` });
+    for (const id of ['20', '21', '22']) assert.equal((await ask(world.service, id, from(9))).status, 202);
+    world.node.mine(); await world.service.settle();
+    // The store as version 4 left it: its key inside it. The machine has no key file yet (the release before made none).
+    await world.service.close();
+    const oldKey = (await readFile(world.keyFile, 'latin1')).trim();
+    await rm(world.keyFile);
+    const { DatabaseSync } = await import('node:sqlite');
+    const file = path.join(world.directory, 'faucet.sqlite'), raw = new DatabaseSync(file);
+    raw.exec(`UPDATE meta SET value = '4' WHERE key = 'schema'; DELETE FROM meta WHERE key = 'caller_key_check'; INSERT INTO meta VALUES ('caller_key', '${oldKey}');`);
+    raw.close();
+    await world.reopen();
+    assert.equal(world.service.callerKey, 'new');
+    assert.notEqual((await readFile(world.keyFile, 'latin1')).trim(), oldKey);
+    assert.ok(world.logs.some((line) => line.level === 'info' && /moved from version 4 to 5/.test(line.message)));
+    assert.equal(world.logs.some((line) => /start afresh/.test(line.message)), false);
+    // The caller that had its three grants before the update is refused after it; another caller is not.
+    assert.equal((await ask(world.service, '23', from(9))).body.error.code, 'address_limit');
+    assert.equal((await ask(world.service, '23', from(10))).status, 202);
+    const bytes = await storeBytes(file);
+    assert.equal(bytes.includes(oldKey) || bytes.includes(Buffer.from(oldKey, 'hex')), false);
+  }, { trustedProxies: ['127.0.0.1'] }, devs);
+});
+
+test('the file of the key of who asked: made once for its owner only, read again, replaced when it is not a plain file of its own holding a key, and the key held in memory only when no file can be had', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'time-faucet-callers-'));
+  const posix = process.platform !== 'win32';
+  try {
+    const file = path.join(directory, 'callers.key');
+    const made = await loadCallerKey(file);
+    assert.deepEqual([made.source, made.problem, made.replaced, made.key.length], ['new', null, null, 32]);
+    assert.equal(await readFile(file, 'latin1'), `${made.key.toString('hex')}\n`);
+    if (posix) assert.equal((await stat(file)).mode & 0o777, 0o600);
+    const again = await loadCallerKey(file);
+    assert.deepEqual([again.source, again.key.equals(made.key)], ['kept', true]);
+    // A write cut short: replaced by a new key, and said (never what the file held).
+    await writeFile(file, 'abc', { mode: 0o600 });
+    const cut = await loadCallerKey(file);
+    assert.deepEqual([cut.source, cut.replaced, cut.key.equals(made.key)], ['new', 'does not hold a key', false]);
+    if (posix) {
+      // Readable by other users, or a link: not used, replaced.
+      await chmod(file, 0o644);
+      assert.deepEqual([(await loadCallerKey(file)).source, (await loadCallerKey(file)).source], ['new', 'kept']);
+      const target = path.join(directory, 'elsewhere.key');
+      await writeFile(target, `${'ab'.repeat(32)}\n`, { mode: 0o600 }); await rm(file); await symlink(target, file);
+      const linked = await loadCallerKey(file);
+      assert.deepEqual([linked.source, linked.replaced, linked.key.equals(Buffer.from('ab'.repeat(32), 'hex')), await readFile(target, 'latin1')], ['new', 'is a link', false, `${'ab'.repeat(32)}\n`]);
+    }
+    // No file can be made, or what is there cannot be read or removed: the key is held in memory only, and why is said.
+    const missing = await loadCallerKey(path.join(directory, 'no-such-folder', 'callers.key'));
+    assert.deepEqual([missing.source, /could not be made \(ENOENT\)/.test(missing.problem)], ['memory', true]);
+    const folder = await loadCallerKey(directory);
+    assert.equal(folder.source, 'memory');
+    assert.match(folder.problem, /could not be (read|replaced)/);
+    // Without a file: in memory, a new key at every start.
+    const [one, two] = [await loadCallerKey(), await loadCallerKey(null)];
+    assert.deepEqual([one.source, one.problem, two.source, one.key.equals(two.key)], ['memory', null, 'memory', false]);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('the page takes an account into its field from its address: /?account= is served for an account in the form the page accepts, and only then', async () => {
+  await lab(async ({ service }) => {
+    const page = await readFile(new URL('../web-v4/faucet/index.html', import.meta.url));
+    // Before 2026-11-24 the server answered every one of these 400 invalid_url, and the page's prefill never worked.
+    for (const route of ['/?account=alice', '/?account=42', '/?account=%40Alice_2', '/?account=@bob']) {
+      const answer = await call(service, route);
+      assert.deepEqual([answer.status, answer.headers['content-type'], answer.text === page.toString('utf8')], [200, 'text/html; charset=utf-8', true], route);
+    }
+    for (const route of ['/?account=', '/?account=a%20b', '/?account=%3Cscript%3E', `/?account=${'a'.repeat(21)}`, '/?account=al-ice', '/?account=a&x=1', '/?x=1&account=a', '/?account=a&account=b', '/?Account=a', '/app.js?account=a', '/v1/faucet?account=7'])
+      assert.deepEqual([(await call(service, route)).status], [400], route);
+    assert.equal((await call(service, '/?account=alice', { method: 'POST', json: { account: 'alice' } })).status, 405);
+  });
+  // With the page off, the address is refused like any other query.
+  await lab(async ({ service }) => { assert.equal((await call(service, '/?account=alice')).status, 400); }, { servePage: false });
+});
+
+test('a request answered before its body was read ends its connection, and a body that does not arrive in time is not waited for', async () => {
+  await lab(async ({ service }) => {
+    const { port } = new URL(service.url);
+    const slow = (head) => new Promise((resolve) => {
+      const started = Date.now(); let answer = '', ticker = null;
+      const socket = net.connect(Number(port), '127.0.0.1', () => { socket.write(head); ticker = setInterval(() => { if (!socket.destroyed) socket.write('a'); }, 200); });
+      socket.on('data', (chunk) => { answer += chunk; });
+      socket.on('close', () => { clearInterval(ticker); resolve({ status: answer.split('\r\n')[0], ms: Date.now() - started, close: /\r\nConnection: close\r\n/i.test(answer) }); });
+      socket.on('error', () => {});
+      setTimeout(() => socket.destroy(), 12000);
+    });
+    const host = `127.0.0.1:${port}`;
+    for (let i = 0; i < 3; i++) await call(service, '/v1/faucet');
+    // Over the rate limit (a POST takes 10 of a burst of 12): before 2026-11-24 the connection stayed for as long as the body kept coming.
+    const limited = await slow(`POST /v1/faucet/grants HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n`);
+    assert.deepEqual([limited.status, limited.close], ['HTTP/1.1 429 Too Many Requests', true]);
+    assert(limited.ms < 2500, `closed after ${limited.ms} ms`);
+  }, { rateLimit: { perSecond: 1, burst: 12 } });
+  await lab(async ({ service }) => {
+    const { port } = new URL(service.url);
+    const started = Date.now();
+    const answer = await new Promise((resolve) => {
+      let text = '';
+      const socket = net.connect(Number(port), '127.0.0.1', () => socket.write(`POST /v1/faucet/grants HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n{"acc`));
+      socket.on('data', (chunk) => { text += chunk; });
+      socket.on('close', () => resolve(text));
+      socket.on('error', () => {});
+      setTimeout(() => socket.destroy(), 12000);
+    });
+    assert.match(answer, /^HTTP\/1\.1 408 /);
+    assert.match(answer, /"code":"body_too_slow"/);
+    assert(Date.now() - started < 8000);
+  });
+});
+
+test('a consent the chain would refuse as a weak signature (verify_strict) is refused by the faucet too, before anything is signed', async () => {
+  // The audit's ed25519-lax.mjs: does the faucet's check of a consent (WebCrypto) take signatures that the chain's
+  // (ed25519-dalek verify_strict) refuses? It does not, for the two forms tried: the identity point as the key, and a
+  // real key with R the identity and no nonce. Had it, the faucet would sign sponsorships the node refuses. This test
+  // keeps it so, whatever the installed Node.
+  const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const le = (bytes) => { let n = 0n; for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]); return n; };
+  const toLe = (n) => { const out = Buffer.alloc(32); for (let i = 0; i < 32; i++) { out[i] = Number(n & 0xffn); n >>= 8n; } return out; };
+  const identity = Buffer.alloc(32); identity[0] = 1;
+  await lab(async ({ node, service }) => {
+    const commitment = 'c1'.repeat(32), expires = (node.elapsed + 300000000n).toString();
+    const consentBytes = (publicKey) => Buffer.from(SDK.sponsorConsentBytes({ networkId: NETWORK, sponsorAccount: FAUCET, publicKey, commitment, expiresElapsedMicros: expires }));
+    // 1. The identity point as the key, R = identity, S = 0.
+    const weakKey = identity.toString('hex'), first = Buffer.concat([identity, Buffer.alloc(32)]).toString('hex');
+    // 2. A real key, R = identity (small order), S = k * a.
+    const seed = Buffer.alloc(32, 7), h = createHash('sha512').update(seed).digest(), a = Buffer.from(h.subarray(0, 32));
+    a[0] &= 248; a[31] &= 127; a[31] |= 64;
+    const pair = await crypto.subtle.importKey('pkcs8', Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), seed]), { name: 'Ed25519' }, true, ['sign']);
+    const publicKey = Buffer.from((await crypto.subtle.exportKey('jwk', pair)).x, 'base64url').toString('hex');
+    const k = le(createHash('sha512').update(identity).update(Buffer.from(publicKey, 'hex')).update(consentBytes(publicKey)).digest()) % L;
+    const second = Buffer.concat([identity, toLe((k * (le(a) % L)) % L)]).toString('hex');
+    for (const [key, proof] of [[weakKey, first], [publicKey, second]]) {
+      const answer = await call(service, '/v1/faucet/registrations', { method: 'POST', json: { public_key: key, commitment, expires_elapsed_micros: expires, proof } });
+      assert.deepEqual([answer.status, answer.body.error.code], [400, 'invalid_consent'], key);
+    }
+    assert.equal(node.submissions.length, 0, 'nothing was signed or sent');
+  });
 });

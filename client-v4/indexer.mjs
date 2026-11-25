@@ -651,7 +651,7 @@ const sameHash = (a, b) => typeof a === 'string' && typeof b === 'string' && a.l
 ///   height the chain had when it was registered: the first tip the light client verifies after
 ///   that. Building an index does not send the history before; a block made while this process
 ///   was down is never left out, however late it is indexed.
-/// - `onBlock({ block, payments })`: called after a block is stored (the API's event stream).
+/// - `onBlock({ block, payments, actions })`: called after a block is stored (the API's event streams).
 /// - `pollMs` (500): how long to wait when there is nothing new; `now()`; `log(level, message, fields)`.
 export function createIndexer({ rpc, trust, store, verifier, webhookTargets = () => [], onBlock = () => {}, pollMs = 500, now = Date.now, log = () => {}, blocksPerStep = 64, headersPerStep = 2000 }) {
   if (typeof rpc !== 'function') throw new Error('rpc is a function (method, parameters) => result');
@@ -766,7 +766,9 @@ export function createIndexer({ rpc, trust, store, verifier, webhookTargets = ()
     // Said once per run; /v1/health counts every one.
     if (skipped && !skippedLogged) { skippedLogged = true; log('warn', 'payments in blocks from before their webhook was configured are indexed without a webhook; /v1/health counts them', { height, events: skipped }); }
     status.last_block_at = now();
-    try { onBlock({ block: { ...block, tx_count: actions.length, payment_count: payments.length }, payments }); } catch (error) { log('error', 'a block listener failed', { error: plainText(error?.message) }); }
+    // `actions`: the block's actions as stored, with their bytes (`raw`); the recipient of a completed waiting payment is
+    // filled in where the store tied it to its request. The API's hints for wallets read them (api.mjs, touch).
+    try { onBlock({ block: { ...block, tx_count: actions.length, payment_count: payments.length }, payments, actions }); } catch (error) { log('error', 'a block listener failed', { error: plainText(error?.message) }); }
   }
 
   /// One round: learn the tip, verify headers down to the next block, index what is verified.

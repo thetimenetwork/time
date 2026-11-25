@@ -105,10 +105,11 @@ globalThis.fetch = async (url) => {
 };
 
 // ------------------------------------------------------------------ the wallet: alice, with two earlier actions to recheck
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const login = await newDevice();
 chain.accounts.push({ id: '5', name: 'alice', balance: '5000000', nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: true, can_spend: true }] });
-storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
+storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
 /// An action of alice that the chain holds in block `height`, and that this browser recorded before (Activity).
 const earlier = [];
 for (const [nonce, height] of [['1', 950], ['2', 1000]]) {

@@ -32,7 +32,7 @@ const argon2id = umd.exports.argon2id;
 class Storage {
   m = new Map(); failNames = false;
   getItem(k) { return this.m.has(k) ? this.m.get(k) : null; }
-  setItem(k, v) { if (this.failNames && k.startsWith('timecurrency.names.v1:')) throw new Error('QuotaExceededError'); this.m.set(k, String(v)); }
+  setItem(k, v) { if (this.failNames && k.startsWith('timecurrency.names.v2:')) throw new Error('QuotaExceededError'); this.m.set(k, String(v)); }
   removeItem(k) { this.m.delete(k); }
 }
 class El {
@@ -147,18 +147,33 @@ globalThis.fetch = async (url, options = {}) => {
 };
 
 // ------------------------------------------------------------------ the wallet: alice and dana in one browser, alice on two networks
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex, storageKeyFrom, fromB64 } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
+const PS = await import(new URL('web-v4/wallet/locked-store.mjs', root).href);
 const login = await newDevice(), danaKey = await newDevice(), spend = await newDevice(), sheet = await newDevice(), phrase = await newDevice();
 chain.accounts.push({ id: '5', name: 'alice', balance: '9000000', nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: true, can_spend: true }] });
 chain.accounts.push({ id: '13', name: 'dana', balance: '9000000', nonce: '0', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: danaKey.publicKey, can_manage: true, can_spend: true }] });
-const vault = async (networkId, name, device) => storage.setItem(`timecurrency.vault.v1:${networkId}:${name}`, JSON.stringify(await sealVault({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name, publicKey: device.publicKey }, argon2id)));
+const vault = async (networkId, name, device) => storage.setItem(`timecurrency.vault.v1:${networkId}:${name}`, JSON.stringify(await sealLegacy({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name, publicKey: device.publicKey }, argon2id)));
 await vault(NET1, 'alice', login); await vault(NET1, 'dana', danaKey); await vault(NET2, 'alice', login);
-// What this browser kept of alice's activity before the record of paid names existed: a payment to erin, and an action that pays nobody.
-const activityKey = (name, networkId = NET1) => `timecurrency.activity.v1:${networkId}:${name}`;
-storage.setItem(activityKey('alice'), JSON.stringify([{ hash: 'AB'.repeat(32), height: '800', label: 'Send 2 s to @erin', at: 0 }, { hash: 'CD'.repeat(32), height: '801', label: 'Test time from the faucet', at: 0 }]));
-/// The record of paid names as the browser holds it, for one account on one network.
-const namesKey = (name, networkId = NET1) => `timecurrency.names.v1:${networkId}:${name}`;
-const record = (name, networkId = NET1) => JSON.parse(storage.getItem(namesKey(name, networkId)));
+// What this browser kept of alice's activity before the record of paid names existed, in the clear as an earlier version
+// kept it (encrypted at the first unlock: locked-store.mjs): a payment to erin, and an action that pays nobody.
+const plainActivityKey = (name, networkId = NET1) => `timecurrency.activity.v1:${networkId}:${name}`;
+const plainNamesKey = (name, networkId = NET1) => `timecurrency.names.v1:${networkId}:${name}`;
+storage.setItem(plainActivityKey('alice'), JSON.stringify([{ hash: 'AB'.repeat(32), height: '800', label: 'Send 2 s to @erin', at: 0 }, { hash: 'CD'.repeat(32), height: '801', label: 'Test time from the faucet', at: 0 }]));
+/// Where the activity and the record of paid names are kept, encrypted, for one account on one network.
+const activityKey = (name, networkId = NET1) => PS.placeOf('activity', networkId, name);
+const namesKey = (name, networkId = NET1) => PS.placeOf('names', networkId, name);
+/// The record of paid names as the browser holds it, for one account on one network, read with the account's login key
+/// (locked-store.mjs, peek) once what the page was writing is written; null when there is none.
+const keyOf = { alice: login, dana: danaKey };
+async function record(name, networkId = NET1) {
+  const device = keyOf[name], storageKey = await storageKeyFrom(fromB64(device.secret.pkcs8, 256), { networkId, name, publicKey: device.publicKey });
+  const read = async () => JSON.stringify((await PS.peek({ storage, networkId, name, publicKey: device.publicKey, storageKey }))?.names ?? null);
+  let last = await read();
+  for (let turn = 0; turn < 100; turn++) { await new Promise(resolve => realTimeout(resolve, 10)); const now = await read(); if (now === last) break; last = now; }
+  assert.equal(storage.getItem(plainNamesKey(name, networkId)), null, 'no record of paid names is kept in the clear');
+  return JSON.parse(last);
+}
 
 let pages = 0;
 /// Loads the wallet's page again, as a reload does: the page before it is locked and its elements are gone; the storage stays.
@@ -200,6 +215,8 @@ function shown() {
 const NOTHING_NEW = { notes: [], layout: ['dl'], warning: false, names: [], asks: null };
 const about = seen => ({ notes: seen.notes, layout: seen.layout, warning: seen.warning, names: seen.names, asks: seen.asks });
 const first = name => ({ notes: [`First payment to @${name}.`], layout: ['note', 'dl'], warning: false, names: ['@' + name], asks: null });
+/// A name paid before that looks like another name paid before (web audit of November 2026, W-4).
+const paidAlike = (name, known) => ({ notes: [`You have paid @${name} before, and also @${known}, which looks like it. One of them may not be who you think. Check every letter.`], layout: ['note', 'dl'], warning: true, names: ['@' + name, '@' + known], asks: 'I checked the name, letter by letter.' });
 const alike = (name, known) => ({ notes: [`You have not paid @${name} before. It looks like @${known}, which you have paid. Check every letter.`], layout: ['note', 'dl'], warning: true, names: ['@' + name, '@' + known], asks: 'I checked the name, letter by letter.' });
 /// Starts a payment from the Send screen and waits for its review. What it gives back waits for the end of the payment
 /// when called (the promise itself would be waited for here, before the review is answered).
@@ -215,7 +232,7 @@ await freshPage();
 test('at unlock the record of paid names is filled from the activity this browser kept: who a payment went to, and nothing else', async () => {
   assert.equal(storage.getItem(namesKey('alice')), null, 'no record before the account is opened');
   await unlock('alice');
-  assert.deepEqual(record('alice'), { paid: ['erin'] });
+  assert.deepEqual(await record('alice'), { paid: ['erin'] });
   // A name known from the activity is a name that was paid: its review says nothing new.
   assert.deepEqual(await looked('erin'), NOTHING_NEW);
 });
@@ -232,11 +249,11 @@ test('a first payment to a name that looks like no paid name shows one plain lin
   assert.match($('notice').textContent, sentTo('bob'));
   assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).payload.to, BigInt(row('bob').balance) - bob], [1, '2', 1500000n]);
   // The name is recorded when the payment's receipt was verified, and the next review of a payment to it is as it always was.
-  assert.deepEqual(record('alice'), { paid: ['erin', 'bob'] });
+  assert.deepEqual(await record('alice'), { paid: ['erin', 'bob'] });
   assert.deepEqual(await looked('bob'), NOTHING_NEW);
   assert.deepEqual(await pay('bob', '0.5'), NOTHING_NEW);
   assert.match($('notice').textContent, sentTo('bob'));
-  assert.deepEqual(record('alice'), { paid: ['erin', 'bob'] });
+  assert.deepEqual(await record('alice'), { paid: ['erin', 'bob'] });
 });
 
 test('a first payment to a name that looks like a paid one shows a warning with both names and cannot be approved until the box is ticked', async () => {
@@ -249,7 +266,7 @@ test('a first payment to a name that looks like a paid one shows a warning with 
   assert.equal($('review-confirm').disabled, true, 'not without the tick');
   // Closed as confirmed all the same (a key held down, or a button that something enabled): it counts as cancelled.
   await close('confirm'); await step();
-  assert.deepEqual([chain.posted.length, row('b0b').balance, record('alice')], [before, b0b, { paid: ['erin', 'bob'] }], 'nothing was signed, and the name is not a paid one');
+  assert.deepEqual([chain.posted.length, row('b0b').balance, await record('alice')], [before, b0b, { paid: ['erin', 'bob'] }], 'nothing was signed, and the name is not a paid one');
   assert.doesNotMatch($('notice').textContent, /^Sent/);
   // The next review starts with an empty box. Ticked at once, the button still waits for the delay; then it works.
   step = await send('b0b', '1');
@@ -261,10 +278,11 @@ test('a first payment to a name that looks like a paid one shows a warning with 
   await close('confirm'); await step();
   assert.match($('notice').textContent, sentTo('b0b'));
   assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).payload.to, BigInt(row('b0b').balance) - BigInt(b0b)], [1, '3', 1000000n]);
-  // The person has now paid both names: neither is warned about again.
-  assert.deepEqual(record('alice'), { paid: ['erin', 'bob', 'b0b'] });
-  assert.deepEqual(await looked('b0b'), NOTHING_NEW);
-  assert.deepEqual(await looked('bob'), NOTHING_NEW);
+  // The person has now paid both names. A payment to either says so again, with the tick: one of the two may be a name
+  // that someone else wrote into this browser's list (web audit of November 2026, W-4).
+  assert.deepEqual(await record('alice'), { paid: ['erin', 'bob', 'b0b'] });
+  assert.deepEqual(await looked('b0b'), paidAlike('b0b', 'bob'));
+  assert.deepEqual(await looked('bob'), paidAlike('bob', 'b0b'));
 });
 
 test('the softer tricks are warned about too: a digit written for a letter, and one changed letter', async () => {
@@ -275,14 +293,15 @@ test('the softer tricks are warned about too: a digit written for a letter, and 
   assert.deepEqual(await looked('karol'), first('karol'));
   assert.deepEqual(await pay('carol', '0.25'), first('carol'));
   assert.deepEqual([N.resembles('karol', 'carol'), await looked('karol')], ['edit', alike('karol', 'carol')]);
-  assert.deepEqual([chain.posted.length - before, record('alice')], [1, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
+  assert.deepEqual([chain.posted.length - before, await record('alice')], [1, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
 });
 
 test('the record of paid names survives a reload of the page, also when the activity it was filled from is gone', async () => {
   storage.removeItem(activityKey('alice'));
   await freshPage(); await unlock('alice');
-  assert.deepEqual(record('alice'), { paid: ['erin', 'bob', 'b0b', 'carol'] });
-  for (const name of ['erin', 'bob', 'b0b', 'carol']) assert.deepEqual(await looked(name), NOTHING_NEW, name);
+  assert.deepEqual(await record('alice'), { paid: ['erin', 'bob', 'b0b', 'carol'] });
+  for (const name of ['erin', 'carol']) assert.deepEqual(await looked(name), NOTHING_NEW, name);
+  assert.deepEqual([await looked('bob'), await looked('b0b')], [paidAlike('bob', 'b0b'), paidAlike('b0b', 'bob')]);
   assert.deepEqual(await looked('karol'), alike('karol', 'carol'));
   assert.deepEqual(await looked('mall'), first('mall'));
 });
@@ -294,7 +313,7 @@ test('the record is one per account: what alice has paid says nothing about what
   // dana has paid nobody: bob is a first payment for her, and so is b0b, which looks like nobody she has paid.
   assert.deepEqual(await looked('b0b'), first('b0b'));
   assert.deepEqual(await pay('bob', '0.5'), first('bob'));
-  assert.deepEqual([record('dana'), record('alice')], [{ paid: ['bob'] }, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
+  assert.deepEqual([await record('dana'), await record('alice')], [{ paid: ['bob'] }, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
   // Now b0b looks like a name dana has paid. carol, whom alice has paid, is new to dana.
   assert.deepEqual(await looked('b0b'), alike('b0b', 'bob'));
   assert.deepEqual(await looked('carol'), first('carol'));
@@ -309,13 +328,13 @@ test('the record is one per network: a name paid on one network is not a paid na
   assert.deepEqual(await looked('b0b'), first('b0b'));
   assert.deepEqual(await pay('mall', '0.25'), first('mall'));
   assert.deepEqual(await looked('mail'), alike('mail', 'mall'));
-  assert.deepEqual([record('alice', NET2), record('alice', NET1)], [{ paid: ['mall'] }, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
+  assert.deepEqual([await record('alice', NET2), await record('alice', NET1)], [{ paid: ['mall'] }, { paid: ['erin', 'bob', 'b0b', 'carol'] }]);
   // Back on the first network, mall is a name alice has not paid there, and it looks like none she has.
   net.id = NET1;
   await freshPage(); await unlock('alice');
   assert.deepEqual(await looked('mall'), first('mall'));
-  assert.deepEqual(await looked('bob'), NOTHING_NEW);
-  assert.deepEqual(record('alice', NET1), { paid: ['erin', 'bob', 'b0b', 'carol'] });
+  assert.deepEqual(await looked('bob'), paidAlike('bob', 'b0b'));
+  assert.deepEqual(await record('alice', NET1), { paid: ['erin', 'bob', 'b0b', 'carol'] });
 });
 
 test('a protected account: the same line, warning and tick in the review of a payment with the payment password, and in both ways to pay above the limit', async () => {
@@ -323,15 +342,15 @@ test('a protected account: the same line, warning and tick in the review of a pa
   // The account as "Protect my account" leaves it: this browser's key is the login key, a payment key is kept under the payment password.
   row('alice').devices = [{ public_key: login.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }];
   chain.security['5'] = { account: '5', version: '1', policy: { threshold: '2', daily_limit_micros: '1000000', delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: '1000000', allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null };
-  storage.setItem(`timecurrency.spend-vault.v1:${NET1}:alice`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET1, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+  storage.setItem(`timecurrency.spend-vault.v1:${NET1}:alice`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET1, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
   await unlock('alice');
   assert.equal($('send-payment-wrap').hidden, false, 'Send asks for the payment password');
   const before = chain.posted.length;
   // Within the limit. A name alice has paid; a first payment; then a name that looks like the one just paid.
-  assert.deepEqual(await looked('bob', PAYMENT), NOTHING_NEW);
+  assert.deepEqual(await looked('bob', PAYMENT), paidAlike('bob', 'b0b'));
   assert.deepEqual(await pay('mail', '0.2', PAYMENT), first('mail'));
   assert.match($('notice').textContent, sentTo('mail'));
-  assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).publicKey === spend.publicKey, record('alice')], [1, true, { paid: ['erin', 'bob', 'b0b', 'carol', 'mail'] }]);
+  assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).publicKey === spend.publicKey, await record('alice')], [1, true, { paid: ['erin', 'bob', 'b0b', 'carol', 'mail'] }]);
   // Confirmed without the tick: nothing is signed, and the payment password is not left in its field.
   let step = await send('mall', '0.2', PAYMENT);
   assert.deepEqual(about(shown()), alike('mall', 'mail'));
@@ -374,7 +393,7 @@ test('a payment a website asks for: the name of the account it names is checked 
   assert.deepEqual([$('approval-title').textContent, chain.posted.length - before, chain.posted.at(-1).kind, chain.posted.at(-1).payload.to], ['Done', 1, SDK.KINDS.merchant_payment, '11']);
   assert.deepEqual([answered.at(-1).origin, answered.at(-1).message.result?.accountId], [SHOP, '13']);
   // The account that was paid is a paid name from then on, although the label of such a payment names an order only.
-  assert.deepEqual(record('dana'), { paid: ['bob', 'shop'] });
+  assert.deepEqual(await record('dana'), { paid: ['bob', 'shop'] });
   ask('dana', 'shop'); step = await approve();
   assert.deepEqual(about(shown()), NOTHING_NEW);
   await close('cancel'); await step(); await $('deny-request').fire('click');
@@ -386,7 +405,7 @@ test('a payment a website asks for: the name of the account it names is checked 
   assert.equal(chain.posted.length - before, 1, 'nothing was signed without the tick');
   // The same request, approved again and ticked this time: paid.
   step = await approve(); await tick(); await armed(); await close('confirm'); await step();
-  assert.deepEqual([$('approval-title').textContent, chain.posted.length - before, chain.posted.at(-1).payload.to, record('dana')], ['Done', 2, '12', { paid: ['bob', 'shop', 'sh0p'] }]);
+  assert.deepEqual([$('approval-title').textContent, chain.posted.length - before, chain.posted.at(-1).payload.to, await record('dana')], ['Done', 2, '12', { paid: ['bob', 'shop', 'sh0p'] }]);
   // A protected account (alice, who has paid carol): the review of the website's payment carries the warning too.
   await $('lock-button').fire('click'); await unlock('alice');
   ask('alice', 'karol'); $('approval-payment').value = PAYMENT; step = await approve(); seen = shown();
@@ -408,19 +427,31 @@ test('a record that cannot be read or written costs the warning its memory and n
   assert.match($('notice').textContent, sentTo('bob'));
   assert.deepEqual(await looked('bob'), NOTHING_NEW);
   assert.deepEqual(await looked('b0b'), alike('b0b', 'bob'));
-  assert.equal(storage.getItem(namesKey('dana')), '{"paid": not json', 'nothing was written');
+  // The damaged record was dropped when the account was opened (it opens nothing), and none could be written since.
+  assert.equal(storage.getItem(namesKey('dana')), null, 'nothing was written');
   storage.failNames = false;
   // Stored again at the next occasion. A stored value of another shape is an empty list, not an error.
-  assert.deepEqual([await looked('bob'), record('dana')], [NOTHING_NEW, { paid: ['bob'] }]);
+  assert.deepEqual([await looked('bob'), await record('dana')], [NOTHING_NEW, { paid: ['bob'] }]);
   for (const stored of ['["bob"]', '"bob"', 'null', '{"paid":"bob"}', '{"paid":[7,null,"Bob","b","@bob"]}']) {
-    storage.setItem(namesKey('dana'), stored); storage.removeItem(activityKey('dana'));
+    // As an earlier version kept it, in the clear: the first unlock reads what it can and encrypts that.
+    storage.removeItem(namesKey('dana')); storage.setItem(plainNamesKey('dana'), stored); storage.removeItem(activityKey('dana'));
     await freshPage(); await unlock('dana');
     assert.deepEqual(await looked('bob'), first('bob'), stored);
   }
 });
 
 test('creating an account: a name the chain refuses as too close to another is told in plain words, and the form for a new account is shown again', async () => {
-  const create = async name => { await $('mode-create').fire('click'); $('username').value = name; $('password').value = $('password-confirm').value = PASSWORD; await $('auth-form').fire('submit'); };
+  // The wallet makes the password of a new key and shows it before the key is kept (the rule, vault.mjs RULE): read from
+  // its dialog, as a person writes it down, then "I have it".
+  const made = {};
+  const create = async name => {
+    await $('mode-create').fire('click'); $('username').value = name;
+    const sent = $('auth-form').fire('submit');
+    await until(() => $('made-dialog').open, 'the password the wallet made');
+    made[name] = $('made-login-shown').textContent;
+    $('made-dialog').returnValue = 'done'; $('made-dialog').open = false; await $('made-dialog').fire('close');
+    await sent;
+  };
   await freshPage();
   // The chain refuses to reveal a name that looks like an existing one. Its words reach the wallet through the gateway.
   // They are the engine's sentence, as it stood in the engine's own branch when this test was written.
@@ -431,7 +462,7 @@ test('creating an account: a name the chain refuses as too close to another is t
   assert.deepEqual([$('auth-heading').textContent, $('auth-submit').textContent, $('auth-panel').hidden, $('lock-button').hidden, $('password').value], ['Create your account', 'Create my account', false, true, '']);
   assert.equal(chain.posted.at(-1).kind, SDK.KINDS.reveal, 'the name was sent to the chain, which refused it');
   // The vault of that name is still in this browser. Opening it sends the same reveal again, and the answer is the same sentence.
-  await $('mode-unlock').fire('click'); $('username').value = 'bob_'; $('password').value = PASSWORD; await $('auth-form').fire('submit');
+  await $('mode-unlock').fire('click'); $('username').value = 'bob_'; $('password').value = made.bob_; await $('auth-form').fire('submit');
   assert.deepEqual([$('notice').textContent, $('auth-heading').textContent], [said, 'Create your account']);
   // The same with "an existing name" in the refusal, whatever stands around the words.
   chain.refusal = action => (action.kind === SDK.KINDS.reveal ? `reveal refused: name "${action.payload.name}" is too close to an existing name: erin` : null);
@@ -462,7 +493,7 @@ test('the same words in the refusal of a payment stay the gateway\'s words: the 
 test('a payment to a name that looks like the account\'s own name is warned about like a look-alike of a paid name, and needs the tick', async () => {
   // dana has paid carol from this browser, and nobody else. The payment the gateway refused in the test before this
   // one is no longer kept as pending (it never reached a block, and its nonce is still the account's next).
-  storage.setItem(namesKey('dana'), JSON.stringify({ paid: ['carol'] })); storage.removeItem(activityKey('dana')); storage.removeItem(`timecurrency.pending.v1:${NET1}:13`);
+  storage.removeItem(namesKey('dana')); storage.setItem(plainNamesKey('dana'), JSON.stringify({ paid: ['carol'] })); storage.removeItem(activityKey('dana')); storage.removeItem(`timecurrency.pending.v1:${NET1}:13`);
   await freshPage(); await unlock('dana');
   const before = chain.posted.length, held = row('d4na').balance;
   assert.equal(N.resembles('d4na', 'dana'), 'loose');
@@ -472,11 +503,11 @@ test('a payment to a name that looks like the account\'s own name is warned abou
   // Confirmed without the tick: it counts as cancelled, and nothing is signed.
   await armed(); assert.equal($('review-confirm').disabled, true, 'not without the tick');
   await close('confirm'); await step();
-  assert.deepEqual([chain.posted.length, row('d4na').balance, record('dana')], [before, held, { paid: ['carol'] }]);
+  assert.deepEqual([chain.posted.length, row('d4na').balance, await record('dana')], [before, held, { paid: ['carol'] }]);
   // Ticked: paid. From then on it is a name this account has paid, and is not warned about again.
   assert.deepEqual(await pay('d4na', '0.25'), own);
   assert.match($('notice').textContent, sentTo('d4na'));
-  assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).payload.to, record('dana')], [1, '14', { paid: ['carol', 'd4na'] }]);
+  assert.deepEqual([chain.posted.length - before, chain.posted.at(-1).payload.to, await record('dana')], [1, '14', { paid: ['carol', 'd4na'] }]);
   assert.deepEqual(await looked('d4na'), NOTHING_NEW);
   // The other answers are as they were: a look-alike of a paid name, a first payment, and the own name itself refused before any review.
   assert.deepEqual(await looked('karol'), alike('karol', 'carol'));

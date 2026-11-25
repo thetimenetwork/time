@@ -27,6 +27,7 @@ import './time-sdk.js';
 import { fetchCertifiedView, fetchLightBlock } from './certified-view.mjs';
 import { webhookAdapter, checkWebhookURL, withTimeout } from './security-watch-service.mjs';
 import { openIndex, createIndexer, paymentEvent, encodeCursor, decodeCursor, plainText, IndexerError, KIND_NAMES, MAX_ACTION_BYTES } from './indexer.mjs';
+import { touchesOfBytes } from './touches.mjs';
 
 const SDK = globalThis.TimeSDK;
 const MAX_U64 = 18446744073709551615n;
@@ -200,8 +201,93 @@ export function holderKey(client) {
   const match = /^([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):([0-9a-f]+)::\/64$/.exec(client);
   return match ? `${match[1]}:${match[2]}:${match[3]}:${(parseInt(match[4], 16) & 0xff00).toString(16)}::/56` : client;
 }
+/// The wider network of a client, for the order of the line of proof reads only (see createReadGate): the IPv6
+/// /48 of its /64 (what one site is commonly given), or the IPv4 /24 of its address. Nothing is limited by it.
+export function networkKey(client) {
+  const v6 = /^([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):[0-9a-f]+::\/64$/.exec(client);
+  if (v6) return `${v6[1]}:${v6[2]}:${v6[3]}::/48`;
+  const v4 = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(client);
+  return v4 ? `${v4[1]}.0/24` : client;
+}
+/// Proof reads: the routes that read the state with a proof, or blocks from the node (those of ROUTES marked
+/// `proof`). One client (an IPv4 address or an IPv6 /64, as the rate limit counts) has at most
+/// PROOF_READS_PER_CLIENT of them under way at once: one more is refused with 429 `too_many_reads`, whatever its
+/// budget. In all, READ_SLOTS reads of the state and READ_SLOTS reads of the node run at once; a read that finds
+/// them taken waits in a line of at most READ_LINE, for at most READ_WAIT_MS (see createReadGate).
+export const PROOF_READS_PER_CLIENT = 2, READ_SLOTS = 8, READ_LINE = 64, READ_WAIT_MS = 3000;
+/// The places for one kind of read: `slots` run at once. When all are taken, a read waits in a line of at most
+/// `line`, for at most `waitMs`, and the line is served fairly rather than in the order of arrival. The next place
+/// goes to the waiting read whose client has the fewest reads running; among those, to the one whose wider network
+/// (networkKey) has the fewest running; then to the one that came first. So a client that has nothing running goes
+/// before one that has a read running already, and one network that asks from many addresses goes after everybody
+/// else. When the line is full, a newcomer that ranks before the last of the line takes its place, and the last is
+/// refused. A refusal is 503 `busy` with Retry-After: the service is full, not the client over its limit.
+/// `client` null stands for the service's own reads (the fee, the timer that moves the light client on).
+export function createReadGate({ slots = READ_SLOTS, line = READ_LINE, waitMs = READ_WAIT_MS, busyMessage = 'Too many proofs are being read; try again shortly' } = {}) {
+  let running = 0, arrivals = 0;
+  const byClient = new Map(), byNetwork = new Map(), waiting = [];
+  const add = (map, key, n) => { const next = (map.get(key) || 0) + n; if (next > 0) map.set(key, next); else map.delete(key); };
+  const take = (client) => { running += 1; add(byClient, client, 1); add(byNetwork, networkKey(client), 1); };
+  const rank = (entry) => [byClient.get(entry.client) || 0, byNetwork.get(networkKey(entry.client)) || 0, entry.order];
+  const before = (a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i]; return false; };
+  const busy = () => new ApiError(503, 'busy', busyMessage, { retryAfter: 1 });
+  function leave(client) {
+    running -= 1; add(byClient, client, -1); add(byNetwork, networkKey(client), -1);
+    if (waiting.length === 0) return;
+    let best = 0;
+    for (let i = 1; i < waiting.length; i++) if (before(waiting[i], waiting[best])) best = i;
+    const [next] = waiting.splice(best, 1);
+    clearTimeout(next.timer); take(next.client); next.resolve();
+  }
+  function enter(client) {
+    if (running < slots) { take(client); return Promise.resolve(); }
+    return new Promise((resolve, reject) => {
+      const entry = { client, order: arrivals++, resolve, reject, timer: null };
+      if (waiting.length >= line) {
+        let last = 0;
+        for (let i = 1; i < waiting.length; i++) if (before(waiting[last], waiting[i])) last = i;
+        if (!before(entry, waiting[last])) { reject(busy()); return; }
+        const [out] = waiting.splice(last, 1);
+        clearTimeout(out.timer); out.reject(busy());
+      }
+      entry.timer = setTimeout(() => { const at = waiting.indexOf(entry); if (at >= 0) waiting.splice(at, 1); reject(busy()); }, waitMs);
+      entry.timer.unref?.();
+      waiting.push(entry);
+    });
+  }
+  return {
+    /// Runs `work` in a place of `client`'s, after waiting for one if need be.
+    async run(client, work) {
+      const who = client ?? 'this service';
+      await enter(who);
+      try { return await work(); } finally { leave(who); }
+    },
+    status: () => ({ running, waiting: waiting.length }),
+  };
+}
 /// A stream is not put out for another reader before it has been open this long.
 export const STREAM_MIN_AGE_MS = 5000;
+/// The share of `maxStreams`, in percent, that streams which follow an account never take: those places are kept
+/// for readers that follow none (an explorer's live view). See `admit`.
+export const UNFILTERED_STREAM_PERCENT = 20;
+/// Whether a request announces a body: a length other than 0, or a transfer coding.
+export const carriesBody = (headers) => headers['transfer-encoding'] !== undefined || (headers['content-length'] !== undefined && headers['content-length'] !== '0');
+/// Whether a browser loads this address for a page of another site in a way the page needs no permission for: an
+/// image, a script, a style sheet, an object, a frame, a prefetch. Such a request carries no Origin, so the origin
+/// rule never sees it, and a page that holds such an element makes every visitor's browser ask, under the visitor's
+/// own address: one popular page could spend the proof reads and the stream places of the whole service. A browser
+/// says what kind of request it makes (the fetch metadata: Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest). From
+/// another site (`cross-site`, and `same-site`: another name of the same domain is another origin too) two kinds pass:
+/// a CORS request (`cors`, which the origin rule then decides) and a person's own navigation to the address (a link
+/// followed, an address typed: `navigate` into a `document`). Every other kind is refused. A request without the
+/// headers is not judged here: it comes from a program, or from a browser that does not send them.
+export function embeddedElsewhere(headers) {
+  const site = headers['sec-fetch-site'], mode = headers['sec-fetch-mode'], dest = headers['sec-fetch-dest'];
+  if (site !== 'cross-site' && site !== 'same-site') return false;
+  if (mode === 'cors') return false;
+  if (mode === 'navigate') return dest !== undefined && dest !== 'document';
+  return true;
+}
 /// A token bucket per client: `burst` requests at once, refilled at `perSecond`. The table is
 /// bounded: clients whose bucket is full again are forgotten, then the oldest.
 export function createRateLimiter({ perSecond = 20, burst = 60, maxClients = 10000, now = Date.now } = {}) {
@@ -351,19 +437,26 @@ const blockView = (row) => ({
 /// - `rateLimit` { perSecond, burst }, `trustedProxies` (addresses whose X-Forwarded-For is believed);
 /// - `webhooks` [{ account, url, secret }];
 /// - `maxLagSeconds`, `stateTimeoutMs`, `stateRefreshMs` (how often the state reader's light client is moved on);
+/// - `maxProofReadsPerClient` (PROOF_READS_PER_CLIENT): proof reads one client may have under way at once;
 /// - `maxStreams`, `maxStreamsPerClient`, `maxStreamSeconds` (a stream is closed after this long and the reader
-///   reconnects), `reservedStreamClients` (addresses that always get a stream);
+///   reconnects), `reservedStreamClients` (addresses that always get a stream), `unfilteredStreamPercent` (the share
+///   of `maxStreams` that streams following an account never take: UNFILTERED_STREAM_PERCENT);
+/// - `maxTouchStreams` (2000; 0 sends none) and `maxTouchStreamsPerClient` (16): the hints for wallets
+///   (GET /v1/touches), a pool of their own beside the streams above, closed after `maxStreamSeconds` as well;
 /// - `explorer`: true serves the explorer's pages under /explorer/ (see EXPLORER_FILES);
 /// - `explorerJoin`: with `explorer`, this network's facts for the explorer's "Run a validator", served as
 ///   /explorer/join.json (see checkExplorerJoin); null serves none;
-/// - for tests: `readState`, `webhookFetcher`, `webhookTiming` { retryMs, attemptDelayMs }, `now`, `log`, `pollMs`, `autoStart`.
+/// - for tests: `readState`, `webhookFetcher`, `webhookTiming` { retryMs, attemptDelayMs }, `now`, `log`, `pollMs`, `autoStart`, `requestTimeoutMs`
+///   (15000: how long a request may take to arrive in full).
 export async function createApiService({
   trust, rpc, verifier, dataFile, startHeight = 1, host = '127.0.0.1', port = 8930, hosts = [], corsOrigins = [], rateLimit = {}, trustedProxies = [],
-  webhooks = [], webhookTiming = {}, maxLagSeconds = 120, maxStreams = 100, maxStreamsPerClient = 5, maxStreamSeconds = 900, reservedStreamClients = [],
-  stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, readState, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true,
+  webhooks = [], webhookTiming = {}, maxLagSeconds = 120, maxStreams = 100, maxStreamsPerClient = 5, maxStreamSeconds = 900, reservedStreamClients = [], unfilteredStreamPercent = UNFILTERED_STREAM_PERCENT,
+  maxProofReadsPerClient = PROOF_READS_PER_CLIENT, maxTouchStreams = 2000, maxTouchStreamsPerClient = 16, stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, readState, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true, requestTimeoutMs = 15000,
 }) {
   if (String(trust?.app_version) !== '4' || !/^[0-9a-f]{64}$/.test(trust?.network_id ?? '') || typeof trust?.chain_id !== 'string') throw new Error('trust is the application-4 trust manifest the SDK takes');
   for (const hook of webhooks) { checkWebhookURL(hook.url); PARAMETERS.account(hook.account); }
+  for (const [name, value, least, most] of [['maxTouchStreams', maxTouchStreams, 0, 100000], ['maxTouchStreamsPerClient', maxTouchStreamsPerClient, 1, 1000], ['maxProofReadsPerClient', maxProofReadsPerClient, 1, 64], ['unfilteredStreamPercent', unfilteredStreamPercent, 0, 90]])
+    if (!Number.isSafeInteger(value) || value < least || value > most) throw new Error(`${name} is a whole number from ${least} to ${most}`);
   if (explorerJoin !== null && explorer !== true) throw new Error('explorer_join is shown by the explorer this service serves: it needs serve_explorer');
   // Checked again here as the setting is checked, and turned into its answer once: the same bytes for every request.
   const joinBody = explorerJoin === null ? null : JSON.stringify(checkExplorerJoin(explorerJoin, trust.chain_id));
@@ -381,12 +474,12 @@ export async function createApiService({
   const streams = new Set();
   let explorerFiles;
   try { explorerFiles = explorer ? loadExplorerFiles() : null; } catch (error) { store.close(); throw error; }
-  let server, indexer, dispatcher, feeMicros = null, noAuction = null, feeAsked = 0, stateReads = 0, heartbeat = null, stateRefresh = null, closing = null;
+  let server, indexer, dispatcher, feeMicros = null, noAuction = null, feeAsked = 0, heartbeat = null, stateRefresh = null, closing = null;
   const startedAt = now();
 
   try {
     dispatcher = createWebhookDispatcher({ store, webhooks, fetcher: webhookFetcher, log, ...(webhookTiming.retryMs ? { baseMs: webhookTiming.retryMs } : {}), attemptDelayMs: webhookTiming.attemptDelayMs });
-    indexer = createIndexer({ rpc, trust, store, verifier, now, log, pollMs, webhookTargets: dispatcher.targetsOf, onBlock: (event) => { publish(event); dispatcher.kick(); } });
+    indexer = createIndexer({ rpc, trust, store, verifier, now, log, pollMs, webhookTargets: dispatcher.targetsOf, onBlock: (event) => { publish(event); touch(event); dispatcher.kick(); } });
     readState ??= createStateReader({ rpc, trust, verifier, storage: store.checkpointStorage('state') });
   } catch (error) { store.close(); throw error; }
 
@@ -423,37 +516,62 @@ export async function createApiService({
   }
 
   // ---- verified state
-  /// One verified read, bounded in time and in how many run at once.
-  async function verifiedState(selection) {
-    if (stateReads >= 8) throw new ApiError(503, 'busy', 'Too many state proofs are being read; try again shortly', { retryAfter: 1 });
-    stateReads += 1;
+  const stateGate = createReadGate({ busyMessage: 'Too many state proofs are being read; try again shortly' });
+  const nodeGate = createReadGate({ busyMessage: 'Too many requests are asking the node; try again shortly' });
+  /// The SDK's client, which every state read of this service shares, refuses a verified state that is lower than
+  /// the highest it verified before. Two reads that cross a block boundary can end in either order, so the one that
+  /// verified the lower state last is refused with these words although nothing is wrong. It is read once more: the
+  /// new read starts from the newest block. A second refusal is an answer.
+  const ROLLED_BACK = /^Chain proof rolled back$/;
+  /// One verified read, bounded in time and in how many run at once (`stateGate`). `client` is who asked, for the
+  /// order of the line; null for the service's own reads.
+  async function verifiedState(selection, client = null) {
     try {
-      const result = await withTimeout(readState(selection), stateTimeoutMs, undefined, 'node');
-      if (result?.verified !== true || result.state?.network_id !== store.networkId) throw new Error('The state was not verified');
-      try { feeMicros = SDK.networkFee(result.state); } catch { /* a state without the setting row: leave the fee unknown */ }
-      // Whether the network has a bitcoin auction is a setting of its genesis too.
-      if (result.state.config && typeof result.state.config === 'object') noAuction = result.state.config.all_new_time_to_validators === true;
-      return result;
+      return await stateGate.run(client, async () => {
+        const read = async () => { try { return await readState(selection); } catch (error) { if (ROLLED_BACK.test(String(error?.message))) return readState(selection); throw error; } };
+        const result = await withTimeout(read(), stateTimeoutMs, undefined, 'node');
+        if (result?.verified !== true || result.state?.network_id !== store.networkId) throw new Error('The state was not verified');
+        try { feeMicros = SDK.networkFee(result.state); } catch { /* a state without the setting row: leave the fee unknown */ }
+        // Whether the network has a bitcoin auction is a setting of its genesis too.
+        if (result.state.config && typeof result.state.config === 'object') noAuction = result.state.config.all_new_time_to_validators === true;
+        return result;
+      });
     } catch (error) {
       if (error instanceof ApiError) throw error;
       log('warn', 'a verified state read failed', { error: plainText(error?.message, 160) });
       throw new ApiError(503, 'state_unavailable', 'The current state could not be read with a valid proof (the node is behind, unreachable, or the trust anchor has expired); indexed routes still answer', { retryAfter: 5, cause: plainText(error?.message, 400) });
-    } finally { stateReads -= 1; }
+    }
   }
-  /// The same read for the routes many readers ask in the same words (the validators, the proof
-  /// of a block, an account's state): requests that arrive while it is under way share it, and
+  /// The same read for every request that asks in the same words (an account, its state, the
+  /// validators, the proof of a block): requests that arrive while it is under way share it, and
   /// its answer serves further ones for a moment. A proof is as good a second later; a reader
   /// whose light client is already ahead asks again.
   const sharedReads = new Map();
-  function sharedState(selection) {
+  function sharedState(selection, client = null) {
     const key = JSON.stringify(selection), at = now(), held = sharedReads.get(key);
     if (held && (held.result === undefined || (at >= held.at && at - held.at < STATE_SHARE_MS))) return held.reading;
     for (const [other, entry] of sharedReads) if (entry.result !== undefined && !(at >= entry.at && at - entry.at < STATE_SHARE_MS)) sharedReads.delete(other);
-    if (sharedReads.size >= 256) return verifiedState(selection);
+    if (sharedReads.size >= 256) return verifiedState(selection, client);
     const entry = { at, result: undefined, reading: null };
-    entry.reading = verifiedState(selection).then((result) => { entry.result = result; entry.at = now(); return result; }, (error) => { if (sharedReads.get(key) === entry) sharedReads.delete(key); throw error; });
+    entry.reading = verifiedState(selection, client).then((result) => { entry.result = result; entry.at = now(); return result; }, (error) => { if (sharedReads.get(key) === entry) sharedReads.delete(key); throw error; });
     sharedReads.set(key, entry);
     return entry.reading;
+  }
+  /// How many proof reads each client has under way (see PROOF_READS_PER_CLIENT). A request of a route marked
+  /// `proof` holds one from the moment its parameters are accepted until it is answered, whether its read is its own,
+  /// shared with others, or waiting for a place. Returns the function that gives it back.
+  const proofHolds = new Map();
+  function holdProofRead(client) {
+    const held = proofHolds.get(client) || 0;
+    if (held >= maxProofReadsPerClient) throw new ApiError(429, 'too_many_reads', `This address has ${maxProofReadsPerClient} proof reads under way already: ask again when one of them is answered`, { retryAfter: 1 });
+    proofHolds.set(client, held + 1);
+    let given = false;
+    return () => {
+      if (given) return;
+      given = true;
+      const left = (proofHolds.get(client) || 1) - 1;
+      if (left > 0) proofHolds.set(client, left); else proofHolds.delete(client);
+    };
   }
   /// The height of the highest verified state seen: the history of blocks is provable up to it.
   let reached = null;
@@ -469,15 +587,13 @@ export async function createApiService({
       proof: { query: result.requested ?? selection, view_proof: result.proof ?? null, how: 'Verify it yourself: update your light client to view_proof.light_block, then verifyViewProof(view_proof, trust, query) with the installed verifier. SDK: client.getVerifiedState(query).' } };
   };
   /// Material of the node that a caller's own light client verifies: bounded in time and in how
-  /// many requests ask the node at once. Nothing of it is this server's word.
-  let nodeReads = 0;
-  async function fromNode(read) {
-    if (nodeReads >= 8) throw new ApiError(503, 'busy', 'Too many requests are asking the node; try again shortly', { retryAfter: 1 });
-    nodeReads += 1;
-    try { return await withTimeout(read(), stateTimeoutMs, undefined, 'node'); } catch (error) {
+  /// many requests ask the node at once (`nodeGate`). Nothing of it is this server's word.
+  async function fromNode(read, client = null) {
+    try { return await nodeGate.run(client, () => withTimeout(read(), stateTimeoutMs, undefined, 'node')); } catch (error) {
+      if (error instanceof ApiError) throw error;
       if (error instanceof IndexerError && error.code === 'RPC_REFUSED') throw new ApiError(404, 'not_found', 'The node does not have this block (not made yet, or pruned)');
       throw new ApiError(503, 'node_unavailable', 'The node did not answer', { retryAfter: 5 });
-    } finally { nodeReads -= 1; }
+    }
   }
   /// The trust manifest the explorer's pages start from: the configured one, moved to the newest
   /// block one of this server's light clients verified, so that it is never older than the
@@ -585,9 +701,17 @@ export async function createApiService({
   ///   oldest, the holder with the most first. A stream is not put out in its first seconds. A
   ///   stream that follows an account is never put out for one that follows none, and goes last
   ///   in any case: whoever only wants a place does not get that of a reader of deposits.
+  /// - Streams that follow an account never hold more than `maxStreams` less `unfilteredStreamPercent`
+  ///   of it (a fifth unless set): the rest is kept for readers that follow none, such as an
+  ///   explorer's live view. Before 2026-11-24 forty addresses that each followed an account with
+  ///   five streams held all two hundred places of the test network, and since none of them could
+  ///   be put out for a reader that follows no account, the explorer's live view was locked out.
+  ///   With the share full, a newcomer that follows an account can only take the place of another
+  ///   such stream, by the rule above.
   /// - Reserved clients always get a place and are never put out. This is the only guarantee: a
   ///   service that must not lose its stream is listed there.
   /// A reader that is put out reconnects with the id of its last event and is sent what it missed.
+  const followingCap = maxStreams - Math.floor((maxStreams * unfilteredStreamPercent) / 100);
   function admit(client, follows) {
     const holder = holderKey(client), at = now();
     const mine = [...streams].filter((s) => s.holder === holder).length;
@@ -595,15 +719,81 @@ export async function createApiService({
     if (mine >= maxStreamsPerClient) refuse();
     if (reserved.has(client)) return;
     const open = [...streams].filter((s) => !s.reserved);
-    if (open.length < maxStreams) return;
     const counts = new Map();
     for (const s of open) counts.set(s.holder, (counts.get(s.holder) || 0) + 1);
-    const candidates = open.filter((s) => counts.get(s.holder) > mine && at - s.opened >= STREAM_MIN_AGE_MS && (follows || !s.account));
+    const movable = (s) => counts.get(s.holder) > mine && at - s.opened >= STREAM_MIN_AGE_MS;
+    const evict = (pool) => { const most = Math.max(...pool.map((s) => counts.get(s.holder))); endStream(pool.find((s) => counts.get(s.holder) === most), 'evicted'); };
+    // The places of streams that follow an account are all taken: only another such stream can make room.
+    if (follows && open.filter((s) => s.account).length >= followingCap) {
+      const candidates = open.filter((s) => s.account && movable(s));
+      if (candidates.length === 0) refuse();
+      evict(candidates); return;
+    }
+    if (open.length < maxStreams) return;
+    const candidates = open.filter((s) => movable(s) && (follows || !s.account));
     if (candidates.length === 0) refuse();
     // Streams that follow no account go first, also when the one asking follows one.
-    const pool = candidates.some((s) => !s.account) ? candidates.filter((s) => !s.account) : candidates;
-    const most = Math.max(...pool.map((s) => counts.get(s.holder)));
-    endStream(pool.find((s) => counts.get(s.holder) === most), 'evicted');
+    evict(candidates.some((s) => !s.account) ? candidates.filter((s) => !s.account) : candidates);
+  }
+
+  // ---- hints for wallets: "this account was touched at this height" (GET /v1/touches?account=N)
+  // A wallet whose page is open follows its own account here. A `touch` frame says only that a block included an
+  // action that names the account (touches.mjs says which); it carries no amount, name, kind or text, and says in
+  // its own fields that it is not proven. The wallet then reads its account's state with a proof, and what it shows
+  // comes from that read (web-v4/wallet/alerts.mjs). A false hint leads to "nothing new"; a missed one costs nothing.
+  // Nothing is kept for a wallet: no frame has an id, nothing is sent again, and a wallet that reconnects reads its
+  // state. The only memory is which open connection follows which account, and it goes with the connection.
+  // For a block, the work is one look-up per account the block touches, not one per open connection.
+  // Larger scale, not built: one message per block for everybody (or per bucket of account numbers) that lists the
+  // touched accounts, sent through a content network; each wallet checks on its own device whether its account is
+  // in it. The server then keeps no account per connection at all.
+  const touchStreams = new Set(), following = new Map();
+  function forgetTouch(stream) {
+    if (!touchStreams.delete(stream)) return;
+    const set = following.get(stream.account);
+    if (set) { set.delete(stream); if (set.size === 0) following.delete(stream.account); }
+  }
+  function endTouch(stream, reason) {
+    forgetTouch(stream);
+    if (stream.response.destroyed || stream.response.writableEnded) return;
+    send(stream, frame('bye', null, { reason, message: 'Reconnect, and read the state of the account with a proof: touches are never sent again' }));
+    stream.response.end();
+  }
+  function touch({ block, actions = [] }) {
+    if (following.size === 0) return;
+    // A block the index reaches late (it catches up after a stop) is hinted to nobody: a wallet that was not
+    // connected then reads its state when it connects, and one that was has read it since.
+    if (now() - Number(block.time_micros) / 1000 > maxLagSeconds * 1000) return;
+    const named = new Set();
+    for (const action of actions) {
+      for (const account of touchesOfBytes(action.raw, store.networkId).touched) named.add(account);
+      // The recipient of a waiting payment that went through, where the index tied it to its request.
+      if (typeof action.recipient === 'string') named.add(action.recipient);
+    }
+    const height = String(block.height);
+    for (const account of named) {
+      const set = following.get(account);
+      if (!set) continue;
+      const text = frame('touch', null, { source: 'index', proven: false, account, height });
+      for (const stream of [...set]) if (!send(stream, text)) forgetTouch(stream);
+    }
+  }
+  /// A place for a new touch stream of `client`, or a refusal. Counted per holder as `admit` counts (an IPv4
+  /// address, or an IPv6 /56), at most `maxTouchStreamsPerClient` each and `maxTouchStreams` in all. When every
+  /// place is taken, the holder with the most streams, more than the one asking, gives up its oldest one that has
+  /// been open for a few seconds.
+  function admitTouch(client) {
+    if (maxTouchStreams === 0) throw new ApiError(503, 'touches_off', 'This service sends no touches');
+    const holder = holderKey(client), at = now(), counts = new Map();
+    const refuse = () => { throw new ApiError(503, 'too_many_streams', 'Too many event streams are open', { retryAfter: 10 }); };
+    for (const s of touchStreams) counts.set(s.holder, (counts.get(s.holder) || 0) + 1);
+    const mine = counts.get(holder) || 0;
+    if (mine >= maxTouchStreamsPerClient) refuse();
+    if (touchStreams.size < maxTouchStreams) return;
+    const candidates = [...touchStreams].filter((s) => counts.get(s.holder) > mine && at - s.opened >= STREAM_MIN_AGE_MS);
+    if (candidates.length === 0) refuse();
+    const most = Math.max(...candidates.map((s) => counts.get(s.holder)));
+    endTouch(candidates.find((s) => counts.get(s.holder) === most), 'evicted');
   }
 
   // ---- routes
@@ -624,7 +814,7 @@ export async function createApiService({
       if (s.consecutive_failures >= 5) reasons.push('indexer_failing');
       return { status: reasons.length ? 503 : 200, body: { ok: reasons.length === 0, reasons, indexed_height: s.indexed_height === null ? null : String(s.indexed_height), seconds_behind: s.seconds_behind,
         blocks_behind_reported: s.blocks_behind_reported, headers_to_verify: s.headers_to_verify, consecutive_failures: s.consecutive_failures, last_error: s.last_error, fault: s.fault,
-        streams: streams.size, webhooks: dispatcher.status() } };
+        streams: streams.size, touch_streams: touchStreams.size, webhooks: dispatcher.status() } };
     },
     'GET /v1/openapi.json': () => ({ status: 200, raw: OPENAPI }),
     'GET /v1/blocks': ({ query }) => {
@@ -641,7 +831,7 @@ export async function createApiService({
       if (!row) throw new ApiError(404, 'not_found', 'This block is not in the index', { body: { index: indexNote() } });
       return { status: 200, body: fromIndex({ block: blockView(row), verify: { height: String(row.height), block_hash: row.hash.toUpperCase(), how: 'createLightClient(...).updateTo(height) verifies the header against your trust anchor; its block_hash must equal this one.' } }) };
     },
-    'GET /v1/blocks/{height}/proof': async ({ params }) => {
+    'GET /v1/blocks/{height}/proof': async ({ params, client }) => {
       // The state keeps a history of the hashes of its blocks and proves any of them up to its
       // own height. That proof stays when the state drops a block's own rows after fourteen days
       // (`history_pruned_through` counts those rows, not the history), so the age of a block is no
@@ -659,12 +849,12 @@ export async function createApiService({
       // shows its height.
       const held = () => reached !== null && params.height + 1 <= reached;
       if (!held()) {
-        const plain = await sharedState({});
+        const plain = await sharedState({}, client);
         noteReach(plain.state);
         if (!held()) throw missing(fromState(plain, {}));
       }
       let result;
-      try { result = await sharedState(selection); } catch (error) {
+      try { result = await sharedState(selection, client); } catch (error) {
         // The node refuses a question about history it does not hold, and says so (v5/README.md,
         // "State sync and pruning"). That refusal is this service's own node speaking of itself.
         if (error instanceof ApiError && /holds no block history at or below height/.test(error.extra.cause ?? '')) throw new ApiError(404, 'history_not_held', 'The node of this service holds no history for this block: it joined the network from a snapshot of a later height. A service whose node has the history can prove the block');
@@ -674,32 +864,32 @@ export async function createApiService({
       noteReach(result.state);
       const rows = blocks.map((height) => result.state.canonical_blocks?.[height]);
       if (!rows.every((row) => row && typeof row.hash === 'string')) throw missing(proven);
-      const signed = await fromNode(() => Promise.all(blocks.map((height) => rpc('/commit', { height }))));
+      const signed = await fromNode(() => Promise.all(blocks.map((height) => rpc('/commit', { height }))), client);
       return { status: 200, body: { ...proven, block: { height: blocks[0], hash: String(rows[0].hash).toUpperCase(), time_micros: String(rows[0].time_micros) }, next_block: { height: blocks[1], hash: String(rows[1].hash).toUpperCase(), time_micros: String(rows[1].time_micros) },
         signed_header: signed[0]?.signed_header ?? null, next_signed_header: signed[1]?.signed_header ?? null,
         verify: { how: 'The two block hashes are proven by proof.view_proof. The signed headers come from the node unchecked: verifyReceipt({ tx, signed_header, next_signed_header, anchor: proof.view_proof }, trust) with the installed verifier checks that they are these two blocks and that the action (tx, in the form GET /v1/actions/{hash} describes) is in the first.' } } };
     },
-    'GET /v1/light-blocks/{height}': async ({ params }) => {
-      const light = await fromNode(() => fetchLightBlock({ rpc, height: String(params.height) }));
+    'GET /v1/light-blocks/{height}': async ({ params, client }) => {
+      const light = await fromNode(() => fetchLightBlock({ rpc, height: String(params.height) }), client);
       return { status: 200, body: { source: 'node', proven: false, height: String(params.height), light_block: light,
         verify: { how: 'This is what the node says, unchecked. A light client verifies it: createLightClient({ trust, verifier, fetchBlock }).updateToBlock(light_block), or let fetchBlock return it.' } } };
     },
-    'GET /v1/validators': async () => {
+    'GET /v1/validators': async ({ client }) => {
       // Whether the state is asked about its upgrade row is not decided here: the SDK's client
       // asks it with every read when the trust data says that the network's nodes report upgrades
       // (`trust.nodes_report_upgrades`), and never otherwise (a node from before the question
       // refuses it). A state that was not asked says nothing about the row, so the answer then
       // has no `upgrade` at all: absence of the field is "not read", never "no plan".
       const selection = { include_pos: true };
-      const result = await sharedState(selection), state = result.state;
+      const result = await sharedState(selection, client), state = result.state;
       return { status: 200, body: { ...fromState(result, selection), protocol_version: state.protocol_version ?? null,
         // `pos` is the staking row of the state as it is: who validates now (active), the sets already announced (scheduled).
         pos: state.pos ?? null,
         ...(Object.hasOwn(state, 'upgrade') ? { upgrade: state.upgrade } : {}) } };
     },
-    'GET /v1/accounts/{id}/state': async ({ params }) => {
+    'GET /v1/accounts/{id}/state': async ({ params, client }) => {
       const id = params.id, selection = { ids: [id], owners: [id], candidates: [id], include_security: true };
-      const result = await sharedState(selection), state = result.state, proven = fromState(result, selection);
+      const result = await sharedState(selection, client), state = result.state, proven = fromState(result, selection);
       const account = (state.accounts ?? []).find((item) => String(item.id) === id);
       if (!account) throw new ApiError(404, 'account_not_found', 'No such account in the verified state', { body: proven });
       return { status: 200, body: { ...proven, account,
@@ -734,9 +924,9 @@ export async function createApiService({
         },
       }) };
     },
-    'GET /v1/accounts/{account}': async ({ params }) => {
+    'GET /v1/accounts/{account}': async ({ params, client }) => {
       const wanted = params.account, selection = wanted.id ? { ids: [wanted.id] } : { names: [wanted.name] };
-      const result = await verifiedState(selection), state = result.state;
+      const result = await sharedState(selection, client), state = result.state;
       const account = state.accounts.find((item) => (wanted.id ? String(item.id) === wanted.id : item.name === wanted.name));
       // `indexed_height` stands next to `state_height` on purpose: what the index does not show is
       // only known to be absent from the chain up to the indexed height, and the state may be ahead.
@@ -787,7 +977,7 @@ export async function createApiService({
       return { status: 200, body: fromIndex({ account: params.id, order, filters: { reference: query.reference ?? null, from: query.from ?? null }, ...listed, items: listed.items.map(actionView),
         verify: { how: 'Before crediting a deposit, verify its hash: GET /v1/actions/{hash} gives the proof material, and client.waitReceipt(hash) of the SDK checks it against validator signatures. A reference does not name its payer: more than one payment can carry it, so filter by the payer (from) as well and credit each hash once.' } }) };
     },
-    'POST /v1/transactions': async ({ body }) => {
+    'POST /v1/transactions': async ({ body, client }) => {
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join(',') !== 'tx' || typeof body.tx !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.tx)) bad('invalid_body', 'The body is {"tx": "<the signed action in base64>"}');
       const raw = Buffer.from(body.tx, 'base64');
       if (raw.length > MAX_ACTION_BYTES || raw.length < 64 || raw.toString('base64') !== body.tx) bad('invalid_body', 'tx is canonical base64 of one signed action');
@@ -829,7 +1019,7 @@ export async function createApiService({
       // 63), and the one kind that carries no signature (40, the relay of bitcoin headers): it is
       // passed on only when a proof of the network's configuration says the network takes it.
       if ([40, 41, 42, 60, 61, 62].includes(action.kind)) {
-        if (noAuction === null && action.kind === 40) await verifiedState({});
+        if (noAuction === null && action.kind === 40) await verifiedState({}, client);
         if (noAuction === true) bad('not_on_this_network', 'This network has no bitcoin auction and refuses this kind of action');
         if (noAuction === null && action.kind === 40) throw new ApiError(503, 'state_unavailable', 'The configuration of the network could not be read with a proof; an unsigned relay is not passed on without it', { retryAfter: 5 });
       }
@@ -871,6 +1061,19 @@ export async function createApiService({
       if (response.destroyed) return { taken: true };
       streams.add(stream);
       response.on('close', () => streams.delete(stream));
+      return { taken: true };
+    },
+    'GET /v1/touches': ({ query, response, client }) => {
+      if (query.account === undefined) bad('invalid_account', 'Touches follow one account: give its number, ?account=<number>');
+      admitTouch(client);
+      response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
+      const stream = { response, client, holder: holderKey(client), account: query.account, opened: now() };
+      response.write(`retry: 3000\n${frame('hello', null, { source: 'index', proven: false, index: indexNote(), account: stream.account, direction: null })}`);
+      if (response.destroyed) return { taken: true };
+      touchStreams.add(stream);
+      if (!following.has(stream.account)) following.set(stream.account, new Set());
+      following.get(stream.account).add(stream);
+      response.on('close', () => forgetTouch(stream));
       return { taken: true };
     },
   };
@@ -925,6 +1128,17 @@ export async function createApiService({
       return await crypto.subtle.verify('Ed25519', key, signature, signed);
     } catch { return false; }
   }
+  /// A request that carries a body ends its connection with its answer. Answered before its body was read (a
+  /// refusal of its route, method, rate, size or kind of body), a connection used to stay open for as long as the
+  /// body kept coming, a byte at a time, whatever the answer had been: before 2026-11-24 a caller over its rate
+  /// limit, whose requests cost it nothing, could hold every connection of the server that way. What is still
+  /// coming after the answer is read and dropped for a moment, so that the answer is not lost to a reset, and then
+  /// the connection is closed. A body sent in full with its request is not held up by any of this.
+  function endsWithItsAnswer(request, response) {
+    if (!carriesBody(request.headers)) return;
+    response.setHeader('Connection', 'close');
+    response.once('finish', () => { if (!request.complete) { request.resume(); setTimeout(() => request.destroy(), 1000).unref?.(); } });
+  }
   /// The JSON body of a request, at most MAX_BODY_BYTES. What comes after the limit is not kept.
   async function readBody(request) {
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) throw new ApiError(415, 'unsupported_media_type', 'Send JSON with Content-Type: application/json');
@@ -944,6 +1158,7 @@ export async function createApiService({
   }
   async function handle(request, response) {
     for (const [name, value] of Object.entries(BASE_HEADERS)) response.setHeader(name, value);
+    endsWithItsAnswer(request, response);
     try {
       // Only this server's own names are answered, so a web page cannot reach it under another
       // name (DNS rebinding). A request that names two hosts is refused: this server and a proxy
@@ -984,6 +1199,7 @@ export async function createApiService({
       let url;
       try { url = new URL(target, 'http://api.invalid'); } catch { throw invalid(); }
       if (url.pathname !== target.split('?')[0]) throw invalid();
+      if (url.pathname.startsWith('/v1/') && embeddedElsewhere(request.headers)) throw new ApiError(403, 'cross_site_refused', 'A page of another site may not load the API as an image, script, style sheet, object or frame. Read it with fetch from an allowed origin, or from a program');
       // The explorer's pages, if this service serves them: a fixed table from address to bytes read at
       // start. The path of the request is only ever compared with the keys of that table.
       if (explorerFiles && request.method === 'GET' && (url.pathname === '/explorer' || url.pathname.startsWith(EXPLORER_PREFIX))) {
@@ -1035,7 +1251,9 @@ export async function createApiService({
         query[name] = PARAMETERS[route.query[name]](value);
       }
       const body = route.method === 'POST' ? await readBody(request) : undefined;
-      const result = await route.handler({ params, query, body, request, response, client });
+      const release = route.proof ? holdProofRead(client) : null;
+      let result;
+      try { result = await route.handler({ params, query, body, request, response, client }); } finally { release?.(); }
       if (result.taken) return;
       if (result.raw !== undefined) reply(response, result.status, result.raw);
       else reply(response, result.status, result.body);
@@ -1047,7 +1265,10 @@ export async function createApiService({
       failure(response, new ApiError(500, 'internal', 'The request could not be answered'));
     }
   }
-  server = http.createServer((request, response) => { handle(request, response); });
+  // Node holds a request to its time limit (`requestTimeout`) only when it checks, every `connectionsCheckingInterval`:
+  // 30 seconds unless set. A body sent a byte a second within the rate limit held a connection about 30 seconds
+  // before 2026-11-24, not 15. It is checked every second.
+  server = http.createServer({ connectionsCheckingInterval: 1000 }, (request, response) => { handle(request, response); });
   // A request that is not HTTP, or whose headers are too long or too slow: a short answer, then
   // the connection is closed (after a moment, so that the answer is not lost to a reset).
   server.on('clientError', (error, socket) => {
@@ -1056,12 +1277,13 @@ export async function createApiService({
     socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     setTimeout(() => socket.destroy(), 1000).unref?.();
   });
-  server.requestTimeout = 15000; server.headersTimeout = 5000; server.keepAliveTimeout = 5000; server.maxRequestsPerSocket = 1000; server.maxConnections = 2048;
+  server.requestTimeout = requestTimeoutMs; server.headersTimeout = Math.min(5000, requestTimeoutMs); server.keepAliveTimeout = 5000; server.maxRequestsPerSocket = 1000; server.maxConnections = 2048 + maxTouchStreams;
   const close = () => closing ??= (async () => {
     clearInterval(heartbeat); clearInterval(stateRefresh);
     await indexer.stop();
     await dispatcher.stop();
     for (const stream of streams) stream.response.end();
+    for (const stream of touchStreams) stream.response.end();
     if (server.listening) await new Promise((resolve) => { server.close(() => resolve()); server.closeAllConnections?.(); });
     store.close();
   })();
@@ -1070,7 +1292,10 @@ export async function createApiService({
   } catch (error) { await close(); throw error; }
   // Comment lines keep idle streams open through proxies. A stream that has been open for the
   // longest time allowed is ended: its reader reconnects, and the place is free for whoever asks.
-  const tend = () => { for (const stream of [...streams]) { if (now() - stream.opened > maxStreamSeconds * 1000) endStream(stream, 'lifetime'); else send(stream, ': keep-alive\n\n'); } };
+  const tend = () => {
+    for (const stream of [...streams]) { if (now() - stream.opened > maxStreamSeconds * 1000) endStream(stream, 'lifetime'); else send(stream, ': keep-alive\n\n'); }
+    for (const stream of [...touchStreams]) { if (now() - stream.opened > maxStreamSeconds * 1000) endTouch(stream, 'lifetime'); else if (!send(stream, ': keep-alive\n\n')) forgetTouch(stream); }
+  };
   heartbeat = setInterval(tend, 15000);
   heartbeat.unref?.();
   if (autoStart) {
@@ -1088,7 +1313,8 @@ export async function createApiService({
 }
 
 /// Every route of the API. `query` names each query parameter and the form it must have (a key
-/// of PARAMETERS); `cost` is what a call takes from the caller's rate-limit bucket.
+/// of PARAMETERS); `cost` is what a call takes from the caller's rate-limit bucket; `proof` marks
+/// the routes that read the state with a proof or blocks from the node (see PROOF_READS_PER_CLIENT).
 export const ROUTES = Object.freeze([
   { method: 'GET', path: '/v1/status', query: {}, cost: 1 },
   { method: 'GET', path: '/v1/health', query: {}, cost: 1 },
@@ -1096,14 +1322,15 @@ export const ROUTES = Object.freeze([
   { method: 'GET', path: '/v1/blocks', query: { limit: 'limit', cursor: 'height', order: 'order' }, cost: 1 },
   { method: 'GET', path: '/v1/blocks/{height}', query: {}, cost: 1 },
   { method: 'GET', path: '/v1/blocks/{height}/actions', query: { limit: 'limit', cursor: 'cursor' }, cost: 1 },
-  { method: 'GET', path: '/v1/blocks/{height}/proof', query: {}, cost: 5 },
-  { method: 'GET', path: '/v1/light-blocks/{height}', query: {}, cost: 5 },
-  { method: 'GET', path: '/v1/validators', query: {}, cost: 5 },
-  { method: 'GET', path: '/v1/accounts/{id}/state', query: {}, cost: 5 },
+  { method: 'GET', path: '/v1/blocks/{height}/proof', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/light-blocks/{height}', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/validators', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/accounts/{id}/state', query: {}, cost: 5, proof: true },
   { method: 'GET', path: '/v1/actions/{hash}', query: {}, cost: 5 },
-  { method: 'GET', path: '/v1/accounts/{account}', query: {}, cost: 5 },
+  { method: 'GET', path: '/v1/accounts/{account}', query: {}, cost: 5, proof: true },
   { method: 'GET', path: '/v1/accounts/{id}/activity', query: { limit: 'limit', cursor: 'cursor', order: 'order' }, cost: 1 },
   { method: 'GET', path: '/v1/accounts/{id}/payments', query: { limit: 'limit', cursor: 'cursor', order: 'order', reference: 'reference', from: 'account' }, cost: 1 },
   { method: 'POST', path: '/v1/transactions', query: {}, cost: 10 },
   { method: 'GET', path: '/v1/stream', query: { account: 'account', direction: 'direction', after: 'position' }, cost: 10 },
+  { method: 'GET', path: '/v1/touches', query: { account: 'account' }, cost: 10 },
 ].map(Object.freeze));

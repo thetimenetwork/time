@@ -43,6 +43,9 @@ export const STRINGS = Object.freeze({
     'source.bytes': 'Read by this page from the checked bytes and the checked block.',
     'source.unconfirmed': 'The service\'s word, not confirmed by the check.',
     'origin.bytes': 'Checked in your browser. What follows was read by this page from the checked bytes and the checked block:',
+    // The one line beside every verdict of a check: what it was checked against, and how a reader makes sure of that.
+    'check.against': 'Checked against network id {network}, which came with this page; to be sure, compare it with the id from a source you trust.',
+    'check.againstSame': 'Checked against network id {network}, which this same service supplied; to be sure, compare it with the id from a source you trust.',
 
     // ---- states
     'state.loading': 'Loading…',

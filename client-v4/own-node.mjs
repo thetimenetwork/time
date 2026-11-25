@@ -58,6 +58,12 @@ function codeOf(result) {
   return Number.isSafeInteger(result.code) && result.code >= 0 ? { code: result.code } : { code: JSON.stringify(result.code) ?? String(result.code) };
 }
 
+// Why a connection failed, without an address: the system's code (ECONNREFUSED), or the words with any address taken out.
+function connectionProblem(error) {
+  const code = String(error?.cause?.code ?? '');
+  if (/^[A-Z][A-Z0-9_]{1,40}$/.test(code)) return code;
+  return String(error?.cause?.message ?? said(error)).replace(/\[[0-9A-Fa-f:.]+\](?::\d{1,5})?|\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b|\b[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}\b/g, 'the node').slice(0, 100);
+}
 function nodeUrl(url) {
   let base = null;
   try { if (typeof url === 'string') base = new URL(url); } catch {}
@@ -74,8 +80,10 @@ export function ownNodeRpc(url) {
     const target = new URL(method.slice(1), base);
     for (const [key, value] of Object.entries(parameters)) target.searchParams.set(key, String(value));
     let response;
+    // A refusal names no address: the node's is the merchant's own business (endpoint, on the alerts), and the words
+    // of a failed connection can hold one too.
     try { response = await fetch(target, { redirect: 'error', signal, headers: { accept: 'application/json' } }); }
-    catch (error) { fail(`unreachable at ${base.host} (${error?.cause?.code ?? error?.cause?.message ?? said(error)})`); }
+    catch (error) { fail(`unreachable (${connectionProblem(error)})`); }
     let size = 0; const chunks = [];
     for await (const chunk of response.body ?? []) { size += chunk.length; if (size > MAX_ANSWER) fail('answer exceeds 16 MiB'); chunks.push(chunk); }
     let answer = null;

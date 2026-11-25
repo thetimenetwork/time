@@ -77,10 +77,31 @@ test('the text of a post: trimmed, 1 to 500 characters, line breaks but no other
   for (const bad of ['tab\there', 'bell\u0007', 'nul\u0000x', 'cr\ronly', 'esc\u001b[31m', 'del\u007f', 'c1\u0085', 'vt\u000bx']) refused(bad, /control characters/);
   for (const bad of ['‮evil', 'x⁦y', 'x‪y']) refused(bad, /direction/);
   refused('\ud800', /not valid Unicode/); refused(5, /is text/); refused(null, /is text/); refused(['x'], /is text/);
-  assert.deepEqual(POST_LIMITS, { maxChars: 500, perAccount: 20, windowMs: 86400000, keep: 500, page: 50, maxRawChars: 2000 });
+  assert.deepEqual(POST_LIMITS, { maxChars: 500, perAccount: 20, windowMs: 86400000, perHour: 60, keep: 500, keepMs: 7 * 86400000, page: 50, maxRawChars: 2000, maxMarks: 4, maxInvisible: 16 });
 });
 
-test('the store: 20 posts per account in 24 hours whatever is deleted, the newest 500 kept, read back after a restart', async () => {
+test('a post paints inside its box: at most 4 combining marks on a letter, at most 16 characters that take no room', async () => {
+  const refused = (value, pattern) => assert.throws(() => checkPostText(value), error => error.httpStatus === 400 && pattern.test(error.message), JSON.stringify(value).slice(0, 80));
+  // What people write passes: accents, Vietnamese (two marks, decomposed), Hebrew with points, Thai with tone marks,
+  // Hindi, emoji with a skin tone, a keycap, a flag and families joined by zero width joiners.
+  for (const ok of ['café crème', 'Vie\u0323\u0302t Nam', 'שָׁלוֹם', 'น้ำ ก็่', 'नमस्ते', '\u{1F44B}\u{1F3FD}', '1\uFE0F\u20E3', '\u{1F1EB}\u{1F1F7}', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'.repeat(20), 'e' + '\u0301'.repeat(4)])
+    assert.equal(checkPostText(ok), ok.trim());
+  // Five marks on one letter, and the post made of hundreds (it painted over the page: audit G-8), are refused.
+  refused('e' + '\u0301'.repeat(5), /at most 4 accents or other combining marks/);
+  refused('Z' + '\u0336\u0353\u0316\u0300\u0301\u0302'.repeat(60) + 'algo', /at most 4 accents/);
+  // Up to 16 characters that take no room pass; a seventeenth is refused, however they are mixed.
+  assert.equal(checkPostText('a\u200Bb'.repeat(16)), 'a\u200Bb'.repeat(16));
+  refused('a\u200Bb'.repeat(17), /at most 16 characters that take no room/);
+  refused('x' + ['\u200C', '\u2060', '\uFEFF', '\u00AD', '\u034F', '\u200E', '\u3164', '\u180E', '\u2063'].join('y').repeat(2), /take no room/);
+  // A joiner between two emoji is part of the emoji: forty of them are not counted; between letters it is.
+  assert.ok(checkPostText('\u{1F469}\u200D\u{1F4BB} '.repeat(40)));
+  refused('a\u200Db'.repeat(17), /take no room/);
+  // The page cuts what still reaches beyond a post at the post's edges.
+  const css = await readFile(new URL('../web-v4/merchant/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\n\.post \{[^}]*overflow: hidden;[^}]*contain: paint;[^}]*\}/);
+});
+
+test('the store: 20 posts per account in 24 hours whatever is deleted, a week kept and then the newest 500, read back after a restart', async () => {
   const directory = await temporary(), filename = path.join(directory, 'blog.sqlite');
   let time = Date.UTC(2026, 10, 20, 12, 0, 0), store = createBlogStore({ filename, networkId: NETWORK, now: () => time });
   try {
@@ -102,20 +123,44 @@ test('the store: 20 posts per account in 24 hours whatever is deleted, the newes
     // Name and account come from the caller (the server's session); a name the chain would not give is stored as none.
     assert.equal(store.publish({ accountId: '9', name: '<b>x</b>', text: 'x' }).name, null);
     assert.throws(() => store.publish({ accountId: 'x', name: 'a', text: 'x' }), /author account/);
-    // The newest 500 stay: 26 accounts write 20 posts each.
-    for (let account = 100; account < 126; account++) for (let i = 0; i < 20; i++) store.publish({ accountId: String(account), name: `user${account}`, text: `${account}/${i}` });
-    let all = [], page = store.list(); while (true) { all.push(...page.posts); if (!page.more) break; page = store.list({ before: page.posts.at(-1).id }); }
-    assert.equal(all.length, 500); assert.equal(all[0].text, '125/19'); assert.equal(all.at(-1).text, '101/0');
+    // 26 accounts write 20 posts each, one every 62 seconds (the blog takes 60 an hour from everyone together): none is
+    // deleted, since none is a week old.
+    const read = () => { const out = []; let at = store.list(); while (true) { out.push(...at.posts); if (!at.more) break; at = store.list({ before: at.posts.at(-1).id }); } return out; };
+    const before = read().length;
+    for (let account = 100; account < 126; account++) for (let i = 0; i < 20; i++) { time += 62000; store.publish({ accountId: String(account), name: `user${account}`, text: `${account}/${i}` }); }
+    let all = read(), page;
+    assert.equal(all.length, before + 520, 'a post younger than a week is never deleted to make room'); assert.equal(all[0].text, '125/19');
     assert.equal(store.list().posts.length, 50); assert.equal(store.list({ before: all[0].id }).posts[0].id, all[1].id);
     assert.throws(() => store.list({ before: 'x' }), error => error.httpStatus === 400);
     store.close(); store = createBlogStore({ filename, networkId: NETWORK, now: () => time });
     page = store.list(); assert.deepEqual(page.posts, all.slice(0, 50)); assert.equal(page.more, true);
     // The per-account record is read back too.
-    assert.throws(() => store.publish({ accountId: '7', name: 'bob', text: 'after restart' }), /20 posts/);
+    assert.throws(() => store.publish({ accountId: '125', name: 'user125', text: 'after restart' }), /20 posts/);
+    // A week after the first of them, the next post leaves the newest 500 and deletes the older ones beyond.
+    time = Date.UTC(2026, 10, 28, 12, 30, 0); store.publish({ accountId: '126', name: 'user126', text: 'a week later' });
+    all = read();
+    assert.equal(all.length, 500); assert.equal(all[0].text, 'a week later'); assert.equal(all[1].text, '125/19'); assert.equal(all.at(-1).text, '101/1');
     store.close(); store = null;
     // A database of another network is refused.
     assert.throws(() => createBlogStore({ filename, networkId: 'cd'.repeat(32) }), /another network/);
   } finally { store?.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('everyone together: 60 posts an hour, then a post is refused and nobody else\'s is deleted (audit G-4)', async () => {
+  const directory = await temporary(), filename = path.join(directory, 'blog.sqlite');
+  let time = Date.UTC(2026, 10, 24, 9, 0, 0); const store = createBlogStore({ filename, networkId: NETWORK, now: () => (time += 1000) });
+  try {
+    // Thirty people write a post each; then 25 accounts try to write 20 posts each at once (audit proof poc3.mjs, part 2).
+    for (let v = 0; v < 30; v++) store.publish({ accountId: String(1000 + v), name: `victim${v}`, text: `a post by someone else ${v}` });
+    let refused = 0, published = 0, said = null;
+    for (let a = 0; a < 25; a++) for (let p = 0; p < 20; p++) try { store.publish({ accountId: String(a + 1), name: `spam${a}`, text: 'spam' }); published++; } catch (error) { refused++; said ??= error; assert.equal(error.httpStatus, 429); }
+    assert.deepEqual([published, refused], [30, 470]);
+    assert.match(said.message, /^The blog has taken 60 posts in the last hour from everyone together, the most this demo takes\. You can publish again after 2026-11-24 10:01 UTC\.$/);
+    const all = []; let page = store.list(); all.push(...page.posts); while (page.more) { page = store.list({ before: all.at(-1).id }); all.push(...page.posts); }
+    assert.equal(all.filter(post => Number(post.accountId) >= 1000).length, 30, 'every post of the thirty is still there');
+    // An hour after the first posts, the blog takes posts again.
+    time = Date.UTC(2026, 10, 24, 10, 1, 0); assert.equal(store.publish({ accountId: '1000', name: 'victim0', text: 'again' }).text, 'again');
+  } finally { store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test('the supporter mark: only an order the server settled after verifying its payment', async () => {

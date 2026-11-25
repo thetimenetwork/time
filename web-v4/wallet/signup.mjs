@@ -3,14 +3,15 @@
 // first block: a login key, a payment key and two recovery papers in their roles, and a daily limit, registered through
 // the sponsor by `client.registerProtected` (client-v4/time-sdk.js). signup-ui.mjs is the page part.
 //
-// What this browser keeps while a sign-up is under way, from the moment the papers were checked until the chain holds
+// What this browser keeps while a sign-up is under way, from the moment the recovery words were shown and "Create my account" pressed until the chain holds
 // the account (security-flows.mjs, vaultSlots):
-// - `login`: the registration key, sealed under the login password, as a vault of the kind every wallet of this name
-//   opens (vault.mjs, version 1), with the salt of the name. Opening the account with the login password opens it, and the
-//   wallet goes on from what the chain shows.
-// - `nextLogin`, `nextSpend`: the login key under the login password and the payment key under the payment password,
-//   kept aside (stageVaults) until the chain holds them; then they take the places of the live keys (settleStaged), and
-//   the registration key, which is on no account, is overwritten.
+// - `login`: the registration key, with the salt of the name, sealed under the new login key (vault.mjs, version 4: the
+//   rule, vault.mjs RULE; before it, under the login password, version 1, which still opens). Opening the account with
+//   the login password opens the login key, which opens it, and the wallet goes on from what the chain shows.
+// - `nextLogin`, `nextSpend`: the login key and the payment key, locked to this device with the passwords the person chose
+//   (version 3) or under passwords the wallet made (marked as made), kept aside (stageVaults) until the chain holds them;
+//   then they take the places of the live keys (settleStaged), and the registration key, which is on no account, is
+//   overwritten.
 // - `nextNote`: this note, the public half of the sign-up: the name, the registration key, the four keys with their
 //   acceptances, and the policy. With the registration key and the salt it is everything `registerProtected` needs to be
 //   called again with the same arguments. It holds no secret: the acceptances go on the chain anyway.
@@ -18,9 +19,10 @@
 // The note is signed by the registration key (`signNote`) and is used only after that signature is checked (`readNote`).
 // Whatever can write this browser's storage could otherwise put its own payment key into a sign-up that is resumed: the
 // registration key's signature over the whole set would put it on the account. The registration key itself is opened only
-// with the login password, so such a writer can stop a sign-up (by deleting what is kept) but not change it.
+// with the login key, which only the login password opens (with the device when it is locked to it), so such a writer can
+// stop a sign-up (by deleting what is kept) but not change it.
 //
-// Nothing is kept before the papers were checked: papers that were shown and not checked never reach the chain.
+// Nothing is kept before "I wrote them down. Create my account": keys of words that were only shown never reach the chain.
 import { hex, unhex } from './vault.mjs';
 
 export const SIGNUP_KIND = 45;
@@ -78,21 +80,21 @@ export const noteKey = (note, role) => note.keys.find(k => k.role === role)?.pub
 // The SDK's codes (time-sdk.js, registerProtected), and one of the registration service's (deploy/faucet/README.md,
 // `account_limit`, marked by app.js, registrationSponsor, as `serviceCode`). Each sentence says what happened and what to
 // do. A refusal without a sentence here is shown as before (app.js, failureNotice).
-const papersVoid = name => `The recovery papers you wrote down for @${name} will never work: destroy them.`;
+const papersVoid = name => `The recovery words you wrote down for @${name} will never work: destroy the paper.`;
 export function signupWords(error, name) {
   switch (error?.code) {
     case 'PROTECTED_REGISTRATION_UNAVAILABLE': return 'This network does not take accounts that are protected from the start, so nothing was sent. Reload this page: the wallet then makes your account the way this network takes it.';
     case 'NAME_TAKEN': return `Someone else took the name @${name} before your account was made. Nothing of yours is on the network. ${papersVoid(name)} Create your account with another name.`;
-    case 'SPONSOR_MISMATCH': return 'The registration service named a payment that is not for your account, so this browser did not use it, and nothing was registered. Try again later: open your account with its name and your login password, and this browser goes on. Your recovery papers stay valid.';
+    case 'SPONSOR_MISMATCH': return 'The registration service named a payment that is not for your account, so this browser did not use it, and nothing was registered. Try again later: open your account with its name and your login password, and this browser goes on. Your recovery words stay valid.';
     case 'COMMITMENT_MISMATCH': return 'The network holds a registration of this sign-up\'s key with other details than this browser keeps, so nothing was signed. That should not happen: this browser\'s data may have been changed. Wait an hour, then open your account with your login password to try again.';
-    case 'REGISTRATION_MISMATCH': return `The account @${name} was made by this sign-up, but its keys or its limits are no longer the ones this browser made. If you changed them on another device, use that one. If you did not, someone has your recovery papers: recover the account with them at once.`;
+    case 'REGISTRATION_MISMATCH': return `The account @${name} was made by this sign-up, but its keys or its limits are no longer the ones this browser made. If you changed them on another device, use that one. If you did not, someone has your recovery words: recover the account with them at once.`;
     default: break;
   }
-  if (error?.registrationService === true && error.serviceCode === 'account_limit') return 'The registration service says that it paid for this sign-up in the last 24 hours, and that this payment ran out before your account was made. It pays again 24 hours after the first time: then open your account with your login password, and this browser goes on. Your recovery papers stay valid.';
+  if (error?.registrationService === true && error.serviceCode === 'account_limit') return 'The registration service says that it paid for this sign-up in the last 24 hours, and that this payment ran out before your account was made. It pays again 24 hours after the first time: then open your account with your login password, and this browser goes on. Your recovery words stay valid.';
   return null;
 }
-/// What is added when the network refused the name as too close to one that exists (app.js, nameRefusal): the papers
-/// of the refused name go with it.
+/// What is added when the network refused the name as too close to one that exists (app.js, nameRefusal): the recovery
+/// keys of the refused name go with it.
 export const tooCloseAddition = name => ` ${papersVoid(name)}`;
 
 // ------------------------------------------------------------------ letting a kept sign-up go
@@ -148,7 +150,7 @@ export function letGoState({ state, note, consentExpires = null, firstNothing = 
   if (commit) return { offer: false, why: 'commitment', until: BigInt(commit.expires_elapsed_micros) };
   // Another account of the name: this sign-up can never finish, and letting it go would free nothing. It is also the one
   // case in which an account of the name exists, so whatever wrote a sign-up of its own over that account's keys in this
-  // storage could otherwise have the person told to destroy that account's recovery papers.
+  // storage could otherwise have the person told to destroy that account's recovery words.
   if (accounts.some(a => a.name === note.name)) return { offer: false, why: 'taken' };
   if (consentExpires !== null) return consentExpires < now ? { offer: true } : { offer: false, why: 'consent', until: consentExpires, kept: true };
   if (firstNothing === null) return { offer: false, why: 'consent', until: now + LET_GO_WAIT_MICROS, kept: false, first: now };
@@ -157,8 +159,8 @@ export function letGoState({ state, note, consentExpires = null, firstNothing = 
 }
 /// Why a kept sign-up is not let go now, and what to do instead. `when(elapsed)`: a time of the chain as a date.
 export function letGoWords(decided, name, when) {
-  if (decided.why === 'account') return `The network holds the account @${name} that this sign-up made, so this browser keeps what opens it. Open it with the login password you chose for it; if you forgot that, recover the account with your recovery sheet and your recovery passphrase, under "Other ways in".`;
-  if (decided.why === 'taken') return `The name @${name} belongs to another account on the network, so this sign-up can never finish, and this browser keeps it as it is. If that account is yours, open it with its login password, or recover it with your recovery sheet and your recovery passphrase; if not, create your account with another name.`;
+  if (decided.why === 'account') return `The network holds the account @${name} that this sign-up made, so this browser keeps what opens it. Open it with the login password you chose for it; if you forgot that, recover the account with your recovery words, under "Other ways in".`;
+  if (decided.why === 'taken') return `The name @${name} belongs to another account on the network, so this sign-up can never finish, and this browser keeps it as it is. If that account is yours, open it with its login password, or recover it with your recovery words; if not, create your account with another name.`;
   if (decided.why === 'commitment') return `A registration of @${name} from this sign-up waits on the network until ${when(decided.until)}, so this browser keeps the sign-up. If you remember your login password, open your account with it before then; if not, come back after that time to let it go.`;
   if (decided.kept) return `Nothing of this sign-up is on the network now, but a registration of it that was asked for could still reach it until ${when(decided.until)}. Come back after that time to let it go.`;
   return `Nothing of this sign-up is on the network now. This browser does not know when a registration of it was last asked for, so it waits ten minutes to be sure that none can reach the network any more: keep this page open, and press "Let this sign-up go" again after ${when(decided.until)}.`;
@@ -166,8 +168,8 @@ export function letGoWords(decided, name, when) {
 /// The review of letting a sign-up go: what is given up, in two sentences.
 export const letGoReview = name => [
   ['Name', `@${name} is free again, for anyone. This browser forgets the keys it made for this sign-up; it cannot be undone.`],
-  ['Recovery papers', `The recovery sheet and passphrase you wrote down for @${name} will never work: destroy them.`],
+  ['Recovery words', `The recovery words you wrote down for @${name} will never work: destroy the paper.`],
 ];
-export const letGoneWords = name => `This browser let the sign-up of @${name} go. Destroy the recovery papers you wrote down for it.`;
+export const letGoneWords = name => `This browser let the sign-up of @${name} go. Destroy the paper of its recovery words.`;
 export const LET_GO_CHANGED = 'The sign-up kept in this browser was changed after it was made, so this browser cannot tell which keys are this sign-up\'s, and does not let it go. Create your account with another name.';
 export const keptPaymentKey = name => `This browser keeps a payment key of an account @${name}, so it does not let a sign-up of that name go. Open that account with its login password.`;

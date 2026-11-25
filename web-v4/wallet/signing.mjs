@@ -24,7 +24,8 @@ import { b64, fromB64 } from './vault.mjs';
 function assert(value, message) { if (!value) throw new Error(message); }
 
 /// `c`: { sdk, session(), network(), client(), locks(), capture(), ownAccount(state?),
-/// verifiedState(), pending, paymentMarkers, notice(text, type), record(receipt, label) }.
+/// verifiedState(), pending, paymentMarkers, notice(text, type), record(receipt, label), cleared() }. `record` may return
+/// a promise of its writes; `cleared` (optional) is told when the pending action was cleared.
 export function createSendSigned(c) {
   return async function sendSigned(kind, payload, label, { anonymous = false, recoveryFinalization = false, merchantOrigin = 'unknown', signer = null } = {}) {
     const sdk = c.sdk, session = c.session(), network = c.network(), pending = c.pending, paymentMarkers = c.paymentMarkers;
@@ -51,6 +52,8 @@ export function createSendSigned(c) {
       const cancel = kind === 'cancel_recovery' || kind === 'cancel_pending';
       const storageOwner = kind === 'cancel_recovery' ? emergencyCancelSlot(owner) : kind === 'cancel_pending' ? nonceCancelSlot(owner) : owner;
       if (kind === 'merchant_payment') {
+        // What another tab of this account marked is read first (locked-store.mjs, orderMarkers).
+        if (typeof paymentMarkers.sync === 'function') { await paymentMarkers.sync(network.networkId, owner); check(); }
         const previousPayment = paymentMarkers.get(network.networkId, owner, payload.reference);
         assert(!previousPayment, `This order already has a signed payment record (${previousPayment?.hash || ''}). Recheck that receipt; this wallet will not pay the same order twice.`);
       }
@@ -71,7 +74,8 @@ export function createSendSigned(c) {
       check(); const hash = await sdk.transactionHash(tx); check();
       if (existingCancel) assert(hash === existingCancel.hash.toUpperCase(), 'Emergency cancellation bytes are damaged.');
       else pending.put(network.networkId, storageOwner, { hash, tx: b64(tx), nonce: args.nonce, authEpoch: args.authEpoch, kind, label, at: Date.now() });
-      if (kind === 'merchant_payment') paymentMarkers.reserve(network.networkId, owner, payload.reference, hash, merchantOrigin);
+      // The mark of the order is written before the bytes leave (it is encrypted, so it is waited for).
+      if (kind === 'merchant_payment') { await paymentMarkers.reserve(network.networkId, owner, payload.reference, hash, merchantOrigin); check(); }
       c.notice(`Submitting ${label.toLowerCase()}… Waiting for an independently verified receipt.`, 'busy');
       const client = c.client();
       let receipt;
@@ -85,10 +89,18 @@ export function createSendSigned(c) {
           }
           throw error;
         }
-      } else receipt = await client.submit(tx);
+      } else {
+        // A cancellation protects the account (a guardian recovery, an action that waits): the longest patience while the
+        // network is busy (busy.mjs). It keeps a slot of its own, and its button sends the same bytes again (existingCancel
+        // above), so a busy end says to press it again rather than to look under Activity.
+        try { receipt = await client.submit(tx, cancel && sdk.BUSY ? { busyBudgetMs: sdk.BUSY.protectiveBudgetMs } : {}); }
+        catch (error) { if (cancel && error?.busy === true && error.code === 'BUSY') error.sameButton = true; throw error; }
+      }
       check();
       assert(receipt?.verified === true, 'Transaction proof unavailable; action remains pending.');
-      pending.clear(network.networkId, storageOwner, hash); c.record(receipt, label);
+      // The receipt is recorded (its write waited for) before the pending action is cleared: a page that closes in
+      // between keeps the pending action, and its receipt is checked and recorded again at the next opening.
+      try { await c.record(receipt, label); } finally { pending.clear(network.networkId, storageOwner, hash); c.cleared?.(); }
       if (cancel && old) {
         const after = await c.verifiedState(); check(); const current = c.ownAccount(after);
         if (current && authorityReservationObsolete(current, old)) pending.clear(network.networkId, owner, old.hash);

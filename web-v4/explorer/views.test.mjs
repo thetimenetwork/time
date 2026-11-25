@@ -96,9 +96,9 @@ function fakeChecker({ trust = { networkId: NETWORK, chainId: 'time-devnet-v4-te
       let body, error404 = false;
       try { body = await fetchBody(); } catch (error) { if (error instanceof ApiFailure && error.body?.proof) { body = error.body; error404 = true; } else throw new CheckFailure('unavailable', error); }
       const state = checker.proven(body, query), held = (id) => state.accounts.some((account) => account.id === id), named = (name) => state.accounts.find((account) => account.name === name);
-      return { body, state, absent: error404 ? (query.ids ?? []).filter((id) => !held(id)) : [], names: Object.fromEntries((query.names ?? []).filter((name) => named(name) || error404).map((name) => [name, named(name)?.id ?? null])), height: '121', timeMicros: micros(NOW - 3000), anchorHeight: '121' };
+      return { body, state, absent: error404 ? (query.ids ?? []).filter((id) => !held(id)) : [], names: Object.fromEntries((query.names ?? []).filter((name) => named(name) || error404).map((name) => [name, named(name)?.id ?? null])), height: '121', timeMicros: micros(NOW - 3000), anchorHeight: '121', networkId: NETWORK };
     },
-    async checkAction(hash) { if (checker.actionFailure) throw checker.actionFailure; return { hash, height: '118', index: 0, blockHash: 'AA'.repeat(32), total: '1', mode: 'history', resultsChecked: true, anchorHeight: '121', rawHex: '00', action: { networkId: NETWORK, kind: 10, from: '7', nonce: '42', authEpoch: '3', publicKey: KEY2, payload: { to: '5', amount: '7503250000', reference: REFERENCE } }, envelope: null, ...checker.actionResult }; },
+    async checkAction(hash) { if (checker.actionFailure) throw checker.actionFailure; return { hash, height: '118', index: 0, blockHash: 'AA'.repeat(32), total: '1', mode: 'history', resultsChecked: true, anchorHeight: '121', networkId: NETWORK, rawHex: '00', action: { networkId: NETWORK, kind: 10, from: '7', nonce: '42', authEpoch: '3', publicKey: KEY2, payload: { to: '5', amount: '7503250000', reference: REFERENCE } }, envelope: null, ...checker.actionResult }; },
     async trust() { return trust; },
     expectNetwork(id) { checker.network = id; },
   };
@@ -270,7 +270,7 @@ test('action: plain words, the facts, the raw bytes, and a check that replaces t
   assert.doesNotMatch(p.text(), /Checked:|checked bytes and the checked block/);
   buttons(p.view, 'Check it yourself')[0].fire('click'); await p.settle();
   const result = within(p.view, 'check-result')[0], described = within(p.view, 'described')[0];
-  assert.match(textOf(result), /^Checked: this action is in block 118 of the chain\. The checked bytes and the checked block say what the service said: kind, sender, action number, key, content, block and position are the same\. The description above now comes from the checked bytes\./);
+  assert.match(textOf(result), /^Checked: this action is in block 118 of the chain\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. The checked bytes and the checked block say what the service said: kind, sender, action number, key, content, block and position are the same\. The description above now comes from the checked bytes\./);
   assert.match(textOf(result), /What this proves These exact bytes are action number 1 of block 118\. Block 118 is part of the chain signed by the validators of this network, followed from the block this page trusts up to block 121\. The next block states that every action of block 118 succeeded\./);
   assert.match(textOf(result), /What it does not prove That the block this page trusts is the right one\. The service you are reading supplied it, together with this page.*Anything else on this page marked "from the index".*a reference does not name its payer\./);
   assert.equal(result.attributes['aria-live'], 'polite');
@@ -302,7 +302,7 @@ test('action: plain words, the facts, the raw bytes, and a check that replaces t
   // Bytes of a kind the SDK does not read (the engine's 23 and 63, and later ones): only their frame is read.
   const frame = await open(`#/action/${HASH}`, ({ checker }) => { checker.actionResult = { action: null, envelope: { kind: 23, sender: '7', nonce: '42', authEpoch: '3', publicKey: KEY2 } }; });
   buttons(frame.view, 'Check it yourself')[0].fire('click'); await frame.settle();
-  assert.match(textOf(within(frame.view, 'check-result')[0]), /^Checked: this action is in block 118 of the chain\. Warning: what the service said does NOT agree with what was checked\. Differing: kind\. Believe what was checked\. The service's description of what this action did could not be compared with the checked bytes: this page reads only their frame\. Do not rely on that description\./);
+  assert.match(textOf(within(frame.view, 'check-result')[0]), /^Checked: this action is in block 118 of the chain\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. Warning: what the service said does NOT agree with what was checked\. Differing: kind\. Believe what was checked\. The service's description of what this action did could not be compared with the checked bytes: this page reads only their frame\. Do not rely on that description\./);
   assert.match(textOf(within(frame.view, 'described')[0]), /^Not confirmed: this page can read only the frame of the checked bytes.* account 7 sent an action of kind 23, which this page cannot put into words\. Read by this page from the checked bytes and the checked block\. The service describes it as: account 7 paid account 5 2 h 5 min 3\.25 s, with reference .* The service's word, not confirmed by the check\. In block 118 .* Kind kind 23/);
   // The frame agrees with the service: nothing differs, and the content is still called unconfirmed.
   const same = await open(`#/action/${HASH}`, ({ checker }) => { checker.actionResult = { action: null, envelope: { kind: 10, sender: '7', nonce: '42', authEpoch: '3', publicKey: KEY2 } }; });
@@ -398,16 +398,31 @@ test('action: a validator\'s upgrade signal is put into words, with the plan it 
   assert.match(bare.text(), /The new rules would start, at the earliest 720 h after the start of the network Rules it supports/);
 });
 
+// The web audit of 2026-11-24 (A-5): where the service serves the page, it also serves the trust manifest the page
+// checks it against, and "Checked in your browser" said nothing of that beside the verdict (only the footer did).
+test('A-5: every verdict of a check says, in one line, the network id it was checked against and to compare it with one from a source you trust', async () => {
+  const same = await open('#/account/7');
+  assert.match(same.text(), /Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. What was checked/);
+  assert.equal(within(same.view, 'against').length, 2, 'beside the account and beside its security row');
+  // A page hosted apart from the service: the id came with the page, from whoever hosts it.
+  const apart = await open('#/account/7', ({ api }) => { api.origin = 'https://api.example'; });
+  assert.match(apart.text(), /Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which came with this page; to be sure, compare it with the id from a source you trust\./);
+  assert.doesNotMatch(apart.text(), /this same service supplied/);
+  // A page whose check was not made says nothing of the kind.
+  const unchecked = await open('#/account/7', ({ checker }) => { checker.stateFailure = new CheckFailure('no_trust'); });
+  assert.equal(within(unchecked.view, 'against').length, 0);
+});
+
 test('account: figures from the state the browser proved, keys by role, what waits, activity by page', async () => {
   // The service's own copy of the account claims another balance than the proven state holds.
   const p = await open('#/account/7', ({ answers }) => { const account = answers.account; answers.account = () => { const a = account(); a.account.balance = '1000000000000'; return a; }; });
   const text = p.text();
   // That the figures were checked stands before them.
-  assert.match(text, /^Account 7 Checked in your browser against the state of block 121\. What was checked The service sent these figures with a proof\..* Name account name from the chain: @payer Number 7 Balance 0\.000001 s Actions sent so far 42/);
+  assert.match(text, /^Account 7 Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. What was checked The service sent these figures with a proof\..* Name account name from the chain: @payer Number 7 Balance 0\.000001 s Actions sent so far 42/);
   assert.doesNotMatch(text, /Not checked/);
   assert.doesNotMatch(text, /277 h/, 'the unproven balance is not shown');
   assert.match(text, /Keys sign-in key: 1f1f.* spend key: 2e2e.* recovery key: 3d3d.* These are public keys/);
-  assert.match(text, /Checked in your browser against the state of block 121\. What was checked The service sent these figures with a proof\./);
+  assert.match(text, /Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. What was checked The service sent these figures with a proof\./);
   // The page asks its own questions of the proof, one request each.
   assert.deepEqual(p.checker.queries, [{ ids: ['7'] }, { ids: ['7'], owners: ['7'], candidates: ['7'], include_security: true }]);
   assert.deepEqual(p.calls.filter(([name]) => name.startsWith('account')).map(([name]) => name), ['account', 'accountState']);
@@ -557,10 +572,10 @@ test('validators: who validates with what share, announced changes, and an upgra
   const aware = (checker) => { checker.reportsUpgrades = true; checker.upgradeStatus = (state) => { if (!Object.hasOwn(state, 'upgrade') || state.upgrade === undefined) throw new Error('This state was verified without the upgrade entry'); return { version: '4', scheduled: state.upgrade?.plan ?? null, known: true }; }; };
   const none = await open('#/validators', ({ answers, checker }) => { aware(checker); const v = answers.validators; answers.validators = () => ({ ...v(), upgrade: null }); });
   assert.deepEqual(none.checker.queries, [{ include_pos: true, include_upgrade: true }]);
-  assert.match(none.text(), /Scheduled upgrade Checked in your browser against the state of block 121\. No upgrade of the rules is scheduled: the proof shows that the state holds no plan\. Run a validator Anyone can run/);
+  assert.match(none.text(), /Scheduled upgrade Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. No upgrade of the rules is scheduled: the proof shows that the state holds no plan\. Run a validator Anyone can run/);
   const planned = await open('#/validators', ({ answers, checker }) => { aware(checker); const v = answers.validators; answers.validators = () => ({ ...v(), pos: { ...v().pos, scheduled: [{}, {}], safety_hold: true }, upgrade: { plan: { version: '5', activate_elapsed_micros: String(30 * 3600 * 1000000), scheduled_elapsed_micros: '1', spec: '9a'.repeat(32) }, signals: [] } }); });
   assert.match(planned.text(), /A changed validator set is announced for 2 coming blocks\. A safety hold is on/);
-  assert.match(planned.text(), /Scheduled upgrade Checked in your browser against the state of block 121\. An upgrade is scheduled\. To version 5 Starts 18 Nov 2026, 15:59:56 CET Rules it switches to \(hash\) 9a9a/);
+  assert.match(planned.text(), /Scheduled upgrade Checked in your browser against the state of block 121\. Checked against network id abababab…ababab, which this same service supplied; to be sure, compare it with the id from a source you trust\. An upgrade is scheduled\. To version 5 Starts 18 Nov 2026, 15:59:56 CET Rules it switches to \(hash\) 9a9a/);
   // The proven state has no answer about the row although it was asked (or a row in an unknown form): not "none".
   const unread = await open('#/validators', ({ answers, checker }) => { aware(checker); checker.upgradeStatus = () => { throw new Error('Unsupported upgrade row'); }; const v = answers.validators; answers.validators = () => ({ ...v(), upgrade: { odd: '1' } }); });
   assert.match(unread.text(), /The upgrade row of the state is in a form this page does not know\. Whether an upgrade is scheduled is not shown\./);

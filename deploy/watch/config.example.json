@@ -8,7 +8,7 @@
     "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
   },
   "subscriptions": [
-    { "account": "5", "webhook": "https://hooks.example/time-watch", "secret": "REPLACE_WITH_A_LONG_RANDOM_SECRET_PER_SUBSCRIPTION" },
+    { "account": "5", "webhook": "https://hooks.example/time-watch", "secret": "REPLACE_WITH_THE_OUTPUT_OF: openssl rand -hex 32 (one per subscription)" },
     { "account": "42" }
   ],
   "poll_seconds": 30,

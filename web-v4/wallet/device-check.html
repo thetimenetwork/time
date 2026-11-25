@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark"><title>Check this device · Time wallet</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/device-check.css">
+  <script type="module" src="/device-check.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time</a></header>
+  <main>
+    <section id="check-intro" class="card" aria-labelledby="check-title">
+      <p class="eyebrow">A trial</p>
+      <h1 id="check-title">Check this device</h1>
+      <p>This finds out whether this device could let you open your wallet and approve payments with your fingerprint or face. The wallet does not use it yet. The device will ask for your fingerprint, face or screen lock three times: once to make a test key named "Time device check", then twice to use it. Nothing is sent anywhere and no account is touched.</p>
+      <p class="subtle">This browser keeps a locked test value, so that you can try the same key again later.</p>
+      <div class="button-row"><button id="check-start" type="button" disabled>Check this device</button><button id="check-earlier" type="button" class="secondary" hidden>Try the key made earlier</button></div>
+      <p id="check-wait" class="field-note" role="status">Loading the check…</p>
+      <noscript><p class="warning">This check needs JavaScript. Your passwords keep working without it.</p></noscript>
+    </section>
+
+    <section id="check-steps" class="card" aria-labelledby="steps-title" hidden>
+      <h2 id="steps-title">What the check found</h2>
+      <div id="step-groups" aria-live="polite"></div>
+    </section>
+
+    <section id="check-result" class="card" aria-labelledby="result-title" hidden>
+      <h2 id="result-title">Result</h2>
+      <div id="result-box" role="status"></div>
+      <div id="instead" hidden>
+        <h3>What happens instead</h3>
+        <p id="instead-text"></p>
+      </div>
+      <div id="remove-key" hidden>
+        <h3>Remove the test key</h3>
+        <p id="remove-text"></p>
+        <p class="subtle">A web page cannot remove it for you.</p>
+      </div>
+    </section>
+
+    <section id="check-report" class="card" aria-labelledby="report-title" hidden>
+      <h2 id="report-title">Report</h2>
+      <p>This report holds nothing about you. Send it to the people who run this wallet if something did not work.</p>
+      <label for="report-text" class="visually-hidden">The report</label>
+      <textarea id="report-text" class="report" rows="18" readonly spellcheck="false" autocomplete="off"></textarea>
+      <div class="button-row"><button id="report-copy" type="button" class="secondary">Copy the report</button><button id="forget-earlier" type="button" class="secondary" hidden>Forget the test value in this browser</button></div>
+      <p id="report-said" class="field-note" role="status"></p>
+    </section>
+
+    <section aria-label="Back to the wallet"><p><a href="/">Back to the wallet</a></p></section>
+  </main>
+</body>
+</html>

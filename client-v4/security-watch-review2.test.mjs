@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import './time-sdk.js';
@@ -67,7 +68,7 @@ test('N2 a root payment hides behind a replacement that lapsed: only a non-urgen
 // ------------------------------------------------------------------ N3 target ids follow the config order
 test('N3 queues are keyed "webhook-<index>": reordering subscriptions sends account 5\'s alert to account 42\'s webhook, signed with 42\'s secret', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'adv2-order-'));
-  const A = { url: 'https://hooks.alice.example/a', secret: 'alice-secret-0123456789' }, B = { url: 'https://hooks.bob.example/b', secret: 'bob-secret-0123456789xx' };
+  const A = { url: 'https://hooks.alice.example/a', secret: randomBytes(32).toString('hex') }, B = { url: 'https://hooks.bob.example/b', secret: randomBytes(32).toString('hex') };
   const trust = { app_version: '4', network_id: fixture.network_id, chain_id: 't' };
   const vs = async (sel) => verified({ height: 11, elapsed: T0 + 5n * S, security: withPayment, others: sel.ids.filter((id) => id !== '5') });
   const now = () => chainMs(T0 + 5n * S) + 500;
@@ -91,7 +92,7 @@ test('N3 queues are keyed "webhook-<index>": reordering subscriptions sends acco
 
 // ------------------------------------------------------------------ N4 dead letters
 test('N4 a receiver whose clock is 6 min ahead answers 401 to every event: each urgent alert is dead-lettered after one try, the owner is never told', async () => {
-  const secret = 'subscription-secret-0123456789';
+  const secret = randomBytes(32).toString('hex');
   const receiver = http.createServer((req, res) => {
     const chunks = []; req.on('data', (c) => chunks.push(c));
     req.on('end', () => { const ok = verifyWebhookSignature(Buffer.concat(chunks), req.headers, secret, { now: () => Date.now() + 360_000 }); res.writeHead(ok ? 204 : 401); res.end(); });
@@ -113,7 +114,7 @@ test('N4 a receiver whose clock is 6 min ahead answers 401 to every event: each 
 test('N5 after a 10-minute receiver outage, a new urgent alert waits for the breaker (up to 15 min) though the receiver is back', async () => {
   let wall = chainMs(T0) + 500, up = false, height = 10;
   const deliveredAt = {};
-  const hook = webhookAdapter({ url: 'https://hook.example/x', secret: 'x'.repeat(16), sleep: async () => {}, now: () => wall, fetcher: async (_u, o) => {
+  const hook = webhookAdapter({ url: 'https://hook.example/x', secret: randomBytes(32).toString('hex'), sleep: async () => {}, now: () => wall, fetcher: async (_u, o) => {
     if (!up) return new Response(null, { status: 503 });
     deliveredAt[JSON.parse(o.body).id] ??= wall; return new Response(null, { status: 204 });
   } });

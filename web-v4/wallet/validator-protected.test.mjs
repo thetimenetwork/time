@@ -180,15 +180,16 @@ globalThis.fetch = async (url, options = {}) => {
 };
 
 // ------------------------------------------------------------------ carol_p, protected; dan, an account with one key
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const login = await newDevice(), spend = await newDevice(), sheet = await newDevice(), phrase = await newDevice(), dan = await newDevice();
 chain.accounts.push({ id: '14', name: 'carol_p', public_key: 'ee'.repeat(32), balance: (200000n * S).toString(), nonce: '7', auth_epoch: '2', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }] });
 chain.accounts.push({ id: '15', name: 'dan', public_key: dan.publicKey, balance: (10n * S).toString(), nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: dan.publicKey, can_manage: true, can_spend: true }] });
 const freshRow = () => ({ account: '14', version: '1', policy: { threshold: '2', daily_limit_micros: LIMIT.toString(), delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: LIMIT.toString(), allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null });
 chain.security['14'] = freshRow();
-const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealVault({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
+const vault = async (name, device) => storage.setItem(`timecurrency.vault.v1:${NET}:${name}`, JSON.stringify(await sealLegacy({ ...device.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId: NET, name, publicKey: device.publicKey }, argon2id)));
 await vault('carol_p', login); await vault('dan', dan);
-storage.setItem(`timecurrency.spend-vault.v1:${NET}:carol_p`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET, name: 'carol_p', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+storage.setItem(`timecurrency.spend-vault.v1:${NET}:carol_p`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId: NET, name: 'carol_p', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
 
 await import(new URL('web-v4/wallet/app.js', root).href);
 await until(() => /^Connected to the Time test network/.test($('notice').textContent) || $('notice').className.includes('error'), 'the wallet to start');
@@ -237,7 +238,7 @@ test('a protected account is offered the Validator operator: the payment passwor
   await unlock('carol_p');
   assert.equal($('validator-payment-wrap').hidden, false, 'the payment password is asked on the screen');
   assert.deepEqual(['validator-register-form', 'self-bond-form', 'self-unbond-form'].map(id => $(id).querySelector().disabled).concat($('validator-retire').disabled), [false, false, false, false]);
-  assert.match(page, /<div id="validator-payment-wrap" hidden><label for="validator-payment">Payment password<\/label><input id="validator-payment" type="password" autocomplete="off" maxlength="2048">/);
+  assert.match(page, /<div id="validator-payment-wrap" hidden><label for="validator-payment">Payment password<\/label><input id="validator-payment" type="password" autocomplete="one-time-code" [^>]*maxlength="2048">/);
   assert.match(page, /<div id="validator-exits"><\/div>/);
 });
 
@@ -247,7 +248,7 @@ test('registered from a registration text with the payment password: the review 
   $('validator-payment').value = PAYMENT;
   const done = await press(() => register('14'));
   assert.equal(done.review.title, 'Register my validator');
-  assert.deepEqual(done.review.fields, { 'Validator key': '3c'.repeat(32), Commission: '10%', Bond: 'The network\'s minimum is taken from your balance now. It is lost if the validator signs two different blocks at one height.',
+  assert.deepEqual(done.review.fields, { 'Validator key': '3c'.repeat(32), Commission: '10%', Bond: '1 seconds, the network\'s least bond, taken from your balance now. It is lost if the validator signs two different blocks at one height.',
     'Daily limit': 'The bond and the fee, 1.001 seconds, count against your daily limit: 600 seconds is left today, 598.999 seconds after this.', 'Signed by': SIGNED_BY });
   // No name is in this review, so no likeness of names is looked for (names.mjs), and no box is asked.
   assert.deepEqual([done.review.asked, done.review.lines], [false, 1]);
@@ -362,7 +363,8 @@ test('an account with one key: no payment password, the reviews as before, and i
   assert.equal($('validator-payment-wrap').hidden, true);
   assert.deepEqual(['validator-register-form', 'self-bond-form', 'self-unbond-form'].map(id => $(id).querySelector().disabled).concat($('validator-retire').disabled), [false, false, false, false]);
   const done = await press(() => register('15', '5d'.repeat(32)));
-  assert.deepEqual(done.review.fields, { 'Validator key': '5d'.repeat(32), Commission: '10%', Bond: 'The network\'s minimum is taken from your balance now. It is lost if the validator signs two different blocks at one height.' });
+  // The bond is named in the review of an account with one key too (web audit of November 2026, W-7).
+  assert.deepEqual(done.review.fields, { 'Validator key': '5d'.repeat(32), Commission: '10%', Bond: '1 seconds, the network\'s least bond, taken from your balance now. It is lost if the validator signs two different blocks at one height.' });
   assert.deepEqual([done.notice, posted(), find('15').balance], ['Register my validator finalized and verified.', [[17, 'dan\'s key']], (9n * S - FEE).toString()]);
   const out = await press(() => unbond('1'));
   assert.deepEqual([Object.keys(out.review.fields), out.notice, posted().at(-1)], [['Amount', 'What happens'], 'Take out of my validator\'s bond finalized and verified.', [19, 'dan\'s key']]);

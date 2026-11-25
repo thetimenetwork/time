@@ -168,7 +168,7 @@ export function createChecker({ api, loadTrust, loadVerifier, createLightClient,
   /// Checks a state the service answered with. `fetchBody` asks the service (it is asked again if
   /// its block was behind); `query` is the question this page asks, in the verifier's form.
   /// An error answer that carries a proof is checked like any answer: its status decides nothing.
-  /// Returns { body, state, absent, names, height, timeMicros, anchorHeight }:
+  /// Returns { body, state, absent, names, height, timeMicros, anchorHeight, networkId }:
   /// - `state` is what the verifier proved, and the only thing a caller may show as checked;
   /// - `absent` lists the account numbers of the question that the proof shows do not exist;
   /// - `names` maps each name of the question to the number it belongs to, or to null if the
@@ -199,13 +199,15 @@ export function createChecker({ api, loadTrust, loadVerifier, createLightClient,
         // and means only what is true of every result here: a proof verified, look in `state`.
         // It never carries the status of the service's answer.
         found: true,
-        height: String(result.state.height), timeMicros: String(result.state.time_micros), anchorHeight: light.getCheckpoint()?.height ?? null };
+        height: String(result.state.height), timeMicros: String(result.state.time_micros), anchorHeight: light.getCheckpoint()?.height ?? null,
+        // The network the check was made against: the one of the page's trust manifest, which the page shows beside its verdict.
+        networkId: trust.network_id };
     }));
   }
 
   /// Checks that the action with this hash is in a block of the chain. Asks the service for the
   /// bytes and the proof material itself, so that what is checked is what the service says now.
-  /// Returns { hash, height, index, total, blockHash, mode, resultsChecked, anchorHeight, rawHex, action, envelope }:
+  /// Returns { hash, height, index, total, blockHash, mode, resultsChecked, anchorHeight, rawHex, action, envelope, networkId }:
   /// - `index` and `total` (the position in the block and the block's number of actions) are
   ///   given only when the next block was checked too: its header fixes how many actions the
   ///   block has, and without it the same proof fits more than one position. Otherwise null.
@@ -262,7 +264,7 @@ export function createChecker({ api, loadTrust, loadVerifier, createLightClient,
       const resultsChecked = mode === 'history' || receipt.resultsChecked === true;
       return { hash: wanted, height: receipt.height, index: resultsChecked ? material.index : null, total: resultsChecked ? String(material.total) : null, blockHash: String(receipt.blockHash).toUpperCase(), mode, resultsChecked,
         anchorHeight: light.getCheckpoint()?.height ?? null, rawHex: receipt.rawHex, action: decoded,
-        envelope: envelope ? { kind: envelope.kind, sender: envelope.sender, nonce: envelope.nonce, authEpoch: envelope.authEpoch, publicKey: envelope.publicKey } : null };
+        envelope: envelope ? { kind: envelope.kind, sender: envelope.sender, nonce: envelope.nonce, authEpoch: envelope.authEpoch, publicKey: envelope.publicKey } : null, networkId: trust.network_id };
     }));
   }
 

@@ -3,6 +3,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import './time-sdk.js';
@@ -77,7 +78,7 @@ test('T3 balance_fell stays quiet for honest spending within the limit, and fire
 // ------------------------------------------------------------------ T4: format-2 queues keyed by position
 test('T4 a format-2 store whose "webhook-0" held alice\'s event: after the upgrade it goes only to alice\'s target', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'adv3-mig-'));
-  const A = { url: 'https://hooks.alice.example/a', secret: 'alice-secret-0123456789' }, B = { url: 'https://hooks.bob.example/b', secret: 'bob-secret-0123456789xx' };
+  const A = { url: 'https://hooks.alice.example/a', secret: randomBytes(32).toString('hex') }, B = { url: 'https://hooks.bob.example/b', secret: randomBytes(32).toString('hex') };
   const vs = async (sel) => verified({ height: 11, elapsed: T0 + 5n * S, others: sel.ids.filter((id) => id !== '5') });
   const event = { id: '5:payment_waiting:2', account: '5', type: 'payment_waiting', urgent: true, message: 'x' };
   const s5 = snap({ height: 11, elapsed: T0 + 5n * S }), s42 = snapshotOf(verified({ height: 11, elapsed: T0 + 5n * S, others: ['42'] }), '42');

@@ -45,8 +45,11 @@ function fullNode({tip=HEIGHT+2,indexed=true,network=CHAIN}={}){
 // the own node, and the own node never sees it. Its own node is on CHAIN and, unless a test says
 // otherwise, an order is checked again at once after the node could not confirm it.
 function shop({ownNode,repository,receipt}={}){
-  const snapshots=[],proven=new Map(),alerts=[];let receipts=0;
-  const service=createOrderService({networkId,recipient:'0',verifiedState:async()=>({verified:true,state}),now:()=>1000,onAlert:event=>alerts.push(event),
+  const snapshots=[],proven=new Map(),alerts=[];let receipts=0,paidBefore=0;
+  // Each order is made after the one before was paid: the payer's nonce has moved on (the shop gives an account its open
+  // order back while that order still reserves the next nonce). The shop takes more open orders of one account than the
+  // forty of the test of 32 checks; it takes 3 unless told (server-auth.mjs).
+  const service=createOrderService({networkId,recipient:'0',verifiedState:async()=>({verified:true,state:{...state,accounts:[{id:'5',nonce:String(7+paidBefore++)}]}}),now:()=>1000,onAlert:event=>alerts.push(event),maxOpenPerAccount:64,
     ...(repository?{repository}:{persist:async s=>snapshots.push(structuredClone(s))}),
     verifiedReceipt:async hash=>{receipts++;await receipt?.(hash);const p=proven.get(hash);if(!p)throw Error('Payment is awaiting canonical finality');return {verified:true,executionVerified:true,code:0,networkId,height:p.height,hash,rawHex:p.raw.toString('hex'),action:p.action};},
     ...(ownNode===undefined?{}:{ownNode:ownNode&&typeof ownNode==='object'?{chainId:CHAIN,retryAfterMs:0,...ownNode}:ownNode})});
@@ -236,7 +239,7 @@ test('ownNode.url: the node is asked directly over HTTP, read-only, without redi
     web.modes.silent=true;
     await refused(s,third,late.hash,OWN_NODE_UNAVAILABLE,/no answer within 500 ms/);
     web.modes.silent=false;web.modes.redirect=true;web.seen.length=0;
-    await refused(s,third,late.hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable at 127\.0\.0\.1:\d+ \(unexpected redirect\)/);
+    await refused(s,third,late.hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable \(unexpected redirect\)$/);
     assert.deepEqual(web.seen,['GET /status']);
     web.modes.redirect=false;
     await settles(s,third,late.hash);
@@ -245,12 +248,12 @@ test('ownNode.url: the node is asked directly over HTTP, read-only, without redi
   // kept-alive connection as UND_ERR_SOCKET (seen on the first Linux run of this suite), Windows as ECONNRESET.
   const s=shop({ownNode:{url:closed}});
   const order=await s.service.issue('5','2500000'),{hash}=s.pay(order);
-  await refused(s,order,hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable at 127\.0\.0\.1:\d+ \((ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET)\)/);
+  await refused(s,order,hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable \((ECONNRESET|ECONNREFUSED|UND_ERR_SOCKET)\)$/);
   // A port nothing listens on.
   const port=await new Promise(resolve=>{const probe=http.createServer().listen(0,'127.0.0.1',()=>{const free=probe.address().port;probe.close(()=>resolve(free));});});
   const nowhere=shop({ownNode:{url:`http://127.0.0.1:${port}/`}});
   const other=await nowhere.service.issue('5','2500000'),paid=nowhere.pay(other);
-  await refused(nowhere,other,paid.hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable at 127\.0\.0\.1:\d+ \(ECONNREFUSED\)/);
+  await refused(nowhere,other,paid.hash,OWN_NODE_UNAVAILABLE,/no status from the node: unreachable \(ECONNREFUSED\)$/);
 });
 
 test('with the SQLite order store, a refused settlement leaves the order unsettled and a later one settles it',async()=>{
@@ -357,10 +360,13 @@ test('an own node that contradicts the light client is reported and kept on the 
   assert.deepEqual(s.stored(order.orderId),settled);assert.equal(s.alerts.length,1);
   // A node reached over HTTP is named by its address.
   assert.equal(createOwnNode({chainId:CHAIN,url:'http://127.0.0.1:26757'}).endpoint,'http://127.0.0.1:26757/');
-  // The HTTP answer to a refused settlement carries the code; other refusals answer as before.
-  assert.deepEqual(errorBody(refusal),{error:refusal.message,code:OWN_NODE_MISMATCH});
-  assert.deepEqual(errorBody(new OwnNodeRefusal(OWN_NODE_UNAVAILABLE,'no answer within 5000 ms')),{error:'Own node has not confirmed the payment; the order stays unsettled, retry later: no answer within 5000 ms',code:OWN_NODE_UNAVAILABLE});
-  for(const error of [new Error('Unknown item'),Object.assign(new Error('connect ECONNREFUSED'),{code:'ECONNREFUSED'})])assert.deepEqual(errorBody(error),{error:error.message});
+  // The HTTP answer to a refused settlement carries the code and the fixed first half of the refusal: the reason can name
+  // the node, its words and its address, and goes to the gateway's log instead (server.mjs, publicError). Other refusals
+  // answer as before, except an error of the system, whose words name addresses and paths.
+  assert.deepEqual(errorBody(refusal),{error:'Own node contradicts the light-client receipt; the order stays unsettled',code:OWN_NODE_MISMATCH});
+  assert.deepEqual(errorBody(new OwnNodeRefusal(OWN_NODE_UNAVAILABLE,'no answer within 5000 ms')),{error:'Own node has not confirmed the payment; the order stays unsettled, retry later',code:OWN_NODE_UNAVAILABLE});
+  assert.deepEqual(errorBody(new Error('Unknown item')),{error:'Unknown item'});
+  assert.deepEqual(errorBody(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:26757'),{code:'ECONNREFUSED'})),{error:'The gateway could not complete the request'});
 });
 
 // web-v4/merchant/app.js in a page with this backend. Each payment gets its own order and

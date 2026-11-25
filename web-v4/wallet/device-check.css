@@ -1,0 +1,5 @@
+/* The page "Check this device" (device-check.html) uses the wallet's own stylesheet (styles.css) and adds only this:
+   the report in the wallet's monospace face, so that its fixed fields line up and can be read back exactly; and in the
+   list of steps, a long label wraps beside its yes or no instead of pushing it to a line of its own on a phone. */
+textarea.report { font-family: var(--mono); font-size: .8125rem; line-height: 1.5; resize: vertical; }
+.check-list .row > span:first-child { flex: 1 1 12rem; }

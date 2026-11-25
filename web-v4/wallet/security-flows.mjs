@@ -6,7 +6,7 @@
 // inbox shows, how a lost device is recovered, and where the encrypted keys live. It touches no
 // page and no network. The wallet library is passed in (`createSecurityFlows`), because the page
 // loads it from `/sdk/` and the tests from `client-v4/`.
-import { KDF, hex, unhex, checkPassword, validateVaultRecord, vaultIntent, newDevice, sealVault, forgetSecret } from './vault.mjs';
+import { KDF, hex, unhex, checkPassword, validateVaultRecord, vaultIntent, newDevice, sealVault, sealUnder, makePassword, forgetSecret, SYLLABLES, RULE, sealOf } from './vault.mjs';
 import { effectiveLimit, pauseLimit } from './protection.mjs';
 
 const encoder = new TextEncoder();
@@ -88,19 +88,6 @@ export async function decodeSheet(text, cryptoImpl = globalThis.crypto) {
   if (!ok) { seed.fill(0); fail('This recovery sheet has a typo. Compare each group with the paper.'); }
   return seed;
 }
-export const sheetGroups = text => sheetCharacters(text).match(/.{1,4}/g) || [];
-/// Two different groups (0-based) the person types back to show the sheet was written down.
-export function pickConfirmGroups(cryptoImpl = globalThis.crypto) {
-  const draw = () => { const r = new Uint32Array(1); for (;;) { cryptoImpl.getRandomValues(r); if (r[0] < 4294967296 - (4294967296 % SHEET.groups)) return r[0] % SHEET.groups; } };
-  const first = draw(); let second = draw(); while (second === first) second = draw();
-  return [first, second].sort((a, b) => a - b);
-}
-export function confirmGroups(sheetText, picks, answers) {
-  const groups = sheetGroups(sheetText);
-  assert(Array.isArray(picks) && picks.length === answers.length, 'Enter each requested group');
-  picks.forEach((index, i) => assert(sheetCharacters(String(answers[i] ?? '')) === groups[index], `Group ${index + 1} does not match the sheet. Check what you wrote down.`));
-  return true;
-}
 
 // ------------------------------------------------------------------ keys from seeds
 const PKCS8_ED25519 = unhex('302e020100300506032b657004220420', 16);
@@ -124,10 +111,13 @@ export async function sheetKey(sheetText, cryptoImpl = globalThis.crypto) {
 export function newSheetSeed(cryptoImpl = globalThis.crypto) { return cryptoImpl.getRandomValues(new Uint8Array(SHEET.seedBytes)); }
 
 // ------------------------------------------------------------------ recovery passphrase
-// The wallet makes the passphrase; the person does not choose it. Its key's public half is on the
-// chain, where anyone can test guesses offline, so it must not be guessable: 72 random bits,
-// written as four pronounceable words of three syllables. A syllable is one of 16 consonants
-// (b d f g h j k l m n p r s t v z) and one of 4 vowels (a e i o): 6 bits, 12 syllables, 72 bits.
+// The wallet makes the passphrase (the page calls it the recovery words); the person does not choose it. Its key's
+// public half is on the chain, where anyone can test guesses offline, so it must not be guessable: 90 random bits,
+// written as five pronounceable words of three syllables. A syllable is one of 16 consonants
+// (b d f g h j k l m n p r s t v z) and one of 4 vowels (a e i o): 6 bits, 15 syllables, 90 bits.
+// Why five, where there were four (72 bits): the words can now be the only secret behind both recovery keys of an
+// account ("words only", recoveryWordsSecondKey below), so one paper is all a thief needs to ask for the account; each
+// word more makes guessing 262,144 (2^18) times harder. Words of accounts made before, four of them, are read as always.
 // No word list is used: none with a known licence was on this machine, and nothing was downloaded.
 // The key is Argon2id(passphrase, salt) used as an Ed25519 seed, with
 // salt = "TCDEVNET-RECOVERY-PASSPHRASE-V1\0" || network id (32 bytes) || account id (8 bytes, big-endian),
@@ -135,18 +125,20 @@ export function newSheetSeed(cryptoImpl = globalThis.crypto) { return cryptoImpl
 export const PASSPHRASE_KDF = Object.freeze({ algorithm: 'argon2id', version: 19, memoryKiB: 262144, iterations: 4, parallelism: 1, hashLength: 32 });
 if (PASSPHRASE_KDF.memoryKiB < KDF.memoryKiB || PASSPHRASE_KDF.iterations < KDF.iterations || PASSPHRASE_KDF.hashLength !== 32) throw new Error('The passphrase KDF must be at least as strong as the vault KDF');
 const PASSPHRASE_DOMAIN = encoder.encode('TCDEVNET-RECOVERY-PASSPHRASE-V1\0');
-export const PASSPHRASE_TOO_HEAVY = 'This device could not compute your recovery passphrase key: it needs 256 MiB of memory. Do this on a computer instead. There is no lighter version, because it would give a different key.';
-const CONSONANTS = 'bdfghjklmnprstvz', VOWELS = 'aeio';
-export const PASSPHRASE = Object.freeze({ words: 4, syllablesPerWord: 3, bits: 72 });
+export const PASSPHRASE_TOO_HEAVY = 'This device could not compute the key of your recovery words: it needs 256 MiB of memory. Do this on a computer instead. There is no lighter version, because it would give a different key.';
+// The same syllables as the passwords the wallet makes (vault.mjs, makePassword).
+const CONSONANTS = SYLLABLES.consonants, VOWELS = SYLLABLES.vowels;
+/// `words`: how many new words are made; `readWords`: how many a typed passphrase may have.
+export const PASSPHRASE = Object.freeze({ words: 5, readWords: Object.freeze([4, 5]), syllablesPerWord: 3, bits: 90 });
 const SYLLABLE = `[${CONSONANTS}][${VOWELS}]`;
 const WORD = new RegExp(`^(?:${SYLLABLE}){${PASSPHRASE.syllablesPerWord}}$`);
 export function normalizePassphrase(text) {
   assert(typeof text === 'string', 'Enter the recovery passphrase');
   return text.normalize('NFKC').toLowerCase().replace(/[\s-]+/gu, ' ').trim();
 }
-/// A new passphrase: 9 random bytes, 12 syllables of 6 bits each.
+/// A new passphrase: 12 random bytes, of which the first 90 bits make 15 syllables of 6 bits each.
 export function generatePassphrase(cryptoImpl = globalThis.crypto) {
-  const bytes = cryptoImpl.getRandomValues(new Uint8Array(PASSPHRASE.bits / 8));
+  const bytes = cryptoImpl.getRandomValues(new Uint8Array(Math.ceil(PASSPHRASE.bits / 8)));
   let buffer = 0, bits = 0, syllables = [];
   try {
     for (const byte of bytes) {
@@ -155,6 +147,7 @@ export function generatePassphrase(cryptoImpl = globalThis.crypto) {
       buffer &= (1 << bits) - 1;
     }
   } finally { bytes.fill(0); buffer = 0; }
+  syllables = syllables.slice(0, PASSPHRASE.words * PASSPHRASE.syllablesPerWord);
   const words = [];
   for (let i = 0; i < syllables.length; i += PASSPHRASE.syllablesPerWord) words.push(syllables.slice(i, i + PASSPHRASE.syllablesPerWord).join(''));
   return words.join(' ');
@@ -162,9 +155,18 @@ export function generatePassphrase(cryptoImpl = globalThis.crypto) {
 /// A typed passphrase in its canonical form, or a plain error naming what is wrong.
 export function parsePassphrase(text) {
   const words = normalizePassphrase(text).split(' ').filter(Boolean);
-  assert(words.length === PASSPHRASE.words, `Your recovery passphrase is ${PASSPHRASE.words} words of six letters. Check it against what you wrote down.`);
-  words.forEach((word, i) => assert(WORD.test(word), `Word ${i + 1} of your recovery passphrase is not one the wallet makes. Check it against what you wrote down.`));
+  assert(PASSPHRASE.readWords.includes(words.length), 'Your recovery words are words of six letters: five of them, or four on an older account. Check them against what you wrote down.');
+  words.forEach((word, i) => assert(WORD.test(word), `Word ${i + 1} of your recovery words is not one the wallet makes. Check it against what you wrote down.`));
   return words.join(' ');
+}
+/// Which recovery key was typed into a field that takes either: the recovery words (the passphrase), or a printed
+/// recovery sheet. Text that reads as the words is taken as the words, also with a typo, so that the person is told
+/// which word is wrong: letters only, in words of five letters or more (no group of a sheet has more than four
+/// characters, and a sheet run together holds digits). Anything else is read as a sheet.
+export function recoveryPaperKind(text) {
+  if (typeof text !== 'string') return 'sheet';
+  const typed = normalizePassphrase(text);
+  return /^[a-z]+(?: [a-z]+)*$/.test(typed) && typed.split(' ').every(word => word.length >= 5) ? 'words' : 'sheet';
 }
 export const passphraseSalt = (networkId, accountId) => concat(PASSPHRASE_DOMAIN, unhex(networkId, 32), u64(decimal(String(accountId))));
 // An account signed up protected (kind 45, signup-ui.mjs) has its recovery keys from its first block, and gets its
@@ -175,18 +177,32 @@ export const passphraseSalt = (networkId, accountId) => concat(PASSPHRASE_DOMAIN
 // later (replaceRecovery) name the account number as always.
 const REGISTRATION_PASSPHRASE_DOMAIN = encoder.encode('TCDEVNET-RECOVERY-PASSPHRASE-REGISTRATION-V1\0');
 export const registrationPassphraseSalt = (networkId, registrationKey) => concat(REGISTRATION_PASSPHRASE_DOMAIN, unhex(networkId, 32), unhex(registrationKey, 32));
+// "Words only", the way recovery keys are made at a protected sign-up and in "Protect my account": both recovery keys of
+// the account come from its words. The first is the key above. The second is Argon2id, with PASSPHRASE_KDF, of the same
+// words in their canonical form, with a salt of its own domain, parallel to the first:
+//   "TCDEVNET-RECOVERY-WORDS-SECOND-V1\0" || network id (32 bytes) || account number (8 bytes, big-endian), or, for the
+//   first keys of an account signed up protected, "TCDEVNET-RECOVERY-WORDS-SECOND-REGISTRATION-V1\0" || network id ||
+//   registration key (32 bytes).
+// The chain's rule is unchanged: two recovery keys, both needed to ask for new keys (the threshold is at least 2,
+// v5/src/security.rs). With words only, one paper holds both; with "words and a Recovery Kit" the second key is a random
+// sheet in the kit (papers.mjs, recovery-file.mjs), so that the paper alone is not enough.
+const SECOND_DOMAIN = encoder.encode('TCDEVNET-RECOVERY-WORDS-SECOND-V1\0');
+const SECOND_REGISTRATION_DOMAIN = encoder.encode('TCDEVNET-RECOVERY-WORDS-SECOND-REGISTRATION-V1\0');
+export const secondWordsSalt = (networkId, accountId) => concat(SECOND_DOMAIN, unhex(networkId, 32), u64(decimal(String(accountId))));
+export const secondWordsRegistrationSalt = (networkId, registrationKey) => concat(SECOND_REGISTRATION_DOMAIN, unhex(networkId, 32), unhex(registrationKey, 32));
 /// A recovery passphrase is one the wallet made: chosen ones are refused, however long.
 export function checkPassphrase(passphrase, { passwords = [] } = {}) {
   const text = parsePassphrase(passphrase);
-  assert(!passwords.some(p => typeof p === 'string' && normalizePassphrase(p) === text), 'Your recovery passphrase must differ from your passwords.');
+  assert(!passwords.some(p => typeof p === 'string' && normalizePassphrase(p) === text), 'Your recovery words must differ from your passwords.');
   return true;
 }
-/// `accountId`, or `registrationKey` for the first papers of an account signed up protected: one of the two.
-export async function passphraseSeed({ passphrase, networkId, accountId, registrationKey, argon2id }) {
+/// `accountId`, or `registrationKey` for the first papers of an account signed up protected: one of the two. `second`:
+/// the seed of the second key of a "words only" account (secondWordsSalt), else of the first.
+export async function passphraseSeed({ passphrase, networkId, accountId, registrationKey, argon2id, second = false }) {
   assert(typeof argon2id === 'function', 'Local Argon2id is unavailable.');
   assert((accountId === undefined) !== (registrationKey === undefined), 'A passphrase key names the account by its number or by its registration key, not both.');
   const text = parsePassphrase(passphrase);
-  const password = encoder.encode(text), salt = registrationKey === undefined ? passphraseSalt(networkId, accountId) : registrationPassphraseSalt(networkId, registrationKey);
+  const password = encoder.encode(text), salt = registrationKey === undefined ? (second ? secondWordsSalt : passphraseSalt)(networkId, accountId) : (second ? secondWordsRegistrationSalt : registrationPassphraseSalt)(networkId, registrationKey);
   let seed;
   try {
     seed = await argon2id({ password, salt, parallelism: PASSPHRASE_KDF.parallelism, iterations: PASSPHRASE_KDF.iterations, memorySize: PASSPHRASE_KDF.memoryKiB, hashLength: PASSPHRASE_KDF.hashLength, outputType: 'binary' });
@@ -197,8 +213,8 @@ export async function passphraseSeed({ passphrase, networkId, accountId, registr
   assert(seed instanceof Uint8Array && seed.length === 32, 'Argon2id returned an unexpected result');
   return seed;
 }
-export async function passphraseKey({ passphrase, networkId, accountId, registrationKey, argon2id, cryptoImpl = globalThis.crypto }) {
-  const seed = await passphraseSeed({ passphrase, networkId, accountId, registrationKey, argon2id });
+export async function passphraseKey({ passphrase, networkId, accountId, registrationKey, argon2id, second = false, cryptoImpl = globalThis.crypto }) {
+  const seed = await passphraseSeed({ passphrase, networkId, accountId, registrationKey, argon2id, second });
   try { return await keyFromSeed(seed, cryptoImpl); } finally { seed.fill(0); }
 }
 /// The key a typed passphrase gives for `account`: by its number, as for every account; and, on a network that takes
@@ -213,15 +229,55 @@ export async function accountPassphraseKey({ passphrase, networkId, account, reg
   if (isRecovery(byIdentity)) { byNumber.privateKey = null; return byIdentity; }
   byIdentity.privateKey = null; return byNumber;
 }
+/// The second key of "words only" (secondWordsSalt): by the account's number, or by its registration key.
+export const recoveryWordsSecondKey = args => passphraseKey({ ...args, second: true });
+/// The two keys the words give for `account`, and so which kind of recovery keys it has. `first` is found as
+/// accountPassphraseKey finds it; the second key is then made the same way (by number, or by identity key). `second` is
+/// that key when it is a recovery key of the account ("words only"), else null: the account's other recovery key is a
+/// sheet, in a Recovery Kit or printed. When `first` is not one of the account's keys, nothing more is computed.
+export async function accountWordsKeys({ passphrase, networkId, account, registered = false, isRecovery, argon2id, cryptoImpl = globalThis.crypto }) {
+  let first = await passphraseKey({ passphrase, networkId, accountId: account.id, argon2id, cryptoImpl }), by = { accountId: account.id };
+  if (!isRecovery(first) && registered && /^[0-9a-f]{64}$/.test(String(account.public_key ?? ''))) {
+    const byIdentity = await passphraseKey({ passphrase, networkId, registrationKey: account.public_key, argon2id, cryptoImpl });
+    if (isRecovery(byIdentity)) { first.privateKey = null; first = byIdentity; by = { registrationKey: account.public_key }; } else byIdentity.privateKey = null;
+  }
+  if (!isRecovery(first)) return { first, second: null };
+  const second = await recoveryWordsSecondKey({ passphrase, networkId, ...by, argon2id, cryptoImpl });
+  if (isRecovery(second)) return { first, second };
+  second.privateKey = null; return { first, second: null };
+}
 
 // ------------------------------------------------------------------ passwords and policy
-/// The login and payment passwords: each passes the vault rules, and they differ.
-/// Two passwords count as the same if they differ only in case, spacing or Unicode form.
-export const samePassword = (a, b) => typeof a === 'string' && typeof b === 'string' && a.normalize('NFKC').toLowerCase().replace(/\s+/gu, '') === b.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
-export function checkPasswords({ login, payment, name = '' }) {
-  if (login !== undefined) checkPassword(login, name);
-  if (payment !== undefined) checkPassword(payment, name);
-  assert(login === undefined || payment === undefined || !samePassword(login, payment), 'Your payment password must differ from your login password.');
+/// The login and payment passwords: each one that is chosen passes the vault rules, and they are not close.
+/// Two passwords count as the same if they differ only in case, spacing or Unicode form; as close if, so read, they are
+/// at most three edits apart, or share a beginning of 80% of the shorter one (web audit of November 2026, K-6: whoever
+/// learns one must not be able to guess the other). `current` names the one of the two that is already in use and is
+/// not chosen now ('login' or 'payment'): it is not held to the rules of a new password, as a vault that exists opens
+/// as before, but the new one must not be close to it.
+const plainForm = text => text.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
+export const samePassword = (a, b) => typeof a === 'string' && typeof b === 'string' && plainForm(a) === plainForm(b);
+/// Whether two passwords are close (see above).
+export function closePasswords(a, b) {
+  const x = [...plainForm(a)], y = [...plainForm(b)], shorter = Math.min(x.length, y.length);
+  let prefix = 0; while (prefix < shorter && x[prefix] === y[prefix]) prefix++;
+  if (shorter > 0 && prefix >= 0.8 * shorter) return true;
+  if (Math.abs(x.length - y.length) > 3) return false;
+  let row = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= y.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    if (Math.min(...next) > 3) return false;
+    row = next;
+  }
+  return row[y.length] <= 3;
+}
+export function checkPasswords({ login, payment, name = '', current = null }) {
+  if (login !== undefined && current !== 'login') checkPassword(login, name);
+  if (payment !== undefined && current !== 'payment') checkPassword(payment, name);
+  if (login === undefined || payment === undefined) return true;
+  assert(!samePassword(login, payment), 'Your payment password must differ from your login password.');
+  assert(!closePasswords(login, payment), current === 'payment' ? 'Your new login password is too close to your payment password: whoever learns one could guess the other. Choose four or five other words for it.'
+    : 'Your payment password is too close to your login password: whoever learns one could guess the other. Choose four or five other words for it.');
   return true;
 }
 /// How much a spend key alone can move: the allowance refills evenly over 24 hours, so the full
@@ -260,13 +316,59 @@ export function choosePolicy({ dailyLimitMicros, delayHours = DEFAULTS.delayHour
   return { threshold, daily_limit_micros: limit.toString(), delay_seconds: seconds(delayHours, 'waiting period'), freeze_seconds: seconds(freezeHours, 'freeze length') };
 }
 
-/// A new key for one role of a protected account, and its vault under `password` (vault.mjs, version 2: `intent` is
-/// 'signin' or 'spend'). The key can sign at once; its secret leaves memory once it is sealed. "Protect my account",
-/// the replacements of keys (security-ui.mjs) and signing up protected (signup-ui.mjs) make their keys here.
-export async function sealedKey({ password, networkId, name, intent, argon2id, cryptoImpl = globalThis.crypto }) {
-  const key = await newDevice(cryptoImpl); let record;
-  try { record = await sealVault({ pkcs8: key.secret.pkcs8 }, password, { networkId, name, publicKey: key.publicKey }, argon2id, cryptoImpl, intent); } finally { forgetSecret(key.secret); }
-  return { key: { publicKey: key.publicKey, privateKey: key.privateKey }, record };
+/// A new key for one role of a protected account (vault.mjs: `intent` is 'signin' or 'spend'), sealed by the rule: see
+/// sealedKeys. The key can sign at once; its secret leaves memory once it is sealed.
+/// A login key comes with `storageKey`: the key of what the browser keeps private for the account (vault.mjs,
+/// storageKeyFrom), so that the page can let the new key open what the old one kept (locked-store.mjs, adopt).
+export async function sealedKey({ password, networkId, name, intent, argon2id, cryptoImpl = globalThis.crypto, lock = null }) {
+  return (await sealedKeys({ wanted: [{ intent, ...(password === undefined ? {} : { password }) }], networkId, name, argon2id, cryptoImpl, lock }))[0];
+}
+/// New keys for `wanted` ([{ intent, password? }], one or two), sealed by the rule (vault.mjs, RULE). "Protect my
+/// account", the replacements of keys, a login asked of another device, "Recover my account" (security-ui.mjs), signing up
+/// protected (signup-ui.mjs) and keys locked at birth (device-lock.mjs, sealAtBirth) make their keys here.
+/// - With `lock` (the account's keys are locked to this device, or are locked from birth: device-lock.mjs), `lock(keys)`
+///   gives { credential, secrets } for the new keys ([{ publicKey, intent }]) in ONE request to the device, and each key
+///   is sealed with the device and the password `wanted[i].password` together (vault version 3). The secrets are wiped
+///   here.
+/// - Without, each key is sealed under a password the wallet makes now (vault.mjs, makePassword), which comes back as
+///   the entry's `made` (its text, to be shown once). A password given without a lock is refused (RULE): nothing a person
+///   typed seals a key alone.
+/// `under` ({ secret, binding }: the registration key of a sign-up, with the plaintext of vault version 1): sealed under
+/// the new login key while that key's secret is in memory (vault version 4, sealUnder); that key's entry carries it as
+/// `under`.
+export async function sealedKeys({ wanted, networkId, name, argon2id, cryptoImpl = globalThis.crypto, lock = null, under = null }) {
+  assert(Array.isArray(wanted) && wanted.length >= 1 && wanted.length <= 2, 'One or two new keys at a time.');
+  if (!lock && wanted.some(w => w.password !== undefined)) throw new Error(RULE);
+  if (lock && wanted.some(w => typeof w.password !== 'string')) throw new Error('A key locked to this device is sealed with a password too.');
+  if (under) assert(wanted.some(w => w.intent === 'signin'), 'A key is kept under the new login key only.');
+  const keys = [];
+  let given = null;
+  try {
+    for (const w of wanted) keys.push(await newDevice(cryptoImpl, w.intent === 'signin' ? { networkId, name } : null));
+    if (lock) {
+      given = await lock(keys.map((key, i) => ({ publicKey: key.publicKey, intent: wanted[i].intent })));
+      assert(given && typeof given.credential === 'string' && Array.isArray(given.secrets) && given.secrets.length === keys.length, 'The device gave no secret for the new keys. Nothing was changed.');
+    }
+    const out = [];
+    let kept = false;
+    for (let i = 0; i < keys.length; i++) {
+      const made = lock ? null : makePassword(), binding = { networkId, name, publicKey: keys[i].publicKey };
+      const record = await sealVault({ pkcs8: keys[i].secret.pkcs8 }, made ?? wanted[i].password, binding, argon2id, cryptoImpl, wanted[i].intent, given ? { credential: given.credential, secret: given.secrets[i] } : null);
+      const entry = { key: { publicKey: keys[i].publicKey, privateKey: keys[i].privateKey }, record, storageKey: keys[i].storageKey ?? null, made: made?.text ?? null };
+      if (under && !kept && wanted[i].intent === 'signin') { entry.under = await sealUnder(under.secret, under.binding, { publicKey: keys[i].publicKey, pkcs8: keys[i].secret.pkcs8 }, cryptoImpl); kept = true; }
+      out.push(entry);
+    }
+    return out;
+  } finally { for (const key of keys) forgetSecret(key.secret); for (const secret of given?.secrets ?? []) secret?.fill?.(0); }
+}
+/// How the keys of an account are sealed in this browser (vault.mjs, sealOf), by place: 'device', 'made', 'under',
+/// 'chosen', or null where nothing is kept. `chosen` lists the places whose record a password a person chose opens
+/// alone: records kept from before the rule, which Keys names (README.md, "Passwords you chose, from before").
+export function sealsOf(storage, slots) {
+  const read = key => { try { const raw = storage.getItem(key); return raw === null ? null : validateVaultRecord(JSON.parse(raw), ['device', 'signin', 'spend']); } catch { return null; } };
+  const login = read(slots.login), spend = read(slots.spend);
+  const seals = { login: login ? sealOf(login) : null, spend: spend ? sealOf(spend) : null, loginIntent: login ? vaultIntent(login) : null };
+  return { ...seals, chosen: [['login', seals.login], ['spend', seals.spend]].filter(([, seal]) => seal === 'chosen').map(([place]) => place) };
 }
 
 // ------------------------------------------------------------------ where encrypted keys live
@@ -335,6 +437,22 @@ export function stagedVoid(note, { account, security, state }) {
   return false;
 }
 const roleOfDevice = device => device.can_manage ? (device.can_spend ? null : 'recover') : device.can_spend ? 'spend' : 'signin';
+/// The kind of recovery keys this browser made for an account (papers.mjs): "words only" or "words and a Recovery Kit",
+/// kept with the two public keys so that Keys can say what fits. Nothing secret is in it. It counts only while the
+/// account's recovery keys are exactly those two: keys made in another browser leave the kind unknown here, and Keys then
+/// says what holds for both kinds.
+export const recoveryKindKey = (networkId, name) => `timecurrency.recovery-kind.v1:${networkId}:${name}`;
+export function rememberRecoveryKind(storage, networkId, name, keys) {
+  try { storage.setItem(recoveryKindKey(networkId, name), JSON.stringify({ kind: keys.kind, keys: [keys.phrase.publicKey, keys.sheet.publicKey].sort() })); } catch { /* Keys says what holds for both kinds */ }
+}
+/// 'words', 'kit', or null when this browser does not know it for the account's recovery keys of now.
+export function recoveryKindOf(storage, networkId, account) {
+  if (!account) return null;
+  let kept = null; try { kept = JSON.parse(storage.getItem(recoveryKindKey(networkId, account.name))); } catch { kept = null; }
+  if (!kept || !['words', 'kit'].includes(kept.kind) || !Array.isArray(kept.keys)) return null;
+  const recover = (account.devices || []).filter(d => roleOfDevice(d) === 'recover').map(d => d.public_key).sort();
+  return recover.length === kept.keys.length && recover.every((key, i) => key === kept.keys[i]) ? kept.kind : null;
+}
 const holds = (account, publicKey, role) => Boolean(account?.devices?.some(d => d.public_key === publicKey && roleOfDevice(d) === role));
 /// Moves staged keys that the chain now holds into the live slots. The record they replace (the
 /// protocol-4 key after securing, an old sign-in or spend key) is overwritten and so forgotten.
@@ -398,7 +516,7 @@ export function spendRecord(storage, slots) { return readRecord(storage, slots.s
 
 // ------------------------------------------------------------------ recovery on a new device
 // What survives a reload while a replacement asked for by the recovery keys waits. Public keys
-// and counters only: the recovery sheet and passphrase are never stored.
+// and counters only: the recovery sheet and the recovery words are never stored.
 /// Before a recovery on this browser. Records whose key the account no longer has (a removed login
 /// key, a replaced payment key) are worthless and may be replaced. A record whose key the account
 /// still has is never overwritten: it blocks, with the reason.
@@ -406,8 +524,10 @@ export function lostDeviceSlots(storage, slots, account) {
   const stale = [];
   for (const [key, what] of [[slots.login, 'login'], [slots.spend, 'payment']]) {
     const raw = storage.getItem(key); if (raw === null) continue;
-    let record; try { record = JSON.parse(raw); validateVaultRecord(record); } catch { return { stale: [], blocked: `This browser's ${what} key record is damaged. Recover from a fresh browser profile.` }; }
-    if (account.devices.some(d => d.public_key === record.binding.publicKey)) return { stale: [], blocked: what === 'payment' ? 'This browser still holds a payment key of this account. Use your payment password to make a new login key instead. If you forgot it, recover from a fresh browser profile.' : `This browser can still unlock @${account.name}. Unlock it instead.` };
+    let record; try { record = JSON.parse(raw); validateVaultRecord(record, ['device', 'signin', 'spend']); } catch { return { stale: [], blocked: `This browser's ${what} key record is damaged. Recover from a fresh browser profile.` }; }
+    // A key locked to this device (vault.mjs, version 3) is replaced too: this is the way back when the device lost its
+    // key, and a recovery freezes the account and replaces every key of it when it finishes in any case.
+    if (record.version !== 3 && account.devices.some(d => d.public_key === record.binding.publicKey)) return { stale: [], blocked: what === 'payment' ? 'This browser still holds a payment key of this account. Use your payment password to make a new login key instead. If you forgot it, recover from a fresh browser profile.' : `This browser can still unlock @${account.name}. Unlock it instead.` };
     stale.push(key);
   }
   return { stale, blocked: null };
@@ -426,7 +546,7 @@ export function deviceRows(account, ownKeys = []) {
   const words = {
     signin: ['Login key', 'Signs in to websites. It cannot pay, freeze or change keys.'],
     spend: ['Payment key', 'Pays within the daily limit, starts larger payments that wait, freezes, and replaces login keys.'],
-    recover: ['Recovery key', 'Your recovery sheet or passphrase, kept off this device. Two of them, or one with the payment key, make big changes.'],
+    recover: ['Recovery key', 'One of the two keys of your recovery words (or the sheet of your Recovery Kit), kept off this device. The two together, or one with the payment key, make big changes.'],
   };
   return account.devices.map(d => { const role = roleOfDevice(d), [title, detail] = words[role] || ['Key with both powers', 'Not allowed on a secured account.'];
     return { publicKey: d.public_key, role, title: ownKeys.includes(d.public_key) ? `${title} of this browser` : title, detail }; });

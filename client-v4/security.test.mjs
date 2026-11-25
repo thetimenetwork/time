@@ -8,5 +8,7 @@ test('website login binds exact origin, consumes challenge, proves selected acco
  const login=()=>{const issued=service.issue(),message=sdk.loginMessage(issued.challenge,{account:authority,publicKey:key});return {issued,proof:{message,signature:sign(null,sdk.loginBytes(message),pair.privateKey).toString('hex')}};};
  let a=login(),result=await service.finish(a.issued.cookie,a.proof);assert.equal((await service.current(result.cookie)).account.name,'alice');assert(selections.every(q=>JSON.stringify(q)==='{"ids":["123"]}'));await assert.rejects(service.finish(a.issued.cookie,a.proof),/already consumed/);
  revoked=true;assert.equal(await service.current(result.cookie),null);a=login();await assert.rejects(service.finish(a.issued.cookie,a.proof),/changed or revoked/);revoked=false;frozen=true;a=login();await assert.rejects(service.finish(a.issued.cookie,a.proof),/frozen/);frozen=false;
- a=login();a.proof.message.origin='https://attacker.example';await assert.rejects(service.finish(a.issued.cookie,a.proof),/binding/);await assert.rejects(service.finish(a.issued.cookie,a.proof),/already consumed/);
+ // A refused proof is refused again; its challenge is remembered only once a sign-in succeeded with it (a challenge
+ // costs this service no memory until then), so the second refusal is the same check's.
+ a=login();a.proof.message.origin='https://attacker.example';await assert.rejects(service.finish(a.issued.cookie,a.proof),/binding/);await assert.rejects(service.finish(a.issued.cookie,a.proof),/binding/);
 });

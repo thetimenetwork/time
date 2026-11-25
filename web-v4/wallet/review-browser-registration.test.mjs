@@ -7,11 +7,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { failureNotice, gatewayWords } from './actions.mjs';
+import { askWhenFree, isBusyError, BUSY_REGISTRATION } from './busy.mjs';
+import '../../client-v4/time-sdk.js';
 
 const source = await readFile(new URL('./app.js', import.meta.url), 'utf8');
 const start = source.indexOf('async function registrationSponsor() {'), end = source.indexOf('async function registerAccount() {');
 assert.ok(start > 0 && end > start, 'app.js holds registrationSponsor right before registerAccount');
-const make = new Function('network', 'client', 'assert', 'fetch', `${source.slice(start, end)}; return registrationSponsor;`);
+const sponsorFrom = new Function('network', 'client', 'assert', 'fetch', 'askWhenFree', 'isBusyError', 'BUSY_REGISTRATION', 'busyOptions', `${source.slice(start, end)}; return registrationSponsor;`);
+// What app.js hands it besides: how a busy service is waited for (busy.mjs), here with waits that take no time.
+const make = (network, client, assert, fetch) => sponsorFrom(network, client, assert, fetch, askWhenFree, isBusyError, BUSY_REGISTRATION, () => ({ sdk: globalThis.TimeSDK, timing: { sleep: async () => {} } }));
 const NETWORK = 'c6'.repeat(32), ORIGIN = 'https://faucet.example';
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const never = { request: async () => { throw new Error('the page\'s own service was asked'); } };

@@ -10,6 +10,7 @@
     "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
   },
   "data_directory": "/var/lib/time-faucet",
+  "caller_key_file": "/dev/shm/time-faucet-callers.key",
   "account": "12",
   "key_file": "/etc/time-faucet/spend.key",
   "grant_micros": "5000000",
@@ -18,6 +19,9 @@
     "per_address_per_day": 3,
     "total_per_day_micros": "500000000",
     "registrations_per_address_per_day": 1,
+    "per_network_per_day": 9,
+    "registrations_per_network_per_day": 3,
+    "registrations_per_day": 10,
     "refused_requests_per_address_per_hour": 50
   },
   "min_balance_micros": "10000000",

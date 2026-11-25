@@ -142,7 +142,7 @@ async function lab(run, options = {}, prepare = () => {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'time-faucet-'));
   const node = fakeNode(), world = { node, clock: 1700000000000, logs: [], service: null };
   prepare(node);
-  const open = async (more = {}) => createFaucetService({ ...OPTIONS(), verifier, rpc: (...a) => node.rpc(...a), lookup: (...a) => node.lookup(...a), readState: (...a) => node.readState(...a), dataFile: path.join(directory, 'faucet.sqlite'), now: () => world.clock, log: (level, message, fields) => world.logs.push({ level, message, ...fields }), ...options, ...more });
+  const open = async (more = {}) => createFaucetService({ ...OPTIONS(), verifier, rpc: (...a) => node.rpc(...a), lookup: (...a) => node.lookup(...a), readState: (...a) => node.readState(...a), dataFile: path.join(directory, 'faucet.sqlite'), callerKeyFile: path.join(directory, 'callers.key'), now: () => world.clock, log: (level, message, fields) => world.logs.push({ level, message, ...fields }), ...options, ...more });
   try {
     world.service = await open();
     world.reopen = async (more) => { await world.service.close(); world.service = await open(more); };

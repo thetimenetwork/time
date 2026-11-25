@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { createHash, generateKeyPairSync, sign as edSign } from 'node:crypto';
+import { createHash, randomBytes, generateKeyPairSync, sign as edSign } from 'node:crypto';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -178,7 +178,7 @@ test('a deposit made during an outage of more than a day still gets its webhook'
     const listed = (await call(service, '/v1/accounts/1/payments?cursor=3.0')).body.items;
     console.log('   payments indexed after the outage:', listed.length, '| webhooks sent for them:', state.hooks.length - before, '| queued:', service.webhooks.status().queued, '| log lines about it:', state.logs.filter((l) => /webhook/.test(l.message)).length);
     assert.equal(state.hooks.length - before, 1, 'the deposit of block 4 is in the index but its webhook was never queued, and no log line says so');
-  }, { webhooks: [{ account: '1', url: 'https://hooks.example/x', secret: 'x'.repeat(16) }] });
+  }, { webhooks: [{ account: '1', url: 'https://hooks.example/x', secret: randomBytes(32).toString('hex') }] });
 });
 
 // ------------------------------------------------------------------ submit

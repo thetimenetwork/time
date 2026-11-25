@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import '../../client-v4/time-sdk.js';
 import * as installedVerifier from '../../client-v4/proof-verifier.mjs';
-import { createSecurityWatch, createFeed, createAlertServer, fileStore, webhookAdapter, checkWebhookURL } from '../../client-v4/security-watch-service.mjs';
+import { createSecurityWatch, createFeed, createAlertServer, fileStore, webhookAdapter, checkWebhookURL, webhookSecretProblem, WEBHOOK_SECRET_RULE } from '../../client-v4/security-watch-service.mjs';
 
 const KEYS = ['gateway', 'trust', 'subscriptions', 'poll_seconds', 'port', 'host', 'hosts', 'feed_token', 'data_directory', 'reminder_hours', 'max_lag_seconds', 'gateway_timeout_seconds'];
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -37,7 +37,8 @@ export function validateConfig(config) {
     if (!canonicalId(s.account)) throw new Error(`subscription ${i}: account is a decimal account id in quotes`);
     if (s.webhook === undefined && s.secret === undefined) return { account: s.account };
     checkWebhookURL(s.webhook);
-    if (typeof s.secret !== 'string' || s.secret.length < 16) throw new Error(`subscription ${i}: a webhook needs a secret of at least 16 characters`);
+    const problem = webhookSecretProblem(s.secret);
+    if (problem) throw new Error(`subscription ${i}: the secret ${problem}. ${WEBHOOK_SECRET_RULE}`);
     return { account: s.account, webhook: s.webhook, secret: s.secret };
   });
   const pairs = subscriptions.filter((s) => s.webhook).map((s) => JSON.stringify([s.account, s.webhook]));

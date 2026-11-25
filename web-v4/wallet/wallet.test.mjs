@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash, argon2Sync, webcrypto } from 'node:crypto';
-import { KDF, newDevice, sealVault, openVault, checkPassword, validateName, hex, forgetSecret } from './vault.mjs';
+import { KDF, newDevice, openVault, checkPassword, validateName, hex, forgetSecret } from './vault.mjs';
+import { sealLegacy } from './tests/legacy-vault.mjs';
 import { GenerationFence, PendingReservations, PaymentMarkers, withSigningLock, parseSeconds, formatSeconds, acceptApprovalEvent } from './guards.mjs';
 import { accountActionHeader, pendingIsObsolete, poolSharesForDeposit, leastSureStake, registrationPendingDisposition, emergencyCancelSlot, nonceCancelSlot, recoveryFrozen, authorityReservationObsolete, emergencyReservationObsolete } from './actions.mjs';
 import { validateRecoveryClaim, recoveryCaseReady } from './recovery.mjs';
@@ -27,7 +28,7 @@ test('random Ed25519 key is imported nonextractable and vault roundtrips', async
   device = await newDevice(webcrypto); binding = { networkId, name: 'alice', publicKey: device.publicKey };
   assert.equal(device.privateKey.extractable, false);
   assert.equal(device.publicKey.length, 64);
-  encrypted = await sealVault(device.secret, password, binding, argon2id, webcrypto);
+  encrypted = await sealLegacy(device.secret, password, binding, argon2id, webcrypto);
   const serialized = JSON.stringify(encrypted);
   assert.ok(!serialized.includes(password)); assert.ok(!serialized.includes(device.secret.pkcs8));
   const opened = await openVault(encrypted, password, argon2id, webcrypto);
@@ -35,7 +36,7 @@ test('random Ed25519 key is imported nonextractable and vault roundtrips', async
   await assert.rejects(webcrypto.subtle.exportKey('pkcs8', opened.privateKey));
 });
 test('each encryption gets a fresh 128-bit salt and 96-bit IV', async () => {
-  const other = await sealVault(device.secret, password, binding, argon2id, webcrypto);
+  const other = await sealLegacy(device.secret, password, binding, argon2id, webcrypto);
   assert.notEqual(other.salt, encrypted.salt); assert.notEqual(other.iv, encrypted.iv); assert.notEqual(other.ciphertext, encrypted.ciphertext);
 });
 test('wrong password, ciphertext, network, name and device binding fail closed', async () => {
@@ -64,7 +65,7 @@ test('password policy accepts Unicode, spaces, paste-equivalent long text; does 
   assert.throws(() => checkPassword('short'), /15/); assert.throws(() => checkPassword('password123456789'), /easy/);
   assert.throws(() => checkPassword('aaaaaaaaaaaaaaaa'), /easy/); assert.throws(() => checkPassword('abc\ud800long password'), /Unicode/);
   assert.equal(validateName('@alice_12'), 'alice_12'); assert.throws(() => validateName('ALICE'));
-  const trailing = await sealVault(device.secret, password + ' ', binding, argon2id, webcrypto);
+  const trailing = await sealLegacy(device.secret, password + ' ', binding, argon2id, webcrypto);
   await assert.rejects(openVault(trailing, password, argon2id, webcrypto));
 });
 test('missing Argon2 has no silent PBKDF or weak fallback', async () => {
@@ -134,14 +135,17 @@ test('a stake that is too small for a pool is refused with the amount that the p
   assert.equal(leastSureStake({ assets: '0', total_shares: '0' }), 1n, 'an empty pool takes anything');
 });
 test('popup rejects foreign source, null origin, insecure site and forged login audience', () => {
-  const opener = {}, challenge = { origin: 'https://shop.example' };
+  const opener = {}, challenge = { purpose: 'login', origin: 'https://shop.example', networkId: 'ab'.repeat(32), nonce: 'cd'.repeat(32), issuedAt: 1000, expiresAt: 61000 };
   const event = { source: opener, origin: 'https://shop.example', data: { type: 'time:request', version: 1, id: 'abcdefgh1234', request: { type: 'login', challenge } } };
   assert.equal(acceptApprovalEvent(event, opener).origin, 'https://shop.example');
   assert.throws(() => acceptApprovalEvent({ ...event, source: {} }, opener), /opening/);
   assert.throws(() => acceptApprovalEvent({ ...event, origin: 'null' }, opener), /opening/);
   assert.throws(() => acceptApprovalEvent({ ...event, origin: 'http://shop.example' }, opener), /HTTPS/);
-  assert.throws(() => acceptApprovalEvent({ ...event, data: { ...event.data, request: { type: 'login', challenge: { origin: 'https://other.example' } } } }, opener), /audience/);
-  assert.equal(acceptApprovalEvent({ ...event, origin: 'http://localhost:8788', data: { ...event.data, request: { type: 'payment' } } }, opener).request.type, 'payment');
+  // A login for another website, or a request in no form the wallet takes, is one fixed sentence (web audit, W-1).
+  assert.throws(() => acceptApprovalEvent({ ...event, data: { ...event.data, request: { type: 'login', challenge: { ...challenge, origin: 'https://other.example' } } } }, opener), /does not understand/);
+  assert.throws(() => acceptApprovalEvent({ ...event, origin: 'http://localhost:8788', data: { ...event.data, request: { type: 'payment' } } }, opener), /does not understand/);
+  const payment = { type: 'payment', networkId: 'ab'.repeat(32), to: '7', amount: '100000', orderId: 'ef'.repeat(32) };
+  assert.equal(acceptApprovalEvent({ ...event, origin: 'http://localhost:8788', data: { ...event.data, request: payment } }, opener).request.type, 'payment');
 });
 test('forgetSecret drops plaintext key and registration salt references', () => {
   const secret = { pkcs8: 'secret', nameSalt: 'secret' }; forgetSecret(secret); assert.deepEqual(secret, { pkcs8: null, nameSalt: null });

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Time network API",
-    "version": "1.2.0",
-    "description": "Look up blocks, actions and accounts of a Time network, detect deposits, submit signed actions and follow new blocks and payments.\n\nAmounts are decimal strings of microseconds. Heights, nonces and account numbers are decimal strings too.\n\nAnswers marked `\"source\": \"index\", \"proven\": false` come from this server's index: a convenience, not a proof. Each carries what is needed to verify it with the SDK and your own trust anchor. Account state is marked `\"source\": \"state_proof\"` and carries the proof this server checked.\n\nUnknown or repeated query parameters are refused with 400, so a misspelled filter never returns an unfiltered list. The address of a request is a plain path with an optional query: a fragment, another host, dot segments or backslashes are refused with 400.\n\nAnswers that do not depend on the route (an unknown route, another method, a refused origin) are listed under `x-any-request`."
+    "version": "1.3.0",
+    "description": "Look up blocks, actions and accounts of a Time network, detect deposits, submit signed actions and follow new blocks and payments.\n\nAmounts are decimal strings of microseconds. Heights, nonces and account numbers are decimal strings too.\n\nAnswers marked `\"source\": \"index\", \"proven\": false` come from this server's index: a convenience, not a proof. Each carries what is needed to verify it with the SDK and your own trust anchor. Account state is marked `\"source\": \"state_proof\"` and carries the proof this server checked.\n\nUnknown or repeated query parameters are refused with 400, so a misspelled filter never returns an unfiltered list. The address of a request is a plain path with an optional query: a fragment, another host, dot segments or backslashes are refused with 400.\n\nA page of another site may read the API only through CORS, from an origin the operator allows: a browser that loads an address under /v1/ for another site as an image, script, style sheet, object, frame or prefetch is refused with 403 `cross_site_refused`. Programs, and people who follow a link, are not affected. A request that carries a body ends its connection with its answer.\n\nAnswers that do not depend on the route (an unknown route, another method, a refused origin) are listed under `x-any-request`."
   },
   "servers": [
     {
@@ -53,6 +53,9 @@
             }
           }
         }
+      },
+      "408": {
+        "description": "The request did not arrive in full within 15 seconds (a body sent too slowly); the answer has no body, and the connection is closed"
       },
       "414": {
         "$ref": "#/components/responses/Error414"
@@ -413,7 +416,7 @@
       "get": {
         "operationId": "getBlockProof",
         "summary": "What proves a block and its actions, however old",
-        "description": "The state of the network keeps a history of the hashes of its blocks. This reads the rows for this block and the next one with a proof against validator signatures, checks it, and passes it on with the two signed headers of the node. Together with the Merkle proof of `GET /v1/actions/{hash}` that is the receipt `verifyReceipt` of the installed verifier takes: an action of this block can be checked by anyone, against their own trust anchor. The age of a block is no obstacle: its history proof stays when the state drops the block's own rows after fourteen days. Two kinds of block are not provable here. The newest two, which the state does not reach yet: 404 `not_in_history` with a proof of the plain state, whose height shows how far the history reaches; a reader then follows the block by its own signed header (`GET /v1/light-blocks/{height}` and `verifyFastReceipt`), or asks again after two more blocks. And, when the service's node joined the network from a snapshot, blocks at or below the height it was restored at, for which it holds no history: 404 `history_not_held`. Costs 5 from the rate-limit budget.",
+        "description": "The state of the network keeps a history of the hashes of its blocks. This reads the rows for this block and the next one with a proof against validator signatures, checks it, and passes it on with the two signed headers of the node. Together with the Merkle proof of `GET /v1/actions/{hash}` that is the receipt `verifyReceipt` of the installed verifier takes: an action of this block can be checked by anyone, against their own trust anchor. The age of a block is no obstacle: its history proof stays when the state drops the block's own rows after fourteen days. Two kinds of block are not provable here. The newest two, which the state does not reach yet: 404 `not_in_history` with a proof of the plain state, whose height shows how far the history reaches; a reader then follows the block by its own signed header (`GET /v1/light-blocks/{height}` and `verifyFastReceipt`), or asks again after two more blocks. And, when the service's node joined the network from a snapshot, blocks at or below the height it was restored at, for which it holds no history: 404 `history_not_held`. One client (an IPv4 address or an IPv6 /64) has at most two such reads under way at once: one more is answered 429 `too_many_reads`. Costs 5 from the rate-limit budget.",
         "parameters": [
           {
             "$ref": "#/components/parameters/height"
@@ -472,7 +475,7 @@
       "get": {
         "operationId": "getLightBlock",
         "summary": "A block as a light client takes it",
-        "description": "The signed header of a block with its validator set and the next one, as the node gives them. Nothing of it is checked here and none of it is this server's word: it is what a light client with its own trust anchor verifies, also when it has to step through older blocks. Costs 5 from the rate-limit budget.",
+        "description": "The signed header of a block with its validator set and the next one, as the node gives them. Nothing of it is checked here and none of it is this server's word: it is what a light client with its own trust anchor verifies, also when it has to step through older blocks. One client (an IPv4 address or an IPv6 /64) has at most two such reads under way at once: one more is answered 429 `too_many_reads`. Costs 5 from the rate-limit budget.",
         "parameters": [
           {
             "$ref": "#/components/parameters/height"
@@ -524,7 +527,7 @@
       "get": {
         "operationId": "getValidators",
         "summary": "Who validates now, and a scheduled upgrade",
-        "description": "The staking row of the current state, read with a proof against validator signatures and passed on with that proof: the validators in force with their voting power, and the sets already announced. `upgrade` is in the answer only when the state was asked about its upgrade row. Identical requests within a second share one read of the state. Costs 5 from the rate-limit budget.",
+        "description": "The staking row of the current state, read with a proof against validator signatures and passed on with that proof: the validators in force with their voting power, and the sets already announced. `upgrade` is in the answer only when the state was asked about its upgrade row. Identical requests within a second share one read of the state. One client (an IPv4 address or an IPv6 /64) has at most two such reads under way at once: one more is answered 429 `too_many_reads`. Costs 5 from the rate-limit budget.",
         "responses": {
           "200": {
             "description": "The validators",
@@ -616,7 +619,7 @@
       "get": {
         "operationId": "getAccount",
         "summary": "An account by number or name",
-        "description": "The current state is read with a proof against validator signatures and passed on with that proof. Totals come from the index. `state_height` and `indexed_height` stand side by side: the state can be ahead of the index. To conclude that an action is not on the chain, do not combine these two with a 404 received earlier: use the `index.indexed_height` of that 404 itself, or look the hash up after reading the account. And an index says nothing about heights below its start (`index.start_height`). `indexed.state_is_behind` tells when the index already holds an action the account sent in a block above `state_height`, which the proven state does not count: the proven nonce may then be used, and the proof is asked for again. A signer keeps its own count of the nonces it has signed (docs/integration-guide.md, step 3): neither the proof nor the index shows an action that waits for a block. Costs 5 from the rate-limit budget.",
+        "description": "The current state is read with a proof against validator signatures and passed on with that proof. Totals come from the index. `state_height` and `indexed_height` stand side by side: the state can be ahead of the index. To conclude that an action is not on the chain, do not combine these two with a 404 received earlier: use the `index.indexed_height` of that 404 itself, or look the hash up after reading the account. And an index says nothing about heights below its start (`index.start_height`). `indexed.state_is_behind` tells when the index already holds an action the account sent in a block above `state_height`, which the proven state does not count: the proven nonce may then be used, and the proof is asked for again. A signer keeps its own count of the nonces it has signed (docs/integration-guide.md, step 3): neither the proof nor the index shows an action that waits for a block. Identical requests within a second share one read of the state. One client (an IPv4 address or an IPv6 /64) has at most two such reads under way at once: one more is answered 429 `too_many_reads`. Costs 5 from the rate-limit budget.",
         "parameters": [
           {
             "name": "account",
@@ -675,7 +678,7 @@
       "get": {
         "operationId": "getAccountState",
         "summary": "An account with its security settings and stake",
-        "description": "One proof for the account row, its security row (or the proof that it has none), the recoveries under way, its stake and the validator it runs, with the clock the moments of the security row are on (`security_clock`): on a network whose waits survive a stop, compare them with `security_clock.now_elapsed_micros`, not with the time of the state. `GET /v1/accounts/{account}` gives the account row alone, also by name, with the indexed totals. Identical requests within a second share one read of the state. Costs 5 from the rate-limit budget.",
+        "description": "One proof for the account row, its security row (or the proof that it has none), the recoveries under way, its stake and the validator it runs, with the clock the moments of the security row are on (`security_clock`): on a network whose waits survive a stop, compare them with `security_clock.now_elapsed_micros`, not with the time of the state. `GET /v1/accounts/{account}` gives the account row alone, also by name, with the indexed totals. Identical requests within a second share one read of the state. One client (an IPv4 address or an IPv6 /64) has at most two such reads under way at once: one more is answered 429 `too_many_reads`. Costs 5 from the rate-limit budget.",
         "parameters": [
           {
             "$ref": "#/components/parameters/id"
@@ -1090,7 +1093,7 @@
       "get": {
         "operationId": "stream",
         "summary": "Server-sent events: new blocks and payments",
-        "description": "Events, each with JSON in `data` (shapes under `x-events`): `hello` (once), `payment` (id \"<height>.<index>\"), `block` (id \"<height>\", after the payments of that block), `gap` (the heights it names are not sent: too much was missed to send again, or the reader resumes below the start height of this index, which does not hold them; read the lists, from an index that has those heights), `bye` (the server ends the stream: reconnect).\n\nWith `account`, only payments to that account are sent (`direction=in`, the default), or from it (`out`), or both. Blocks are always sent.\n\nReconnect with the Last-Event-ID header or `after` to receive what was missed, up to 256 blocks and 2,000 payments. A stream is ended after a time (15 minutes by default) and when its place is needed; the reader reconnects and loses nothing. Places are counted per IPv4 address or IPv6 /56. When all are taken, a holder with more streams than the one asking gives up its oldest; a stream is not put out in its first seconds, and one that follows an account goes last and never for one that follows none. Only addresses the operator has reserved are never put out. Costs 10 from the rate-limit budget.",
+        "description": "Events, each with JSON in `data` (shapes under `x-events`): `hello` (once), `payment` (id \"<height>.<index>\"), `block` (id \"<height>\", after the payments of that block), `gap` (the heights it names are not sent: too much was missed to send again, or the reader resumes below the start height of this index, which does not hold them; read the lists, from an index that has those heights), `bye` (the server ends the stream: reconnect).\n\nWith `account`, only payments to that account are sent (`direction=in`, the default), or from it (`out`), or both. Blocks are always sent.\n\nReconnect with the Last-Event-ID header or `after` to receive what was missed, up to 256 blocks and 2,000 payments. A stream is ended after a time (15 minutes by default) and when its place is needed; the reader reconnects and loses nothing. Places are counted per IPv4 address or IPv6 /56. When all are taken, a holder with more streams than the one asking gives up its oldest; a stream is not put out in its first seconds, and one that follows an account goes last and never for one that follows none. Streams that follow an account never hold more than four fifths of the places (unless the operator set another share): the rest is kept for readers that follow none. Only addresses the operator has reserved are never put out. Costs 10 from the rate-limit budget.",
         "parameters": [
           {
             "name": "account",
@@ -1145,6 +1148,66 @@
           },
           "gap": {
             "$ref": "#/components/schemas/GapEvent"
+          },
+          "bye": {
+            "$ref": "#/components/schemas/ByeEvent"
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An event stream; the data of each event is described under `x-events`",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/touches": {
+      "get": {
+        "operationId": "touches",
+        "summary": "Server-sent events for a wallet: its account was touched at a height",
+        "description": "For a wallet whose page is open. Events, each with JSON in `data`: `hello` (once), `touch` (a block at `height` included an action that names `account`: sent by it, paying it, or naming it in its security or guardian rules), `bye` (the server ends the stream: reconnect).\n\nA touch is a hint and says so (`\"proven\": false`): it carries no amount, name, kind or text. On a touch, read the state of the account with a proof (the SDK's getVerifiedState) and show what that says. A false touch leads to nothing new; a missed one costs nothing.\n\nNothing is kept for a reader: no event has an id, nothing is sent again, and `Last-Event-ID` is not read. A reader that reconnects reads the state of its account. Blocks that the index reaches more than `max_lag_seconds` after they were made are hinted to nobody.\n\nA pool of its own, apart from /v1/stream: places are counted per IPv4 address or IPv6 /56 (16 each by default, 2,000 in all). When all are taken, a holder with more streams than the one asking gives up its oldest; a stream is not put out in its first seconds. A stream is ended after a time (15 minutes by default). Costs 10 from the rate-limit budget.",
+        "parameters": [
+          {
+            "name": "account",
+            "in": "query",
+            "required": true,
+            "description": "The account to follow, by its number",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            }
+          }
+        ],
+        "x-events": {
+          "hello": {
+            "$ref": "#/components/schemas/HelloEvent"
+          },
+          "touch": {
+            "$ref": "#/components/schemas/TouchEvent"
           },
           "bye": {
             "$ref": "#/components/schemas/ByeEvent"
@@ -1255,7 +1318,7 @@
         }
       },
       "Error403": {
-        "description": "The request carries an Origin that is not configured (`origin_not_allowed`)",
+        "description": "The request carries an Origin that is not configured (`origin_not_allowed`), or a page of another site makes a browser load an address under /v1/ as an image, script, style sheet, object, frame or prefetch (`cross_site_refused`, judged by the Sec-Fetch-Site, Sec-Fetch-Mode and Sec-Fetch-Dest headers the browser sends)",
         "content": {
           "application/json": {
             "schema": {
@@ -1305,7 +1368,7 @@
         }
       },
       "Error429": {
-        "description": "Too many requests from this address; see Retry-After",
+        "description": "Too many requests from this address (`rate_limited`), or, on a route that reads a proof or asks the node, this address has its proof reads under way already (`too_many_reads`, two at once unless the operator set another number); see Retry-After",
         "content": {
           "application/json": {
             "schema": {
@@ -1315,7 +1378,7 @@
         }
       },
       "Error503": {
-        "description": "Not available now; see Retry-After",
+        "description": "Not available now (`busy`: every place for a read is taken and the wait in line ran out; or the state, the node or the stream places are not available); see Retry-After",
         "content": {
           "application/json": {
             "schema": {
@@ -2055,6 +2118,9 @@
           "streams": {
             "type": "integer"
           },
+          "touch_streams": {
+            "type": "integer"
+          },
           "webhooks": {
             "type": "object"
           }
@@ -2245,6 +2311,37 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "TouchEvent": {
+        "type": "object",
+        "required": [
+          "source",
+          "proven",
+          "account",
+          "height"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "index"
+            ]
+          },
+          "proven": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "account": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$"
+          },
+          "height": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,15}$"
           }
         }
       },

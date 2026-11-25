@@ -1,3 +1,4 @@
+import {minSelfBond} from './security-flows.mjs';
 const $=id=>document.getElementById(id);
 const node=(tag,text)=>{const el=document.createElement(tag);el.textContent=text;return el;};
 /// What the Validator operator panel says of a pasted text it cannot take.
@@ -36,7 +37,10 @@ export function createPosUI(c){
   const unfit=()=>Error(NOT_A_REGISTRATION);
   const text=$('validator-enrollment').value;if(text.length>4096)throw unfit();let e;try{e=JSON.parse(text);}catch{throw unfit();}const account=c.ownAccount(),network=c.network();
   if(!e||typeof e!=='object'||Object.keys(e).sort().join(',')!=='commission_bps,consensus_key,networkId,owner,proof'||e.networkId!==network.networkId||e.owner!==account.id||!Number.isInteger(e.commission_bps)||e.commission_bps<0||e.commission_bps>2000||!/^[0-9a-f]{64}$/.test(e.consensus_key)||!/^[0-9a-f]{128}$/.test(e.proof))throw unfit();
-  await action('register_validator',{commission_bps:e.commission_bps,consensus_key:e.consensus_key,proof:e.proof},'Register my validator',[['Validator key',e.consensus_key],['Commission',`${e.commission_bps/100}%`],['Bond','The network\'s minimum is taken from your balance now. It is lost if the validator signs two different blocks at one height.']],'validator-payment');$('validator-enrollment').value='';
+  // The bond is the network's least one, by the staking profile of a verified state (security-flows.mjs, minSelfBond); a
+  // network whose least bond this wallet does not know gets no review (web audit of November 2026, W-7).
+  const bond=minSelfBond(await c.verifiedState());
+  await action('register_validator',{commission_bps:e.commission_bps,consensus_key:e.consensus_key,proof:e.proof},'Register my validator',[['Validator key',e.consensus_key],['Commission',`${e.commission_bps/100}%`],['Bond',`${c.seconds(bond)} seconds, the network's least bond, taken from your balance now. It is lost if the validator signs two different blocks at one height.`]],'validator-payment');$('validator-enrollment').value='';
  });});
  // One listener: one click asks for one review.
  $('validator-retire').addEventListener('click',()=>c.run(()=>action('retire_validator',{},'Retire my validator',[['What happens','Only a validator that has left the set and holds nothing any more can be retired. Its key cannot be used again.']],'validator-payment')));

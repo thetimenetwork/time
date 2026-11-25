@@ -52,3 +52,59 @@ The intent is authenticated. The additional data of a version-2 record is, in th
 ```
 
 so relabelling a record breaks its decryption. Its plaintext holds `pkcs8` only. A caller states which intents it accepts and the record is refused before any derivation otherwise. Unlocking the wallet, exporting and importing a backup accept `device` and `signin` only, so a backup file can carry a sign-in key but never a spend key, and a payment password is never tried on a login record. Wallets that predate version 2 refuse these records as an unsupported version.
+
+## Vault records, version 3 (keys locked to a device)
+
+"Lock my keys to this device" (`device-lock.mjs`) keeps an account's sign-in key and spend key so that each opens only with the password and the device together. Such a record has `"version": 3`, the `"intent"` of version 2 (`"signin"` or `"spend"`; a version-1 key cannot be locked) and one more field, `"device": { "credential": "<WebAuthn credential id, unpadded base64url, 22 to 1,364 characters>" }`, which names the device's key. Its fields are exactly `binding`, `ciphertext`, `device`, `intent`, `iv`, `kdf`, `salt`, `version`; the KDF profile, sizes and encodings are those above.
+
+The additional data is the whole header, in this fixed order:
+
+```text
+{"version":3,"intent":"spend","binding":{"networkId":"...","name":"...","publicKey":"..."},"kdf":{...},"device":{"credential":"..."}}
+```
+
+The vault key: first the 32 bytes of Argon2id from the password and the record's salt, as above. Then the device gives 32 bytes for this vault: WebAuthn PRF (CTAP2 hmac-secret) of the key named in `device`, evaluated with the salt
+
+```text
+TIME-DEVICE-LOCK-V1 \0 <purpose: login | spend> \0 <networkId> \0 <name> \0 <binding.publicKey>
+```
+
+(UTF-8, `\0` a zero byte; `login` for a `signin` record), after the device checked the person (user verification required, the UV flag checked). The AES-256-GCM key is HKDF-SHA-256 with input key material the Argon2id output followed by the device's 32 bytes, salt the record's 16-byte salt, and info the UTF-8 bytes of `TCDEVNET-VAULT-DEVICE-LOCK-V1`, a zero byte and the header above. No weaker fallback: a version-3 record that comes without the device's 32 bytes is refused before any derivation, and a record changed to look like version 1 or 2 fails its authentication (its header is the additional data). Wallets that predate version 3 refuse these records as an unsupported version.
+
+A backup file never carries a version-3 record: a file opens with a password alone. While the lock is on, export is not offered, and an import of a file holding such a record is refused before any derivation ("This backup holds a key locked to a device. A backup file cannot carry one: it would open with a password alone.").
+
+## The rule, and passwords the wallet made (since 24 November 2026)
+
+From this version on the wallet never seals a key under a password a person chose, alone. Every record it writes, in the browser or in a file, is sealed one of three ways: (i) with the device's secret and the password together (version 3); (ii) under a password the wallet made, of 72 random bits (the mark below); (iii) under a key derived from another key of the same account that is itself sealed one of those ways (version 4). The wallet's `sealVault` refuses anything else before any derivation. Records of versions 1 and 2 without the mark, sealed before this version under passwords people chose, keep opening exactly as above.
+
+### The mark of a password the wallet made
+
+A record of version 1, 2 or 3 whose password the wallet made has one more field, `"password": "made"` (the only value), so its fields are those of its version plus `password`. The mark is part of the header, after `version` and `intent` and before `binding`, so it is in the additional authenticated data and cannot be added or removed without failing decryption:
+
+```text
+{"version":2,"intent":"spend","password":"made","binding":{"networkId":"...","name":"...","publicKey":"..."},"kdf":{...}}
+{"version":1,"password":"made","binding":{...},"kdf":{...}}
+{"version":3,"intent":"signin","password":"made","binding":{...},"kdf":{...},"device":{"credential":"..."}}
+```
+
+A made password is four words of three syllables each; a syllable is one of the 16 consonants `b d f g h j k l m n p r s t v z` followed by one of the 4 vowels `a e i o` (6 bits), so a word carries 18 bits and the password 72. It comes from 9 bytes of the browser's own `crypto.getRandomValues`, cut into twelve 6-bit values in order, most significant first: every value is reachable and none is likelier. One made password seals one record, once: the wallet never puts two records under the same made password. Its one canonical form is the four words in lower case joined by single dashes (`kerine-netoji-nesimo-vebine`), which is how the wallet shows it. Before Argon2id, a reader of a marked record takes what was typed, applies Unicode NFKC, lowers its case, removes every space and every dash (Unicode dash punctuation and U+2212), and requires exactly twelve such syllables; the canonical form of those is the password, as UTF-8. Text that does not reduce so is refused before any derivation, with a sentence that says the password is one the wallet made. Everything else (Argon2id, AES-256-GCM, the device's part of version 3) is as above, with the canonical form in place of the exact typed text. A record without the mark is read with the exact typed text, as always.
+
+A made password is only shown: once, before what it seals is kept or sent, and what it seals is kept only once the person pressed "I have them". The login password is offered to the browser's password manager under the account's name; the payment password is in no field.
+
+### Wallets from before this version
+
+A wallet from before this version (`main` before 24 November 2026) refuses every record that has the mark (versions 1, 2 and 3) and every record of version 4, as an unsupported vault ("Unsupported vault version, intent or KDF. No weaker fallback is permitted."); it opens a record of version 3 without the mark. So going back to such a page leaves every key sealed since unopenable there (the records stay in the browser, and a page of this version opens them again), and such a wallet cannot restore a backup file made since: every file made now holds a record with the mark.
+
+### Version 4: a key kept under another key
+
+The registration key of a protected sign-up, kept until the chain holds the account, is sealed under the account's new login key, not under a password. Such a record has exactly the fields `binding`, `ciphertext`, `iv`, `salt`, `under` and `version` (4), with `"under": { "intent": "signin", "publicKey": "<64 lowercase hex>" }` naming that login key (never the record's own key). There is no `kdf`. The additional data is the header in this fixed order:
+
+```text
+{"version":4,"binding":{"networkId":"...","name":"...","publicKey":"..."},"under":{"intent":"signin","publicKey":"..."}}
+```
+
+The AES-256-GCM key is HKDF-SHA-256 with input key material the 32-byte Ed25519 seed of the login key named in `under` (the private key octet string inside its PKCS#8), salt the record's 16-byte salt, and info the UTF-8 bytes of `TCDEVNET-VAULT-UNDER-KEY-V1`, a zero byte and the header above. No Argon2id: the seed has 256 bits. The plaintext is that of version 1 (`pkcs8`, `nameSalt`, `intent`). It opens only once the login key it names was opened itself (with its password, and the device when it is locked); nothing typed opens it, and a wallet asked to open it with a password refuses at once. Wallets that predate version 4 refuse it as an unsupported version.
+
+### What a backup file may carry now
+
+Export makes a file only of a record whose password the wallet made (the mark above); a record of a chosen password, from before, makes no file ("This browser makes a backup file only of a key whose password the wallet made: a file of a key under a password you chose could be guessed on another computer. Let the wallet make your passwords, under Keys, first."). A file never carries a version-3 or a version-4 record; both are refused before any derivation on export and on import. A file made before this version, of a chosen password, still opens with its password, and restores; but its record is not written as it is: once the file opened and the account's fresh authority was checked, the same key is sealed again under a password the wallet makes (with the mark), which is shown before that record is kept, and the restored browser opens with that password. Without a way to show it, such a file is refused ("This backup file is locked with a password you chose. The wallet keeps its key only under a password it makes for it, which it shows first."). The file itself is unchanged and keeps opening with its old password.

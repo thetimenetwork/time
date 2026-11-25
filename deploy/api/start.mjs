@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 import * as installedVerifier from '../../client-v4/proof-verifier.mjs';
 import { createApiService, clientKey, checkExplorerJoin } from '../../client-v4/api.mjs';
 import { createRpc } from '../../client-v4/indexer.mjs';
-import { checkWebhookURL } from '../../client-v4/security-watch-service.mjs';
+import { checkWebhookURL, webhookSecretProblem, WEBHOOK_SECRET_RULE } from '../../client-v4/security-watch-service.mjs';
 // The lock, the log format and the config reader are the watch's, unchanged: one instance per
 // data directory, JSON lines, and a config error that never quotes the file.
 import { claim, jsonLog, readConfig, LOCK_LOST_EXIT } from '../watch/start.mjs';
 
-const KEYS = ['rpc_url', 'trust', 'data_directory', 'start_height', 'host', 'port', 'hosts', 'cors_origins', 'rate_limit', 'trusted_proxies', 'webhooks', 'max_lag_seconds', 'rpc_timeout_seconds', 'max_streams', 'max_stream_seconds', 'reserved_stream_clients', 'serve_explorer', 'explorer_join'];
+const KEYS = ['rpc_url', 'trust', 'data_directory', 'start_height', 'host', 'port', 'hosts', 'cors_origins', 'rate_limit', 'trusted_proxies', 'webhooks', 'max_lag_seconds', 'rpc_timeout_seconds', 'max_streams', 'max_stream_seconds', 'reserved_stream_clients', 'serve_explorer', 'explorer_join', 'max_touch_streams', 'max_touch_streams_per_client', 'unfiltered_stream_percent', 'max_proof_reads_per_client'];
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const canonicalId = (value) => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) < 18446744073709551615n;
 
@@ -61,7 +61,8 @@ export function validateConfig(config) {
     if (!hook || typeof hook !== 'object' || Object.keys(hook).sort().join(',') !== 'account,secret,url') throw new Error(`webhook ${i}: account, url and secret, nothing else`);
     if (!canonicalId(hook.account)) throw new Error(`webhook ${i}: account is a decimal account number in quotes`);
     try { checkWebhookURL(hook.url); } catch (error) { throw new Error(`webhook ${i}: ${error.message}`); }
-    if (typeof hook.secret !== 'string' || hook.secret.length < 16) throw new Error(`webhook ${i}: a webhook needs a secret of at least 16 characters`);
+    const problem = webhookSecretProblem(hook.secret);
+    if (problem) throw new Error(`webhook ${i}: the secret ${problem}. ${WEBHOOK_SECRET_RULE}`);
     return { account: hook.account, url: hook.url, secret: hook.secret };
   });
   const pairs = webhooks.map((hook) => JSON.stringify([hook.account, hook.url]));
@@ -82,9 +83,15 @@ export function validateConfig(config) {
     max_streams: integer(config.max_streams, 'max_streams', 100, 0, 10000),
     max_stream_seconds: integer(config.max_stream_seconds, 'max_stream_seconds', 900, 30, 86400),
     reserved_stream_clients: [...reservedClients],
+    // The places kept for streams that follow no account, and the proof reads one client may have under way (README).
+    unfiltered_stream_percent: integer(config.unfiltered_stream_percent, 'unfiltered_stream_percent', 20, 0, 90),
+    max_proof_reads_per_client: integer(config.max_proof_reads_per_client, 'max_proof_reads_per_client', 2, 1, 64),
     // Off unless asked for: the API then also serves the explorer's pages under /explorer/.
     ...(config.serve_explorer === true ? { serve_explorer: true } : {}),
     ...(join ? { explorer_join: join } : {}),
+    // The hints for wallets (GET /v1/touches), only when set: 2000 places, 16 per client, unless the config says otherwise.
+    ...(config.max_touch_streams === undefined ? {} : { max_touch_streams: integer(config.max_touch_streams, 'max_touch_streams', 2000, 0, 100000) }),
+    ...(config.max_touch_streams_per_client === undefined ? {} : { max_touch_streams_per_client: integer(config.max_touch_streams_per_client, 'max_touch_streams_per_client', 16, 1, 1000) }),
   };
 }
 
@@ -115,7 +122,10 @@ export async function start(rawConfig, inject = {}) {
       host: config.host, port: config.port, hosts: config.hosts, corsOrigins: config.cors_origins,
       rateLimit: { perSecond: config.rate_limit.per_second, burst: config.rate_limit.burst }, trustedProxies: config.trusted_proxies,
       webhooks: config.webhooks, maxLagSeconds: config.max_lag_seconds,
-      maxStreams: config.max_streams, maxStreamSeconds: config.max_stream_seconds, reservedStreamClients: config.reserved_stream_clients, explorer: config.serve_explorer === true, explorerJoin: config.explorer_join ?? null, log,
+      maxStreams: config.max_streams, maxStreamSeconds: config.max_stream_seconds, reservedStreamClients: config.reserved_stream_clients,
+      unfilteredStreamPercent: config.unfiltered_stream_percent, maxProofReadsPerClient: config.max_proof_reads_per_client,
+      ...(config.max_touch_streams === undefined ? {} : { maxTouchStreams: config.max_touch_streams }), ...(config.max_touch_streams_per_client === undefined ? {} : { maxTouchStreamsPerClient: config.max_touch_streams_per_client }),
+      explorer: config.serve_explorer === true, explorerJoin: config.explorer_join ?? null, log,
       ...(inject.readState ? { readState: inject.readState } : {}), ...(inject.webhookFetcher ? { webhookFetcher: inject.webhookFetcher } : {}),
       ...(inject.now ? { now: inject.now } : {}), ...(inject.pollMs ? { pollMs: inject.pollMs } : {}),
     });

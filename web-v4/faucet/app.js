@@ -48,6 +48,8 @@ async function loadFacts() {
     if (!response.ok || !body.gives) throw new Error('unavailable');
     $('fact-grant').textContent = seconds(body.gives.grant_micros);
     $('fact-account').textContent = String(body.gives.per_account);
+    // An account whose registration this faucet sponsored gets fewer in its first day (one); an older faucet says nothing of it.
+    $('fact-new-account').textContent = String(body.gives.per_new_account ?? body.gives.per_account);
     $('fact-address').textContent = String(body.gives.per_address);
     $('fact-left').textContent = `${seconds(body.left.total_micros)}, about ${body.left.grants} grants`;
     $('fact-rich').textContent = seconds(body.gives.not_to_accounts_holding_more_than_micros);

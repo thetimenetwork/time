@@ -98,6 +98,10 @@ export function createExplorer({ document, window, api, checker, live = null, t,
   const describe = (action) => { const said = describeAction(action); return { said, nodes: fill(said.sentence, Object.fromEntries(Object.entries(said.params).map(([name, value]) => [name, valueNode(value)]))) }; };
   /// Where what follows comes from. It stands before the figures it speaks of.
   const source = (key, values) => h('small', { class: 'source', text: t(key, values) });
+  /// The line that stands beside every verdict of a check: the network id it was checked against, shown short, and
+  /// that whoever wants to be sure compares that id with one from a source they trust. Where the service serves the
+  /// page, the id came from that same service (see "What this page trusts"), and the line says so.
+  const against = (checked) => h('p', { class: 'against', text: t(sameOrigin ? 'check.againstSame' : 'check.against', { network: shortHex(typeof checked?.networkId === 'string' ? checked.networkId : trustInfo?.networkId) ?? '?' }) });
   const indexSource = (answer) => (isHeight(answer?.index?.indexed_height) ? source('source.indexAt', { height: formatNumber(answer.index.indexed_height, words) }) : source('source.index'));
   /// The words that stand in front of every figure of the state the page did not check.
   const uncheckedTag = () => h('strong', { class: 'tag unchecked', text: t('tag.unchecked') });
@@ -204,7 +208,7 @@ export function createExplorer({ document, window, api, checker, live = null, t,
   /// What stands before figures of the state: that they were checked here (and what that means),
   /// or, in words that cannot be overlooked, that they were not and why.
   function stateNote(checked, failure) {
-    if (checked) return h('div', { class: 'check ok' }, h('p', { class: 'origin', text: t('source.checked', { height: formatNumber(checked.height, words) ?? '?' }) }),
+    if (checked) return h('div', { class: 'check ok' }, h('p', { class: 'origin', text: t('source.checked', { height: formatNumber(checked.height, words) ?? '?' }) }), against(checked),
       h('details', {}, h('summary', { text: t('check.stateWhat') }), h('p', { text: t(sameOrigin ? 'check.stateTextSame' : 'check.stateText', { anchor: formatNumber(checked.anchorHeight ?? checked.height, words) ?? '?' }) })));
     return h('div', { class: 'check unknown unchecked-note', attrs: { role: 'note' } }, h('p', { class: 'origin' }, h('strong', { text: t('source.service') })), h('details', {}, h('summary', { text: t('account.unchecked') }), checkFailureBox(failure)));
   }
@@ -374,6 +378,7 @@ export function createExplorer({ document, window, api, checker, live = null, t,
       // How a request for a waiting payment ended is known to the index only.
       const status = decoded.kind === 75 && action.kind === 75 ? describeAction(action).status : null;
       if (status) nodes.push(h('p', { class: 'status' }, source('source.index'), ' ', t(status)));
+      nodes.push(against(checked));
     } else {
       nodes.push(h('p', { class: 'verdict bad', attrs: { role: 'alert' }, text: t(frame ? 'check.contentUnread' : 'check.bytesUnread') }));
       if (frame) nodes.push(h('p', { class: 'sentence lead' }, describe({ kind: frame.kind, opaque: true, sender: frame.sender }).nodes), source('source.bytes'));
@@ -408,7 +413,7 @@ export function createExplorer({ document, window, api, checker, live = null, t,
     else if (compared.unconfirmed.length) lines.push(h('p', { class: 'status', text: t('check.partly', { fields: names(compared.unconfirmed) }) }));
     else if (!compared.differing.length) lines.push(h('p', { text: t(bound ? 'check.same' : 'check.sameOpen') }));
     return h('div', { class: 'check ok' },
-      h('p', { class: 'verdict', text: t('check.ok', values) }), lines,
+      h('p', { class: 'verdict', text: t('check.ok', values) }), against(checked), lines,
       h('h3', { text: t('check.proves') }),
       h('ul', {}, h('li', { text: t(bound ? 'check.proves1' : 'check.proves1Open', values) }), h('li', { text: t('check.proves2', values) }),
         h('li', { text: t(!checked.resultsChecked ? 'check.proves3Pending' : checked.mode === 'history' ? 'check.proves3History' : 'check.proves3Own', values) })),
@@ -595,11 +600,11 @@ export function createExplorer({ document, window, api, checker, live = null, t,
         if (checked && readsUpgrade && Object.hasOwn(checked.state, 'upgrade') && checked.state.upgrade !== undefined) {
           try {
             const plan = plain(checker.upgradeStatus(checked.state)?.scheduled);
-            upgrade = plan ? [source('source.checked', { height: formatNumber(checked.height, words) ?? '?' }), h('p', { class: 'status', text: t('validators.upgradePlan') }), facts([
+            upgrade = plan ? [source('source.checked', { height: formatNumber(checked.height, words) ?? '?' }), against(checked), h('p', { class: 'status', text: t('validators.upgradePlan') }), facts([
               ['validators.upgradeVersion', numberNode(plan.version)],
               ['validators.upgradeStart', isMicros(plan.activate_elapsed_micros) && isMicros(genesis) ? timeNode(timeOfMicros((BigInt(plan.activate_elapsed_micros) + BigInt(genesis)).toString())) : missing()],
               ['validators.upgradeSpec', hexNode(typeof plan.spec === 'string' && /^[0-9a-f]{64}$/.test(plan.spec) ? plan.spec : null)],
-            ])] : [source('source.checked', { height: formatNumber(checked.height, words) ?? '?' }), h('p', { text: t('validators.noUpgrade') })];
+            ])] : [source('source.checked', { height: formatNumber(checked.height, words) ?? '?' }), against(checked), h('p', { text: t('validators.noUpgrade') })];
           } catch { upgrade = [h('p', { text: t('validators.upgradeUnreadable') })]; }
         }
         return [stateNote(checked, failure), table, active.length ? h('p', {}, mark(), t('validators.total', { count: active.length, power: formatNumber(total, words) })) : null,

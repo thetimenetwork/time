@@ -89,7 +89,8 @@ textarea { display: block; width: 100%; min-height: 8rem; margin-top: var(--s3);
 .feed > .small { margin-top: var(--s1); }
 #posts-note { margin: var(--s3) 0; padding: var(--s4) var(--s5); border-radius: var(--radius-field); background: var(--surface); color: var(--soft); overflow-wrap: anywhere; }
 .posts { list-style: none; margin: var(--s3) 0; padding: 0; }
-.post { padding: var(--s4) 0; border-top: 1px solid var(--line); }
+/* A post paints inside its own box: letters with stacked marks are cut at its edges, never drawn over the next post. */
+.post { padding: var(--s4) 0; border-top: 1px solid var(--line); overflow: hidden; contain: paint; }
 .post:first-child { border-top: 0; }
 .post-head { margin: 0 0 var(--s2); display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
 .author { font-weight: 700; overflow-wrap: anywhere; }

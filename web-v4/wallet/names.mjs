@@ -16,11 +16,14 @@ export function nameSkeleton(name) {
   return String(name).replaceAll('_', '').replaceAll('0', 'o').replaceAll('1', 'l').replaceAll('w', 'vv').replace(/rn|vv/g, pair => (pair === 'rn' ? 'm' : 'w'));
 }
 
-/// A looser key, for the softer tricks: the skeleton, then `i` as `l`, and the digits that are written for letters
-/// (`3` for `e`, `4` for `a`, `5` for `s`, `7` for `t`, `8` for `b`, `2` for `z`, `9` and `6` for `g`).
+/// A looser key, for the softer tricks: the skeleton; then, in one pass from left to right, `cl` as `d` and `nn` as `m`
+/// (`aclmin` for `admin`, `annazon` for `amazon`: web audit of November 2026, F-3); then `i` as `l`, and the digits
+/// that are written for letters (`3` for `e`, `4` for `a`, `5` for `s`, `7` for `t`, `8` for `b`, `2` for `z`, `9` and
+/// `6` for `g`). The chain's own rule against look-alike names (its skeleton, v5/src/names.rs) does not read `cl` and `nn`:
+/// it is a setting of the network's genesis and changes only at the next reset. Until then the wallet warns of them.
 const LOOSE = Object.freeze({ i: 'l', 3: 'e', 4: 'a', 5: 's', 7: 't', 8: 'b', 2: 'z', 9: 'g', 6: 'g' });
 export function looseKey(name) {
-  return nameSkeleton(name).replace(/[i2-9]/g, character => LOOSE[character]);
+  return nameSkeleton(name).replace(/cl|nn/g, pair => (pair === 'cl' ? 'd' : 'm')).replace(/[i2-9]/g, character => LOOSE[character]);
 }
 
 /// Whether two texts differ by exactly one edit: one character added, removed or changed, or two neighbouring
@@ -92,7 +95,10 @@ export function paidNameOf(label) {
 
 // ---------------------------------------------------------------- what the review says about the name
 /// What the review of a payment to `name` has to say, given the names this account has paid and its own name:
-/// - { kind: 'paid' }: it was paid before. Nothing new.
+/// - { kind: 'paid' }: it was paid before, and no other paid name looks like it. Nothing new.
+/// - { kind: 'paid-alike', other }: it was paid before, and so was `other`, which looks like it (the same looser key).
+///   One of the two may have been paid by mistake, or written into this browser's list by someone else (the list is
+///   only as safe as the browser's storage: web audit of November 2026, W-4). The review says so, with the tick.
 /// - { kind: 'own', other, reason }: it was never paid, and it looks like `other`, the account's own name.
 /// - { kind: 'alike', other, reason }: it was never paid, and it looks like `other`, which was.
 /// - { kind: 'first' }: it was never paid, and it looks like none of these.
@@ -100,7 +106,10 @@ export function paidNameOf(label) {
 /// when both are equally strong. Without `ownName` the answer is what it was before the own name was looked at.
 export function payeeCheck(name, paidNames, ownName = '') {
   const paid = Array.isArray(paidNames) ? paidNames : [];
-  if (paid.includes(name)) return { kind: 'paid' };
+  if (paid.includes(name)) {
+    const twin = paid.find(known => known !== name && looseKey(known) === looseKey(name));
+    return twin === undefined ? { kind: 'paid' } : { kind: 'paid-alike', other: twin };
+  }
   const other = lookAlike(name, paid), reason = other === null ? null : resembles(name, other);
   const own = typeof ownName === 'string' && ownName !== '' ? resembles(name, ownName) : null;
   if (own !== null && (reason === null || REASONS.indexOf(own) <= REASONS.indexOf(reason))) return { kind: 'own', other: ownName, reason: own };
@@ -113,6 +122,8 @@ export function payeeCheck(name, paidNames, ownName = '') {
 export const firstPaymentWords = name => ['First payment to ', '@' + name, '.'];
 /// The warning for a name that was never paid and looks like a paid one. It names both, so that the difference shows.
 export const alikeWords = (name, other) => ['You have not paid ', '@' + name, ' before. It looks like ', '@' + other, ', which you have paid. Check every letter.'];
+/// The warning for a name that was paid before, and looks like another name that was paid before too.
+export const paidAlikeWords = (name, other) => ['You have paid ', '@' + name, ' before, and also ', '@' + other, ', which looks like it. One of them may not be who you think. Check every letter.'];
 /// The same warning for a name that was never paid and looks like the account's own name: a payment "back to
 /// yourself" that goes to someone else.
 export const ownAlikeWords = (name, own) => ['You have not paid ', '@' + name, ' before. It looks like ', '@' + own, ', your own name. Check every letter.'];

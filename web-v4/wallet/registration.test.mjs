@@ -6,6 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { failureNotice, REGISTRATION_WORDS_INTRO, sponsorReceiptBinds } from './actions.mjs';
+import { askWhenFree, isBusyError, BUSY_REGISTRATION } from './busy.mjs';
+import '../../client-v4/time-sdk.js';
 
 test('the receipt a registration waits for: a verified sponsorship of this very key and this very commitment, and nothing else', () => {
   const key = 'aa'.repeat(32), commitment = 'bb'.repeat(32);
@@ -28,19 +30,24 @@ test('the receipt a registration waits for: a verified sponsorship of this very 
 const source = await readFile(new URL('./app.js', import.meta.url), 'utf8');
 const start = source.indexOf('async function registrationSponsor() {'), end = source.indexOf('async function registerAccount() {');
 assert.ok(start > 0 && end > start, 'app.js holds registrationSponsor right before registerAccount');
-const make = new Function('network', 'client', 'assert', 'fetch', `${source.slice(start, end)}; return registrationSponsor;`);
+const sponsorFrom = new Function('network', 'client', 'assert', 'fetch', 'askWhenFree', 'isBusyError', 'BUSY_REGISTRATION', 'busyOptions', `${source.slice(start, end)}; return registrationSponsor;`);
+// How the page waits for a busy service (app.js, busyOptions), with waits that take no time: each is recorded.
+const waited = [];
+const make = (network, client, assert, fetch) => sponsorFrom(network, client, assert, fetch, askWhenFree, isBusyError, BUSY_REGISTRATION, () => ({ sdk: globalThis.TimeSDK, timing: { sleep: async ms => { waited.push(ms); } } }));
 const NETWORK = 'c6'.repeat(32), ORIGIN = 'https://faucet.example';
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const body = { public_key: 'aa'.repeat(32), commitment: 'bb'.repeat(32), expires_elapsed_micros: '90000000', proof: 'cc'.repeat(64) };
 
 /// A registration service that answers `facts` and, to a registration, `answer` with `status`.
-function service({ facts = { network_id: NETWORK, account: '77', registrations: { sponsored: true } }, factsStatus = 200, status = 202, answer = { hash: 'AB'.repeat(32), status: 'submitted' }, down = false } = {}) {
+/// `retryAfter`: the Retry-After of the answer to a registration (the faucet's limits of a day say hours; its "the node
+/// refused it for now" says 30 seconds).
+function service({ facts = { network_id: NETWORK, account: '77', registrations: { sponsored: true } }, factsStatus = 200, status = 202, answer = { hash: 'AB'.repeat(32), status: 'submitted' }, down = false, retryAfter = null } = {}) {
   const calls = [];
   const fetch = async (url, options = {}) => {
     calls.push({ url: String(url), ...options });
     if (down) throw new TypeError('fetch failed');
     if (String(url) === `${ORIGIN}/v1/faucet`) return new Response(JSON.stringify(facts), { status: factsStatus });
-    if (String(url) === `${ORIGIN}/v1/faucet/registrations`) return new Response(JSON.stringify(answer), { status });
+    if (String(url) === `${ORIGIN}/v1/faucet/registrations`) return new Response(typeof answer === 'string' ? answer : JSON.stringify(answer), { status, headers: retryAfter === null ? {} : { 'Retry-After': retryAfter } });
     return new Response('{}', { status: 404 });
   };
   return { fetch, calls };
@@ -78,14 +85,37 @@ test('nothing is sent to a service that answers for another network, does not sp
     [{ facts: { network_id: NETWORK, account: '-1', registrations: { sponsored: true } } }, /not sponsoring new accounts now/],
     [{ facts: { network_id: NETWORK, account: '07', registrations: { sponsored: true } } }, /not sponsoring new accounts now/],
     [{ facts: null }, /does not answer/],
-    [{ factsStatus: 503 }, /does not answer/],
     [{ down: true }, /does not answer/],
+    // Busy (busy.mjs): asked four times, after waits of about 2, 4 and 8 seconds, then said in the wallet's words.
+    [{ factsStatus: 503 }, error => error.message === BUSY_REGISTRATION],
+    [{ factsStatus: 429 }, error => error.message === BUSY_REGISTRATION],
   ];
   for (const [options, expected] of cases) {
-    const { fetch, calls } = service(options);
+    const { fetch, calls } = service(options); waited.length = 0;
     await assert.rejects(make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, fetch)(), expected, JSON.stringify(options));
     assert.ok(calls.every((c) => (c.method ?? 'GET') === 'GET'), 'a registration was sent');
+    if (options.factsStatus) {
+      assert.equal(calls.length, 4, 'four questions');
+      assert.ok(waited.length === 3 && waited.every((ms, at) => ms >= 2000 * 2 ** at && ms <= 2500 * 2 ** at), `waits ${waited}`);
+    }
   }
+});
+
+test('a registration answered "busy" is not sent again by itself: the service may have acted, and the wallet goes on from the chain', async () => {
+  // A refusal for load by what stands in front (plain text, or the gateway's JSON): the wallet's words, nothing of it read.
+  for (const [status, retryAfter, answer] of [[503, '30', { error: 'The gateway is busy. Try again in a few seconds.', code: 'GATEWAY_BUSY', retryAfterSeconds: 30 }], [429, null, 'Too many requests'], [503, null, '']]) {
+    const s = service({ status, retryAfter, answer });
+    const sponsor = await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, s.fetch)();
+    const error = await sponsor.ask(body).then(() => assert.fail('taken'), e => e);
+    assert.equal(error.message, BUSY_REGISTRATION, `${status} ${retryAfter}`);
+    assert.equal(s.calls.filter(c => c.method === 'POST').length, 1, 'sent once');
+  }
+  // The service's own refusal in its own form (a 503 "the node refused it for now", Retry-After 30, which a browser does
+  // not let the page read across origins): sent once, and read as the service's answer, as before.
+  const own = service({ status: 503, answer: { error: { code: 'chain_daily_limit', message: 'The daily limit of the faucet account on the chain is used up' }, hash: 'CD'.repeat(32) } });
+  const sponsor = await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, own.fetch)();
+  const error = await sponsor.ask(body).then(() => assert.fail('taken'), e => e);
+  assert.deepEqual([error.registrationService, error.serviceCode, failureNotice(error), own.calls.filter(c => c.method === 'POST').length], [true, 'chain_daily_limit', `${REGISTRATION_WORDS_INTRO}The daily limit of the faucet account on the chain is used up`, 1]);
 });
 
 // That such a wallet makes no key and stores no vault is the business of `auth` in app.js, which asks the same
@@ -99,7 +129,8 @@ test('a service that names neither a sponsor nor a registration service: the wal
 
 test('what the registration service answers to the request: a refusal in its words, the same commitment already waiting, or no answer', async () => {
   const sponsorOf = async (options) => { const s = service(options); return { sponsor: await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, s.fetch)(), s }; };
-  let made = await sponsorOf({ status: 429, answer: { error: { code: 'address_limit', message: 'This address has had its registrations of 24 hours' } } });
+  // A limit of a day: Retry-After in hours, longer than any busy wait (busy.mjs), so the answer is read as the service's.
+  let made = await sponsorOf({ status: 429, retryAfter: '50000', answer: { error: { code: 'address_limit', message: 'This address has had its registrations of 24 hours' } } });
   // A refusal is the service's own text. It is marked, and the notice shows it after the wallet's sentence that
   // says whose words follow (actions.mjs, failureNotice), never as a sentence of the wallet.
   const refused = (sponsor) => sponsor.ask(body).then(() => assert.fail('the request was taken'), (error) => error);

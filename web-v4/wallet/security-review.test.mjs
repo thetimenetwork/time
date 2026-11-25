@@ -6,7 +6,8 @@ import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import '../../client-v4/time-sdk.js';
 import * as security from '../../client-v4/account-security.mjs';
-import { newDevice, sealVault, checkPassword } from './vault.mjs';
+import { newDevice, checkPassword } from './vault.mjs';
+import { sealLegacy } from './tests/legacy-vault.mjs';
 import * as F from './security-flows.mjs';
 
 const SDK = globalThis.TimeSDK;
@@ -29,22 +30,22 @@ test('A1 passphrase rule: one code point that NFKC-expands is refused', () => {
   const phrase = 'ﷺ'; // 1 code point, 18 characters after NFKC
   assert.throws(() => checkPassword(phrase, 'alice'), /15 characters/, 'the raw password rule refuses it');
   // The recovery passphrase is made by the wallet; anything else is refused, whatever its length.
-  assert.throws(() => F.checkPassphrase(phrase, { passwords: [] }), /4 words|not one the wallet makes/);
+  assert.throws(() => F.checkPassphrase(phrase, { passwords: [] }), /five of them|not one the wallet makes/);
 });
 
 test('A2 passphrase rule: guessable strings are refused for a key anyone can attack offline', () => {
   for (const phrase of ['abcdefghijklmno', 'qwertyuiopasdfg', '123456789abcdef', 'password password password password', 'bababa bababa bababa']) {
     assert.throws(() => F.checkPassphrase(phrase, { passwords: [] }), undefined, `accepted as recovery passphrase: ${phrase}`);
   }
-  assert.equal(F.PASSPHRASE.bits >= 72, true);
+  assert.equal(F.PASSPHRASE.bits >= 90, true);
 });
 
 test('A3 staged keys: a render from a state read before the block keeps keys the chain now holds', async () => {
   const storage = new Storage(), slots = F.vaultSlots(networkId, 'alice');
   const old = await newDevice(webcrypto), signin = await newDevice(webcrypto), spend = await newDevice(webcrypto);
   const binding = publicKey => ({ networkId, name: 'alice', publicKey });
-  storage.setItem(slots.login, JSON.stringify(await sealVault(old.secret, 'an old protocol four password', binding(old.publicKey), argon2id, webcrypto)));
-  F.stageVaults(storage, slots, { signin: await sealVault({ pkcs8: signin.secret.pkcs8 }, 'violet otters dance beneath moonlight 41', binding(signin.publicKey), argon2id, webcrypto, 'signin'), spend: await sealVault({ pkcs8: spend.secret.pkcs8 }, 'quiet harbour lanterns at dawn 77', binding(spend.publicKey), argon2id, webcrypto, 'spend') }, { kind: 70, nonce: '4', authEpoch: '0' });
+  storage.setItem(slots.login, JSON.stringify(await sealLegacy(old.secret, 'an old protocol four password', binding(old.publicKey), argon2id, webcrypto)));
+  F.stageVaults(storage, slots, { signin: await sealLegacy({ pkcs8: signin.secret.pkcs8 }, 'violet otters dance beneath moonlight 41', binding(signin.publicKey), argon2id, webcrypto, 'signin'), spend: await sealLegacy({ pkcs8: spend.secret.pkcs8 }, 'quiet harbour lanterns at dawn 77', binding(spend.publicKey), argon2id, webcrypto, 'spend') }, { kind: 70, nonce: '4', authEpoch: '0' });
   // Tab B renders a state fetched just before the block with kind 70: nonce 3, the old key.
   const stale = { nonce: '3', auth_epoch: '0', devices: [{ public_key: old.publicKey, can_manage: true, can_spend: true }] };
   F.discardStaged(storage, slots, stale, { security: null, state: { height: '9', time_micros: '1', genesis: { genesis_time_micros: '0' } } });
@@ -136,7 +137,7 @@ test('M3/N2 a login request from another browser: the bytes the engine verifies,
 test('N1 a login request lives in its own slot: it blocks nothing, is void once this browser holds a live key, never overwrites one', async () => {
   const storage = new Storage(), slots = F.vaultSlots(networkId, 'alice'), binding = publicKey => ({ networkId, name: 'alice', publicKey });
   const asked = await newDevice(webcrypto), live = await newDevice(webcrypto);
-  const record = await sealVault({ pkcs8: asked.secret.pkcs8 }, 'phone login password 456', binding(asked.publicKey), argon2id, webcrypto, 'signin');
+  const record = await sealLegacy({ pkcs8: asked.secret.pkcs8 }, 'phone login password 456', binding(asked.publicKey), argon2id, webcrypto, 'signin');
   F.storeLoginRequest(storage, slots, record, { publicKey: asked.publicKey });
   assert.equal(F.hasStaged(storage, slots), false, 'a request does not block other changes of keys');
   assert.throws(() => F.storeLoginRequest(storage, slots, record, {}), /Withdraw/);
@@ -148,7 +149,7 @@ test('N1 a login request lives in its own slot: it blocks nothing, is void once 
   const copy = new Storage(); for (const [k, v] of storage.entries) copy.setItem(k, v);
   assert.equal(F.settleLoginRequest(copy, slots, added), 'promoted'); assert.equal(JSON.parse(copy.getItem(slots.login)).binding.publicKey, asked.publicKey); assert.equal(F.loginRequestOf(copy, slots), null);
   // This browser recovered meanwhile and holds a live login key: the request is void and never overwrites it, even if added later.
-  const liveRecord = JSON.stringify(await sealVault({ pkcs8: live.secret.pkcs8 }, 'recovered login password 789', binding(live.publicKey), argon2id, webcrypto, 'signin'));
+  const liveRecord = JSON.stringify(await sealLegacy({ pkcs8: live.secret.pkcs8 }, 'recovered login password 789', binding(live.publicKey), argon2id, webcrypto, 'signin'));
   storage.setItem(slots.login, liveRecord);
   const both = securedAccount([...securedAccount().devices, device(asked.publicKey, 'signin'), device(live.publicKey, 'signin')]);
   assert.equal(F.settleLoginRequest(storage, slots, both), 'dropped');
@@ -173,15 +174,15 @@ test('N3 stagedVoid: a state with no security proof counts as proof that a stage
   assert.equal(F.stagedVoid({ ...note, expires: '1000' }, { account, security: null, state }), true);
 });
 
-test('G1 generated passphrase: uniform syllables, 72 bits, canonical typed-back forms', () => {
+test('G1 generated passphrase: uniform syllables, 90 bits, canonical typed-back forms', () => {
   const counts = new Map(); const N = 20000;
   for (let i = 0; i < N; i++) for (const w of F.generatePassphrase().split(' ')) for (const s of w.match(/../g)) counts.set(s, (counts.get(s) || 0) + 1);
   assert.equal(counts.size, 64);
-  const expected = N * 12 / 64; let chi = 0; for (const v of counts.values()) chi += (v - expected) ** 2 / expected;
+  const expected = N * 15 / 64; let chi = 0; for (const v of counts.values()) chi += (v - expected) ** 2 / expected;
   assert.ok(chi < 120, `chi-square ${chi.toFixed(1)} over 63 dof`);
   const p = F.generatePassphrase();
   for (const typed of [p.toUpperCase(), '  ' + p.replace(/ /g, ' - ') + ' ', p.replace(/ /g, '\u3000'), p.normalize('NFKD')]) assert.equal(F.parsePassphrase(typed), p);
-  assert.throws(() => F.parsePassphrase(p.replace(/ /g, '')), /4 words/);
+  assert.throws(() => F.parsePassphrase(p.replace(/ /g, '')), /five of them/);
   assert.equal(F.parsePassphrase([...p].map(c => c === ' ' ? ' ' : String.fromCharCode(c.charCodeAt(0) + 0xFEE0)).join('')), p);
 });
 

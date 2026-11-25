@@ -168,6 +168,8 @@ pre.commands { font-family: var(--mono); font-size: .875rem; line-height: 1.6; w
 /* Where figures come from stands before them. Figures the page did not check are marked one by one, in words, and
    set in a dashed frame: the difference is not one of colour alone. */
 .origin { margin: 0; font-weight: 600; }
+/* Beside every verdict of a check: what it was checked against. One line, as plain as the verdict's own text. */
+.against { margin: var(--s1) 0 0; font-size: .875rem; }
 .tag.unchecked { display: inline-block; padding: 0 .375rem; border: 1px dashed var(--warn); border-radius: .25rem; background: var(--warn-bg); color: var(--warn); font-size: .8125rem; font-weight: 700; line-height: 1.5; }
 .unchecked-note { border-left-style: dashed; border-left-color: var(--warn); background: var(--warn-bg); }
 .facts.unchecked, .scroll.unchecked { border: 2px dashed var(--edge); border-radius: var(--radius-field); padding: var(--s1) var(--s4); }

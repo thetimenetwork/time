@@ -120,11 +120,12 @@ globalThis.fetch = async (url, options = {}) => {
 };
 
 // ------------------------------------------------------------------ the wallet: one account, one encrypted vault, the real app.js
-const { newDevice, sealVault, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { newDevice, hex } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
+const { sealLegacy } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const U = await import(new URL('web-v4/wallet/upgrade-signal.mjs', root).href);
 const login = await newDevice(), spend = await newDevice(), sheet = await newDevice(), phrase = await newDevice();
 chain.accounts.push({ id: '5', name: 'alice', balance: '5000000', nonce: '3', auth_epoch: '0', recovery_policy: null, devices: [{ public_key: login.publicKey, can_manage: true, can_spend: true }] });
-storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
+storage.setItem(`timecurrency.vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy({ ...login.secret, nameSalt: hex(crypto.getRandomValues(new Uint8Array(32))), intent: 'device' }, PASSWORD, { networkId, name: 'alice', publicKey: login.publicKey }, argon2id)));
 await import(new URL('web-v4/wallet/app.js', root).href);
 await until(() => /^Connected to the Time test network, and checked by this browser\./.test($('notice').textContent) || $('notice').className.includes('error'), 'the wallet to start');
 
@@ -191,7 +192,7 @@ test('a secured account: the signal is signed by the payment key with the paymen
   // manage), a payment key is kept under the payment password, and two recovery keys.
   alice().devices = [{ public_key: login.publicKey, can_manage: false, can_spend: false }, { public_key: spend.publicKey, can_manage: false, can_spend: true }, { public_key: sheet.publicKey, can_manage: true, can_spend: false }, { public_key: phrase.publicKey, can_manage: true, can_spend: false }];
   chain.security['5'] = { account: '5', version: '1', policy: { threshold: '2', daily_limit_micros: '60000000', delay_seconds: '172800', freeze_seconds: '172800' }, allowance_micros: '60000000', allowance_elapsed_micros: '0', frozen_until_elapsed_micros: '0', freezes: '0', pending_limit: null, pending_payments: [], next_id: '1', pending_root: null };
-  storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealVault({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
+  storage.setItem(`timecurrency.spend-vault.v1:${networkId}:alice`, JSON.stringify(await sealLegacy({ pkcs8: spend.secret.pkcs8 }, PAYMENT, { networkId, name: 'alice', publicKey: spend.publicKey }, argon2id, globalThis.crypto, 'spend')));
   chain.now += 700000000n; chain.posted.length = 0;
   await unlock();
   assert.equal($('signal-payment-wrap').hidden, false, 'the tab asks for the payment password');

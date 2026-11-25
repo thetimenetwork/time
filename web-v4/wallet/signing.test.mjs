@@ -58,6 +58,51 @@ test('an account with one key: this browser\'s key signs, the pending record is 
   assert.equal(w.submitted.length, 1);
 });
 
+test('the receipt is recorded, and its encrypted write waited for, before the pending action is cleared; a website\'s order is marked before the bytes leave', async () => {
+  // A record that is written a moment later (locked-store.mjs encrypts it): until then the pending action stays, so a
+  // page closed in between keeps it, and the next opening checks the receipt and records it.
+  const { createPrivateStore, orderMarkers } = await import(new URL('web-v4/wallet/locked-store.mjs', root).href);
+  const w = await wallet(), seen = [];
+  let release; const written = new Promise(resolve => { release = resolve; });
+  const store = createPrivateStore({ storage: new Storage() });
+  const made = await newDevice(globalThis.crypto, { networkId, name: 'alice' });
+  await store.open({ networkId, name: 'alice', publicKey: made.publicKey, storageKey: made.storageKey });
+  const markers = orderMarkers(store);
+  const sendSigned = createSendSigned({ sdk: SDK, session: () => ({ binding: { networkId, name: 'alice', publicKey: w.login.publicKey }, privateKey: w.login.privateKey }), network: () => ({ networkId }), locks: () => ({ request: (_name, _options, fn) => fn() }), capture: () => () => {},
+    ownAccount: (state = w.state()) => state.accounts.find(item => item.name === 'alice'), verifiedState: async () => w.state(), pending: w.pending, paymentMarkers: markers, notice: () => {},
+    record: (receipt, label) => { seen.push(['record', label, Boolean(w.pending.get(networkId, '5'))]); return written; }, cleared: () => seen.push(['cleared', Boolean(w.pending.get(networkId, '5'))]),
+    client: () => ({ submit: async tx => { const action = SDK.decodeAction(tx); seen.push(['submit', markers.get(networkId, '5', action.payload.reference)?.status ?? null]); return { verified: true, hash: await SDK.transactionHash(tx), height: '901', action }; } }) });
+  const reference = SDK.orderReference({ nonce: '4', expiresElapsedMicros: (101n * DAY).toString() });
+  const sending = sendSigned('merchant_payment', { to: '1', amount: '5', reference }, `Website payment ${reference}`, { merchantOrigin: 'https://shop.example' });
+  for (let i = 0; i < 50 && seen.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(seen, [['submit', 'pending'], ['record', `Website payment ${reference}`, true]], 'the order was marked before the bytes left, and the receipt is being recorded with the action still pending');
+  assert.ok(w.pending.get(networkId, '5'), 'nothing is cleared while the record is being written');
+  release(true); await sending;
+  assert.deepEqual([seen.at(-1), w.pending.get(networkId, '5')], [['cleared', false], null]);
+  // The same order again: refused before anything is signed.
+  w.account.nonce = '4';
+  await assert.rejects(sendSigned('merchant_payment', { to: '1', amount: '5', reference }, 'again'), /already has a signed payment record/);
+});
+
+test('a page that keeps its history in memory only pays a website order and writes nothing of it; once the payment is in a block, the same order is refused before any key signs, by the quote\'s nonce', async () => {
+  // The wallet's mark of an order is a courtesy (locked-store.mjs, orderMarkers): what pays an order once at most is the
+  // reference, which carries the sender's next nonce (the engine's rule since protocol 4; the SDK's checkMerchantQuote).
+  const { createPrivateStore, orderMarkers } = await import(new URL('web-v4/wallet/locked-store.mjs', root).href);
+  const w = await wallet(), storage = new Storage(), reference = SDK.orderReference({ nonce: '4', expiresElapsedMicros: (101n * DAY).toString() });
+  async function pageInMemoryOnly() {
+    const store = createPrivateStore({ storage });
+    assert.equal((await store.open({ networkId, name: 'alice', publicKey: w.login.publicKey, storageKey: null })).memory, true);
+    return createSendSigned({ sdk: SDK, session: () => ({ binding: { networkId, name: 'alice', publicKey: w.login.publicKey }, privateKey: w.login.privateKey }), network: () => ({ networkId }), locks: () => ({ request: (_name, _options, fn) => fn() }), capture: () => () => {},
+      ownAccount: (state = w.state()) => state.accounts.find(item => item.name === 'alice'), verifiedState: async () => w.state(), pending: w.pending, paymentMarkers: orderMarkers(store), notice: () => {}, record: async () => true,
+      // The stand-in chain takes the action, and the account's nonce moves as the engine moves it.
+      client: () => ({ submit: async tx => { const action = SDK.decodeAction(tx); w.submitted.push(action); w.account.nonce = action.nonce; return { verified: true, hash: await SDK.transactionHash(tx), height: '901', action }; } }) });
+  }
+  await (await pageInMemoryOnly())('merchant_payment', { to: '1', amount: '5', reference }, `Website payment ${reference}`, { merchantOrigin: 'https://shop.example' });
+  assert.deepEqual([w.submitted.length, storage.m.size], [1, 0], 'paid, and nothing of the order or the website is written');
+  await assert.rejects((await pageInMemoryOnly())('merchant_payment', { to: '1', amount: '5', reference }, 'again', { merchantOrigin: 'https://shop.example' }), /reserved another nonce/);
+  assert.deepEqual([w.submitted.length, w.pending.get(networkId, '5')], [1, null], 'nothing was signed or kept');
+});
+
 test('a payment key signs only the kinds listed for it and a validator\'s upgrade signal: every other kind is refused before anything is signed', async () => {
   const w = await wallet({ secured: true });
   // The list (payments, staking and the operation of a validator), and the one addition. A signal and its withdrawal are

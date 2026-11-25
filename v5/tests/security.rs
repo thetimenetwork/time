@@ -1419,3 +1419,142 @@ fn export_the_fixture_for_the_wallet_library() {
     // The exported actions are the real thing: the chain accepts them.
     chain.accept(freeze_action);
 }
+
+// "Move my account to another device" (web-v4/wallet/device-move.mjs). The
+// other device made a payment key and a login key and sent their acceptances;
+// this account's payment key and one recovery key put them in at once, and
+// every other payment and login key goes. Nothing new in the engine: it is the
+// replacement of a stolen payment key, with both new keys made elsewhere.
+const MOVED_SPEND: u8 = 70;
+const MOVED_SIGNIN: u8 = 71;
+fn move_to_another_device() -> Value {
+    json!({"type": "replace", "policy": policy(2, LIMIT), "keys": sorted(vec![
+        joins(MOVED_SPEND, ME, Role::Spend),
+        joins(MOVED_SIGNIN, ME, Role::Signin),
+        stays(SHEET, Role::Recover),
+        stays(PHRASE, Role::Recover),
+        stays(FRIEND, Role::Recover),
+    ])})
+}
+
+/// The bytes of a move, signed by the payment key and the sheet, dated ten
+/// minutes ahead as the wallet dates them, with what the account was before.
+fn a_move(chain: &Chain) -> (Account, u64, u64, u64, Vec<u8>) {
+    let (before, at, version) = (chain.me(), chain.now(), chain.mine().version);
+    let expires = at + 600 * SECOND;
+    (before, at, version, expires, root_for(SPEND, &[SPEND, SHEET], move_to_another_device(), version, expires))
+}
+/// The SHA-256 of those bytes: the action of client-v4/device-move.fixture.json,
+/// which web-v4/wallet/device-move.test.mjs builds byte for byte (and holds the
+/// same digest). Checked here on every run, without reading that file, which is
+/// outside the release.
+const MOVE_ACTION_SHA256: &str = "8949e25cebdc960f92ef2f9150229b929580c031e57b40c7d43338827c8df23e";
+
+/// The bytes the wallet builds for a move are accepted here, do what the wallet
+/// says, and cannot be used twice.
+#[test]
+fn a_move_to_another_device_replaces_both_keys_at_once_and_cannot_be_replayed() {
+    use sha2::Digest;
+    let mut chain = secured();
+    let (before, _, version, expires, action) = a_move(&chain);
+    assert_eq!(hex::encode(sha2::Sha256::digest(&action)), MOVE_ACTION_SHA256, "the bytes changed: run export_the_move_fixture_for_the_wallet and the wallet's test");
+    chain.accept(action.clone());
+    let row = chain.me();
+    let mut expected = vec![
+        (pk(MOVED_SIGNIN), Some(Role::Signin)),
+        (pk(MOVED_SPEND), Some(Role::Spend)),
+        (pk(SHEET), Some(Role::Recover)),
+        (pk(PHRASE), Some(Role::Recover)),
+        (pk(FRIEND), Some(Role::Recover)),
+    ];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(roles(&row), expected);
+    // The authority epoch and the nonce move on, the version too, and the full fee is paid.
+    assert_eq!((row.nonce, row.auth_epoch, row.balance), (before.nonce + 1, before.auth_epoch + 1, before.balance - FEE));
+    assert_eq!(chain.mine().version, version + 1);
+    // The old payment key pays nothing any more; the new one does.
+    chain.refuse(send(&chain, SPEND, 6, 1000), "device is not authorized");
+    chain.accept(send(&chain, MOVED_SPEND, 6, 1000));
+    // The same bytes again: their submitter left the account.
+    chain.refuse(action.clone(), "a spend or recovery key of this account is required");
+    // Handed in by a recovery key that stayed: one approver left the account.
+    chain.refuse(root_for(SHEET, &[SPEND, SHEET], move_to_another_device(), version, expires), "approval from a key that is not on the account");
+    // Two recovery keys that stayed, for the version the move named: that version is gone.
+    chain.refuse(root_for(SHEET, &[SHEET, PHRASE], move_to_another_device(), version, expires), "signature does not verify");
+    chain.engine.audit().unwrap();
+}
+
+/// Writes client-v4/device-move.fixture.json: the keys, the account and the bytes
+/// of a move, which the wallet's test reproduces. Run with
+/// `V5_EXPORT_MOVE_FIXTURE=1`; the exported action is accepted here.
+#[test]
+fn export_the_move_fixture_for_the_wallet() {
+    if std::env::var("V5_EXPORT_MOVE_FIXTURE").is_err() {
+        return;
+    }
+    let mut chain = secured();
+    let (before, at, version, expires, action) = a_move(&chain);
+    chain.accept(action.clone());
+    let row = chain.me();
+    let seeds = [("signin", SIGNIN), ("spend", SPEND), ("sheet", SHEET), ("phrase", PHRASE), ("friend", FRIEND), ("moved_spend", MOVED_SPEND), ("moved_signin", MOVED_SIGNIN)];
+    let fixture = json!({
+        "network_id": network_id(),
+        "account": {"id": ME.to_string(), "nonce": before.nonce.to_string(), "auth_epoch": before.auth_epoch.to_string(), "balance": before.balance.to_string()},
+        "policy": policy(2, LIMIT),
+        "version": version.to_string(),
+        "chain_elapsed_micros": at.to_string(),
+        "expires_elapsed_micros": expires.to_string(),
+        "seeds": seeds.iter().map(|(name, seed)| json!({"name": name, "seed_hex": hex::encode([*seed; 32]), "public_key": pk(*seed)})).collect::<Vec<_>>(),
+        "operation": move_to_another_device(),
+        "action_hex": hex::encode(&action),
+        "after": {"nonce": row.nonce.to_string(), "auth_epoch": row.auth_epoch.to_string(), "devices": serde_json::to_value(&row.devices).unwrap(), "version": (version + 1).to_string()},
+    });
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../client-v4/device-move.fixture.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+}
+
+/// The engine takes a move while the account is frozen, and while a
+/// replacement asked for by two recovery keys waits: being a replacement with
+/// the payment key among its approvers, it ends both. The wallet refuses both
+/// itself (device-move.mjs): a freeze or a waiting replacement is something the
+/// person must look at first, and a move must not sweep it away unseen.
+#[test]
+fn the_engine_would_take_a_move_over_a_freeze_or_a_waiting_replacement() {
+    let mut chain = secured();
+    chain.accept(freeze(&chain, FRIEND));
+    chain.accept(root(&chain, SPEND, &[SPEND, SHEET], move_to_another_device()));
+    assert_eq!(chain.mine().frozen_until_elapsed_micros, 0);
+    assert!(has_key(&chain, MOVED_SPEND) && has_key(&chain, MOVED_SIGNIN) && !has_key(&chain, SPEND) && !has_key(&chain, SIGNIN));
+
+    let mut chain = secured();
+    chain.accept(root(&chain, SHEET, &[SHEET, PHRASE], new_spend_key(72)));
+    assert!(chain.mine().pending_root.is_some());
+    chain.accept(root(&chain, SPEND, &[SPEND, SHEET], move_to_another_device()));
+    assert!(chain.mine().pending_root.is_none());
+    assert!(has_key(&chain, MOVED_SPEND) && !has_key(&chain, 72));
+    chain.engine.audit().unwrap();
+}
+
+/// How long a signed move can land, which is how long the new device keeps
+/// its keys when the person withdraws the request (device-move.mjs,
+/// withdrawMove): a change of login keys moves the authority epoch on but not
+/// the security version that the approvals name, so a move signed before it
+/// still lands; once its approvals have expired, it never does.
+#[test]
+fn a_signed_move_lands_until_its_approvals_expire_whatever_the_epoch() {
+    let mut chain = secured();
+    let action = root(&chain, SPEND, &[SPEND, SHEET], move_to_another_device());
+    let epoch = chain.me().auth_epoch;
+    chain.accept(signin_keys(&chain, SPEND, &[73], &[SIGNIN]));
+    assert_eq!((chain.me().auth_epoch, chain.mine().version), (epoch + 1, 1));
+    chain.accept(action);
+    assert!(has_key(&chain, MOVED_SPEND) && has_key(&chain, MOVED_SIGNIN) && !has_key(&chain, 73) && !has_key(&chain, SPEND));
+
+    let mut chain = secured();
+    let expires = chain.now() + 600 * SECOND;
+    let action = root_for(SPEND, &[SPEND, SHEET], move_to_another_device(), chain.mine().version, expires);
+    chain.wait(600);
+    chain.refuse(action, "expired, expiring too soon to be included, or dated too far ahead");
+    assert!(has_key(&chain, SPEND) && !has_key(&chain, MOVED_SPEND));
+    chain.engine.audit().unwrap();
+}

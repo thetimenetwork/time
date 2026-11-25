@@ -4,6 +4,8 @@ import { browserEnv } from './device-key.mjs';
 import { createLockAsker, lockOf, LOCK_WORDS } from './device-lock.mjs';
 import { createLockUI } from './device-lock-ui.mjs';
 import { madeDialog } from './made-dialog.mjs';
+import { gatherDialog } from './entropy-dialog.mjs';
+import { setGatherer, forgetGathered, readyToMake } from './entropy.mjs';
 import { GenerationFence, PendingReservations, withSigningLock, parseSeconds, formatSeconds, acceptApprovalEvent, APPROVAL_NOT_UNDERSTOOD, IDLE_LOCK_MS } from './guards.mjs';
 import { createPrivateStore, orderMarkers, withReceipt, sentSinceOf } from './locked-store.mjs';
 import { pendingIsObsolete, poolSharesForDeposit, registrationPendingDisposition, emergencyCancelSlot, nonceCancelSlot, recoveryFrozen, authorityReservationObsolete, emergencyReservationObsolete, createUpgradeMonitor, upgradeRequiredScreen, failureNotice, gatewayNotification, sponsorReceiptBinds, askFaucet, faucetReceiptPays, sentNotice, durationWords, keysView } from './actions.mjs';
@@ -191,6 +193,9 @@ function lock(message = 'Locked. Your key stays in this browser, locked with you
   if ($('review-dialog').open) $('review-dialog').close('cancel');
   // So is the dialog of passwords the wallet made: the step that showed them stops at its next check, and keeps nothing.
   if ($('made-dialog').open) $('made-dialog').close('');
+  // And the box in which a person adds their own randomness: closed as not gathered, and what was gathered is forgotten.
+  if ($('gather-dialog').open) $('gather-dialog').close('');
+  forgetGathered();
   clearHome(); showPanel('home');
   $('auth-panel').hidden = false; setMode('unlock'); setBusy(false); notice(message);
 }
@@ -370,6 +375,9 @@ async function run(action) {
 // The passwords the wallet made (vault.mjs, makePassword: the rule), shown once in a dialog of their own before what they
 // seal is kept or sent (made-dialog.mjs): the step goes on only on "I have them"; closed any other way, nothing is kept.
 const showMade = madeDialog($);
+// Before the wallet makes a password, the person may add their own randomness to it (entropy.mjs, entropy-dialog.mjs):
+// a box to move a mouse or a finger around in until a meter is full. It is mixed in, never used instead.
+setGatherer(gatherDialog($));
 /// Opens what this browser keeps privately of the session's account (locked-store.mjs) with the storage key of the
 /// session's login key (vault.mjs, storageKeyFrom), and takes the activity and the paid names from it. It never fails:
 /// a store that cannot be opened is one of this page only. The other login keys this browser holds for the account
@@ -647,6 +655,9 @@ async function auth(event) {
       check();
       assert(unlocked.binding.networkId === network.networkId && unlocked.binding.name === name, 'Vault belongs to another account or network.');
     } else {
+      // The key made here is kept under a password the wallet makes: the person may add their own randomness first
+      // (entropy.mjs), before the lock of the account's vaults is taken.
+      await readyToMake(1); check();
       unlocked = await navigator.locks.request(`timecurrency:vault:${network.networkId}:${name}`, { mode: 'exclusive' }, async () => {
         check(); assert(!localStorage.getItem(vaultKey(name)), 'An encrypted vault already exists for this account here. Unlock it instead.');
         const state = await verifiedState(); check(); const found = state.accounts.find(a => a.name === name);

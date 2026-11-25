@@ -1,6 +1,7 @@
 // Portable encrypted envelope only. Passwords/plaintext signing keys never leave
 // this module; the caller provides the independently verifying chain client.
 import {validateVaultRecord,openVault,forgetSecret,vaultDevice,vaultUnder,vaultMade,vaultIntent,sealVault,makePassword} from './vault.mjs';
+import {readyToMake} from './entropy.mjs';
 export const BACKUP_FORMAT='timecurrency-encrypted-vault';
 // The rule (vault.mjs, RULE): a file leaves the device, so it is made only of a record whose password the wallet made.
 // A record under a password a person chose (kept from before the rule) makes no file; a file made of one before still
@@ -75,6 +76,9 @@ export async function importEncryptedBackup({text,password,networkId,client,argo
   validateVaultRecord(record,['device','signin']);
   if(!vaultMade(record)&&typeof show!=='function')fail(BACKUP_CHOSEN_RESTORE);
   const binding=record.binding,key=storedVaultKey(binding),lockName='timecurrency:vault:'+networkId+':'+binding.name;
+  // A file of a chosen password gets a password the wallet makes: the person may add their own randomness first
+  // (entropy.mjs), before the lock is taken and the file's key is opened.
+  if(!vaultMade(record)){await readyToMake(1);check();}
   const sealed=await locks.request(lockName,{mode:'exclusive'},async()=>{
     check();if(storage.getItem(key)!==null)fail('A vault already exists here for this account. Import never overwrites it.');
     let opened;

@@ -354,6 +354,9 @@ details.change > summary { font-size: 1.0625rem; }
 .sheet { font-family: var(--mono); font-size: 1.1875rem; line-height: 1.8; letter-spacing: .06em; word-spacing: .4em; padding: var(--s3) var(--s4); border: 1px dashed var(--edge); border-radius: var(--radius-field); background: var(--surface); overflow-wrap: anywhere; }
 /* A password the wallet made (index.html, #made-dialog): four words joined by dashes, set apart from the recovery words. */
 .made-password { font-family: var(--mono); font-size: 1.1875rem; font-weight: 600; letter-spacing: .04em; padding: var(--s3) var(--s4); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--surface); overflow-wrap: anywhere; user-select: all; }
+/* The box in which a person adds their own randomness (entropy-dialog.mjs): the pointer's trail is drawn in the ink of
+   the page; a finger moves in it without scrolling the page. */
+#gather-pad { display: block; width: 100%; height: auto; margin: var(--s3) 0; border: 1px dashed var(--edge); border-radius: var(--radius-field); background: var(--surface); color: var(--ink); cursor: crosshair; touch-action: none; }
 /* The code of a move request (move-ui.mjs): read on this screen and typed on the other device, in four groups of four. */
 .move-code { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; letter-spacing: .12em; word-spacing: .5em; text-align: center; padding: var(--s3) var(--s4); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--surface); }
 .sheet-title { font-weight: 600; margin-bottom: var(--s1); }

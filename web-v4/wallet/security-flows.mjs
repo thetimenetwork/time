@@ -8,6 +8,7 @@
 // loads it from `/sdk/` and the tests from `client-v4/`.
 import { KDF, hex, unhex, checkPassword, validateVaultRecord, vaultIntent, newDevice, sealVault, sealUnder, makePassword, forgetSecret, SYLLABLES, RULE, sealOf } from './vault.mjs';
 import { effectiveLimit, pauseLimit } from './protection.mjs';
+import { readyToMake } from './entropy.mjs';
 
 const encoder = new TextEncoder();
 const fail = message => { throw new Error(message); };
@@ -341,6 +342,9 @@ export async function sealedKeys({ wanted, networkId, name, argon2id, cryptoImpl
   if (!lock && wanted.some(w => w.password !== undefined)) throw new Error(RULE);
   if (lock && wanted.some(w => typeof w.password !== 'string')) throw new Error('A key locked to this device is sealed with a password too.');
   if (under) assert(wanted.some(w => w.intent === 'signin'), 'A key is kept under the new login key only.');
+  // Where the wallet makes the passwords, the person may add their own randomness first (entropy.mjs), before any key
+  // is made: a step they close ends here with nothing made.
+  if (!lock) await readyToMake(wanted.length);
   const keys = [];
   let given = null;
   try {

@@ -9,6 +9,12 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 25 November 2026, third publication of the day: a person's own randomness in the passwords the wallet makes
+
+### Account security
+
+- **A person adds randomness of their own before the wallet makes a password** (`web-v4/wallet/entropy.mjs`, `entropy-dialog.mjs`; `web-v4/wallet/README.md`, "Your own randomness, added to the passwords the wallet makes"). A dialog with a box to move a mouse or a finger around in, and a meter that fills as they do; keys count too; "Go on without this" goes on with the browser's randomness alone. What the person did goes through SHA-512 into a pool, and 9 bytes of it are XORed into the 9 bytes the browser's own generator gives for each password: mixed in, never used instead, so a password cannot become weaker by it. The meter is an estimate and no strength is claimed from it. The recovery words are unchanged. Offline: neither module reaches a network or a storage, and a test reads their source for it. Not yet run on real devices.
+
 ## 25 November 2026, second publication of the day: the checks pass again, and the record of the day
 
 ### Tools and tests

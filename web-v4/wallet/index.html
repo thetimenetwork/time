@@ -384,5 +384,9 @@
     <section id="made-payment-part"><h3>Payment password <span class="tag day">When you pay</span></h3><p class="made-password" id="made-payment-shown"></p><p class="field-note">You type it at each payment. Write it down now, on another paper than your recovery words: it is shown only now. Do not let the browser save it.</p></section>
     <p class="field-note">Small or capital letters, spaces and dashes do not matter when you type them.</p>
     <div class="button-row"><button id="made-done" value="done">I have them</button></div></form></dialog>
+  <dialog id="gather-dialog" aria-labelledby="gather-title"><form id="gather-form" method="dialog"><p class="eyebrow">Before the wallet makes a password</p><h2 id="gather-title" tabindex="-1">Add your own randomness</h2><p id="gather-why"></p>
+    <canvas id="gather-pad" width="640" height="260" aria-hidden="true"></canvas>
+    <progress id="gather-progress" class="bar" max="100" value="0" aria-labelledby="gather-title"></progress><p id="gather-said" role="status"></p>
+    <div class="button-row"><button id="gather-skip" class="secondary" value="skip">Go on without this</button></div><p class="field-note" id="gather-skip-note"></p></form></dialog>
   <dialog id="review-dialog" aria-labelledby="review-title"><form method="dialog"><p class="eyebrow">Check before you sign</p><h2 id="review-title" tabindex="-1">Review</h2><div id="review-body"></div><label id="review-ack-wrap" for="review-ack" hidden><input id="review-ack" type="checkbox" autocomplete="off"> <span id="review-ack-text"></span></label><div class="button-row"><button id="review-confirm" value="confirm">Confirm &amp; sign</button><button class="secondary" value="cancel">Cancel</button></div></form></dialog>
 </body></html>

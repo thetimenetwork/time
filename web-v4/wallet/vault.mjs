@@ -1,4 +1,5 @@
 /* Local software vault. No network or storage access is permitted in this module. */
+import { mixInto } from './entropy.mjs';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 export const KDF = Object.freeze({ algorithm: 'argon2id', version: 19, memoryKiB: 65536, iterations: 3, parallelism: 1, hashLength: 32 });
@@ -145,10 +146,13 @@ export function madeText(bytes) {
 }
 /// A new password of 72 random bits, which may seal one record alone (sealVault). It takes no argument: its bytes come
 /// from globalThis.crypto.getRandomValues into an array of its own, whatever that function returns, and are wiped after.
+/// What the person gathered with their own hand, if anything (entropy.mjs), is then XORed into those bytes: it is mixed
+/// in, never used instead, so the bytes are as random as the browser's generator made them whatever was gathered.
 export function makePassword() {
   const bytes = new Uint8Array(MADE_PASSWORD.bytes);
   try {
     globalThis.crypto.getRandomValues(bytes);
+    mixInto(bytes);
     const text = madeText(bytes);
     if (madeForm(text) !== text) throw new Error('The wallet could not make a password. Nothing was kept.');
     const made = new MadePassword(MADE_TOKEN, text);

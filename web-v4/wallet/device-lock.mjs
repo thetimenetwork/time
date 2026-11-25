@@ -27,6 +27,7 @@
 import { deviceSupport, deviceError, DeviceKeyError, makeDeviceKey, fromBase64url, base64url, forget, authenticatorFlags } from './device-key.mjs';
 import { openVault, sealVault, validateVaultRecord, vaultDevice, vaultIntent, vaultMade, sealOf, makePassword, readMadePassword, forgetSecret } from './vault.mjs';
 import { sealedKeys } from './security-flows.mjs';
+import { readyToMake } from './entropy.mjs';
 
 const encoder = new TextEncoder();
 /// The device's key for this browser and site: `{"v":1,"credential":<id>,"handle":<user handle>}`, base64url.
@@ -323,6 +324,9 @@ export async function turnOn({ storage, slots, networkId, name, login, payment, 
 /// { credential, made: { login, payment } }.
 export async function turnOff({ storage, slots, networkId, name, login, payment, argon2id, env, cryptoImpl = globalThis.crypto, locks = null, say = () => {}, show = async () => {} }) {
   const places = lockPlaces(networkId, name);
+  // The person may add their own randomness to the two passwords the wallet will make (entropy.mjs): asked first, before
+  // the lock is taken and before the device or a key is asked for anything.
+  await readyToMake(2);
   const sealed = await underLock(locks, networkId, name, async () => {
     settleSwap(storage, slots, places);
     const status = lockOf(storage, slots);
@@ -437,6 +441,8 @@ export async function newKeysByRule({ byDevice, storage, env, wanted, networkId,
 /// open with the old passwords.
 export async function remakePasswords({ storage, slots, networkId, name, login, payment, argon2id, cryptoImpl = globalThis.crypto, locks = null, say = () => {}, show = async () => {} }) {
   const journal = lockPlaces(networkId, name);
+  // As turning the lock off: the person's own randomness first, before anything is opened.
+  await readyToMake(2);
   const sealed = await underLock(locks, networkId, name, async () => {
     settleSwap(storage, slots, journal);
     const status = lockOf(storage, slots);

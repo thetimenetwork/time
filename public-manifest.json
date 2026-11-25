@@ -307,7 +307,6 @@
         "client-v4/faucet.mjs",
         "client-v4/faucet.test.mjs",
         "client-v4/gateway-audit.test.mjs",
-        "client-v4/gateway-callers.test.mjs",
         "client-v4/gateway-limits.test.mjs",
         "client-v4/guide-review.test.mjs",
         "client-v4/fast-receipt.test.mjs",
@@ -703,6 +702,7 @@
         "campaign/status.mjs",
         "campaign/tuning-v5.mjs",
         "campaign/watch.mjs",
+        "client-v4/gateway-callers.test.mjs",
         "testnet/access.mjs",
         "testnet/access.test.mjs",
         "testnet/accounts.mjs",
@@ -730,7 +730,7 @@
       ],
       "decision": "owner",
       "recommendation": "publish after one read-through",
-      "reason": "AWS test harness for the version-5 engine. Published documents name it and the automatic scan found nothing in it, but nobody has read it with publication in mind, and it starts paid cloud resources. campaign/lib/genesis.mjs is published because tests read it."
+      "reason": "AWS test harness for the version-5 engine. Published documents name it and the automatic scan found nothing in it, but nobody has read it with publication in mind, and it starts paid cloud resources. campaign/lib/genesis.mjs is published because tests read it. client-v4/gateway-callers.test.mjs is withheld with it: it tests the gateway's limits through the test network's proxy (testnet/proxy.mjs), which is not published, and cannot load without it."
     },
     {
       "paths": [

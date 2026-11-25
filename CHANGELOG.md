@@ -9,6 +9,17 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 25 November 2026, second publication of the day: the checks pass again, and the record of the day
+
+### Tools and tests
+
+- **A test that could not load here is no longer published.** `client-v4/gateway-callers.test.mjs` tests the gateway's limits per caller through the test network's proxy, which is not published; in the first publication of the day it stopped the repository's checks. It is withheld with that proxy, so its tests of many callers behind the proxy run in development only. The gateway's other tests stay published (`client-v4/gateway-limits.test.mjs`, `client-v4/gateway-audit.test.mjs`).
+- **A published test imports published files only** (`tools/export-public.test.mjs`): the check that would have caught it.
+
+### Documents
+
+- **The audit record of 25 November** (`AUDIT-2026-11.md`, "The person chooses, a new chain, and the second publication"): the choice of how new keys are locked, three findings and their state, the public test network's new chain, and what is not verified.
+
 ## 25 November 2026: recovery words on paper, alerts, the fixes of the project's own web audit, no key under a chosen password, and moving an account to another device
 
 ### Account security

@@ -246,6 +246,23 @@ test('every file git tracks is either published or withheld by the manifest', as
   assert.deepEqual([...published].filter(file => !tracked.includes(file)), [], 'published but not tracked by git');
 });
 
+// The publication of 25 November 2026 failed its checks on GitHub: a published test imported the test network's proxy,
+// which is withheld, and could not load there. Here every file was present, so nothing showed it. A published test file
+// may import, by a relative path, published files only.
+test('no published test imports a file that is not published', async () => {
+  const manifest = readManifest(await readFile(path.join(repository, MANIFEST), 'utf8')), published = new Set(manifest.files.map(file => file.path));
+  const missing = [];
+  for (const file of manifest.files.filter(entry => /\.test\.m?js$/.test(entry.path))) {
+    const text = await readFile(path.join(repository, file.path), 'utf8');
+    const specs = new Set([...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g)].map(found => found[1]));
+    for (const spec of specs) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file.path), spec));
+      if (!published.has(target)) missing.push(`${file.path} imports ${target}`);
+    }
+  }
+  assert.deepEqual(missing, [], 'publish the imported file, or withhold the test with it, in ' + MANIFEST);
+});
+
 test('the scan refuses nothing in the published files except the known open points', async () => {
   const manifest = readManifest(await readFile(path.join(repository, MANIFEST), 'utf8')), refused = {};
   for (const file of manifest.files) {

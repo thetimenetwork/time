@@ -9,6 +9,10 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 26 November 2026, second publication of the day: website sign-in
+
+A protected wallet now shows its payment password field only when a website requests a payment. Signing in to a website and linking a Time Chat device both use the account's sign-in key. The wallet asks for spending approval when the user chooses to pay.
+
 ## 26 November 2026: Time Chat
 
 Time Chat adds direct and group conversations for text and emoji. A Time wallet authenticates the account and signs a separate enrollment for its chat key. Clients compare safety codes, pin the other participants' keys and verify signed encrypted messages, replies, edits and reactions. See `apps/time-chat/README.md` for installation, operating modes and the privacy limits.

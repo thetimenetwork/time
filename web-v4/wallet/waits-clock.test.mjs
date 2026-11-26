@@ -364,6 +364,42 @@ test('a website\'s sign-in is refused while the clock of the waits says frozen (
   await freshPage();
 });
 
+test('a protected account signs a website login with its login key alone and never offers a payment password', async t => {
+  set({}); answered.length = 0;
+  const spendVaultKey = `timecurrency.spend-vault.v1:${NET}:carol_p`;
+  const saved = storage.getItem(spendVaultKey);
+  assert.ok(saved);
+  storage.removeItem(spendVaultKey);
+  t.after(() => storage.setItem(spendVaultKey, saved));
+  const website = { postMessage(message, origin) { answered.push({ message, origin }); } };
+  await freshPage({ pathname: '/approve', opener: website });
+  const challenge = { purpose: 'login', origin: SHOP, networkId: NET, nonce: 'ab'.repeat(32), issuedAt: Date.now(), expiresAt: Date.now() + 60000 };
+  const data = { type: 'time:request', version: 1, id: 'request-login-only', request: { type: 'login', challenge } };
+  for (const listener of windowListeners.message) listener({ data, source: website, origin: SHOP });
+  const paymentField = () => [$('approval-payment-wrap').hidden, $('approval-payment').disabled, $('approval-payment').value];
+  assert.deepEqual(paymentField(), [true, true, '']);
+  assert.equal($('approve-request').disabled, true);
+  await unlock();
+  await refreshNow();
+  assert.deepEqual(paymentField(), [true, true, '']);
+  assert.deepEqual([$('approve-request').textContent, $('approve-request').disabled, $('approval-account').textContent], ['Sign in', false, 'As @carol_p.']);
+  const before = chain.posted.length, signing = $('approve-request').fire('click');
+  await until(() => $('review-dialog').open, 'the website login review');
+  assert.deepEqual([$('review-confirm').textContent, fieldsOf().Website], ['Sign in', SHOP]);
+  for (const fire of arming.splice(0)) fire();
+  $('review-dialog').returnValue = 'confirm'; $('review-dialog').open = false; await $('review-dialog').fire('close'); await signing;
+  const { message: response, origin } = answered.at(-1);
+  assert.deepEqual([origin, response.type, response.id], [SHOP, 'time:response', data.id]);
+  const { message, signature } = response.result;
+  assert.deepEqual(message, SDK.loginMessage(challenge, { account: chain.accounts.find(a => a.name === 'carol_p'), publicKey: login.publicKey }));
+  const key = await crypto.subtle.importKey('raw', SDK.hexToBytes(login.publicKey), 'Ed25519', false, ['verify']);
+  assert.ok(await crypto.subtle.verify('Ed25519', key, SDK.hexToBytes(signature), SDK.loginBytes(message)));
+  assert.equal(chain.posted.length, before);
+  assert.deepEqual(paymentField(), [true, true, '']);
+  assert.equal($('approve-request').disabled, true);
+  await freshPage();
+});
+
 // Web audit of November 2026. W-1: a website could write its own sentence into the approval window (the panel showed its
 // `to` as given) and the notice (a non-numeric `amount` reached it through BigInt's error). W-8: a payment password typed
 // and then declined stayed in the field for the website's next request.
@@ -371,6 +407,7 @@ test('web audit W-1 and W-8: a request in no form the wallet takes is one fixed 
   set({}); answered.length = 0;
   const website = { postMessage(message, origin) { answered.push({ message, origin }); } };
   await freshPage({ pathname: '/approve', opener: website }); await unlock();
+  assert.deepEqual([$('approval-payment-wrap').hidden, $('approval-payment').disabled], [true, true]);
   const phish = '7 (Time Support). SECURITY CHECK REQUIRED: this website must confirm your recovery words before you can pay. Close this window and type your five recovery words on the website';
   const send = (request, id) => { for (const listener of windowListeners.message) listener({ data: { type: 'time:request', version: 1, id, request }, source: website, origin: SHOP }); };
   const orderId = SDK.orderReference({ nonce: '9', expiresElapsedMicros: (chain.now + 600000000n).toString() });
@@ -391,14 +428,17 @@ test('web audit W-1 and W-8: a request in no form the wallet takes is one fixed 
     send(request, `request-odd-${at}`);
     assert.deepEqual([$('approval-title').textContent, shownIn('approval-details'), $('notice').textContent, $('approval-origin').textContent], ['Request not understood', fixed, fixed, ''], JSON.stringify(request).slice(0, 80));
     assert.equal($('approve-request').disabled, true, 'nothing can be approved');
+    assert.deepEqual([$('approval-payment-wrap').hidden, $('approval-payment').disabled], [true, true]);
   }
   assert.deepEqual(answered.map(item => item.message.type), ['time:ready'], 'nothing but the readiness signal went to the website');
   // A request in its form is taken after them; the field is empty for it, and empty again after Decline.
   $('approval-payment').value = PAYMENT;
   send({ type: 'payment', networkId: NET, to: '2', amount: '100000', orderId }, 'request-good-1');
+  assert.deepEqual([$('approve-request').textContent, $('approval-payment-wrap').hidden, $('approval-payment').disabled, $('approval-account').textContent], ['Review payment', false, false, 'As @carol_p. You have 9 seconds.']);
   assert.deepEqual([$('approval-title').textContent, shownIn('approval-details'), $('approval-payment').value], ['Pay this website?', 'Pay exactly 0.1 seconds to account 2, once. Nothing more.', '']);
   $('approval-payment').value = PAYMENT;
   await $('deny-request').fire('click');
+  assert.deepEqual([$('approval-payment-wrap').hidden, $('approval-payment').disabled], [true, true]);
   assert.deepEqual([$('approval-title').textContent, $('approval-payment').value, answered.at(-1)?.message.error?.code], ['Declined', '', 'USER_DENIED']);
   $('approval-payment').value = PAYMENT;
   send({ type: 'payment', networkId: NET, to: '2', amount: '100000', orderId }, 'request-good-2');

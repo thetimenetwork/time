@@ -138,6 +138,16 @@ function renderAvailability() {
   const frozen = account && latest?.state ? recoveryFrozen(latest.state, account.id) : false;
   if (frozen) for (const form of ['send-form', 'bid-form', 'stake-form', 'approve-device-form','validator-register-form','self-bond-form','self-unbond-form']) for (const button of $(form).querySelectorAll('button')) button.disabled = true;
   $('validator-retire').disabled=!ready||!(device?.can_spend||securityUI.canPay())||frozen;
+  const requestType = approval?.request.type;
+  const showAccount = Boolean(requestType && device && latest?.verified === true);
+  const needsPaymentPassword = showAccount && requestType === 'payment' && securityUI.canPay();
+  $('approval-account').hidden = !showAccount;
+  $('approval-account').textContent = showAccount ? `As @${account.name}.` : '';
+  if (showAccount && requestType === 'payment') $('approval-account').textContent += ` You have ${seconds(account.balance)} seconds.`;
+  $('approval-payment-wrap').hidden = !needsPaymentPassword;
+  $('approval-payment').disabled = !needsPaymentPassword;
+  if (!needsPaymentPassword) $('approval-payment').value = '';
+  $('approve-request').textContent = requestType === 'login' ? 'Sign in' : requestType === 'payment' ? 'Review payment' : 'Approve';
   $('approve-request').disabled = !ready || !device || !approval || approval.request.type === 'grant' || frozen;
   for (const button of document.querySelectorAll('[data-chain-action]')) button.disabled = !ready || frozen || !device;
   recoveryUI.availability(ready, device, frozen);
@@ -839,7 +849,6 @@ async function refresh() {
   $('account-initial').textContent = $('more-initial').textContent = account.name.slice(0, 1).toUpperCase();
   $('account-number').textContent = `Account number ${account.id}`; $('receive-number').textContent = String(account.id); $('balance').textContent = seconds(account.balance);
   $('account-verification').textContent = 'Checked by this browser'; $('account-verification').className = 'badge ok'; $('proof-height').textContent = `against the network at block ${state.height}`;
-  $('approval-account').textContent = `As @${account.name}. You have ${seconds(account.balance)} seconds.`; $('approval-account').hidden = false;
   $('fee-label').textContent = seconds(networkFee()); $('bank-pot').textContent = seconds(state.bank) + ' s'; $('auction-epoch').textContent = String(state.auction_epoch);
   // A network that pays all new time to validators and their stakers has no bitcoin auction: staking is how to earn.
   // The auction's card is in More, Staking, and only on a network that has it.

@@ -1139,7 +1139,7 @@ export function createSecurityUI(c) {
     // Home: the Protection card of a protected account, or "Not protected yet" with the way to protect it.
     $('protect-card').hidden = false; $('protect-none').hidden = isSecured; $('protect-on').hidden = !isSecured;
     renderOtherTabs(account, state, isSecured);
-    $('send-payment-wrap').hidden = !isSecured; $('approval-payment-wrap').hidden = !isSecured;
+    $('send-payment-wrap').hidden = !isSecured;
     // New passwords are asked only while the keys here are locked to this device; else the wallet makes them (the rule).
     chosenFields(lockedHere(account.name));
     if (!isSecured) {

@@ -7,7 +7,7 @@ What this is:
 - The licence each package **declares**, read from a copy of the package on disk. It is an inventory, not a legal review.
 - Rust: every crate in the `Cargo.lock` of a published crate (`Cargo.lock`, `v2/Cargo.lock`, `v4/Cargo.lock`, `v5/Cargo.lock`, `pos/Cargo.lock`, `treasury/Cargo.lock`, `bitcoin-bridge/Cargo.lock`, `history/Cargo.lock`, `registration/Cargo.lock`, `verifier-v4/Cargo.lock`). A lockfile also holds test-only crates and crates for other platforms, so this is more than what ends up in a binary.
 - Go: the consensus binary is CometBFT, built from upstream source with the module versions in `consensus/go.mod`. Its source is not in this repository. The licence of a module is recognised from the licence file in a Go module cache when one is given; otherwise it is marked "to check".
-- JavaScript: the code vendored in `web-v4/wallet/vendor`. Nothing else is vendored and no npm package is installed.
+- JavaScript: the code vendored in `web-v4/wallet/vendor`. The separate Time Chat application lists its npm packages in `apps/time-chat/package-lock.json` and its browser library in `apps/time-chat/README.md`.
 - "Used under" is the choice made where a package offers several licences. The allowlist of permissive licences is in `tools/licenses.mjs`.
 
 ## Summary

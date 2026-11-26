@@ -9,6 +9,12 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 26 November 2026: Time Chat
+
+Time Chat adds direct and group conversations for text and emoji. A Time wallet authenticates the account and signs a separate enrollment for its chat key. Clients compare safety codes, pin the other participants' keys and verify signed encrypted messages, replies, edits and reactions. See `apps/time-chat/README.md` for installation, operating modes and the privacy limits.
+
+**Stored format.** The chat relay keeps authenticated account bindings, group membership and encrypted envelopes in SQLite. A browser stores its own protected chat key and verified contacts. Push notifications carry an empty wake-up. This application makes no change to consensus or the wallet's signing protocol. Browser checks cover direct and group conversations using temporary identities. Delivery of push notifications to physical phones remains unverified.
+
 ## 25 November 2026, third publication of the day: a person's own randomness in the passwords the wallet makes
 
 ### Account security

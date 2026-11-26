@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f8f8f5">
+  <title>Time Chat</title>
+  <link rel="license" href="/vendor/openpgp-license.txt" title="OpenPGP.js license">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/time-sdk.js" defer></script>
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 6.5v5.8l3.5 2"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 12H5m6-6-6 6 6 6"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+    <symbol id="i-new" viewBox="0 0 24 24"><path d="m13 6 5 5M5 19l5-1L21 7a1.5 1.5 0 0 0 0-2l-2-2a1.5 1.5 0 0 0-2 0L6 14l-1 5Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11a8.5 8.5 0 0 1-9 8.5c-1 0-2-.1-3-.4L4 21l.9-4A8 8 0 0 1 3 11a9 9 0 1 1 18 0Z"/><path d="M8 10h8m-8 4h5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M4 17h16l-2-3V9a6 6 0 0 0-12 0v5l-2 3Zm6 3a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.2"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5m4-13 5 5-5 5m-6-5h11"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m3 4 19 8-19 8 3-8-3-8Zm3 8h16"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14c2 3 6 3 8 0M8 9h.2m7.6 0h.2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-3-3 2-2m-5-1 2-2"/></symbol>
+  </svg>
+  <div id="welcome" class="welcome">
+    <header class="mast"><div class="wordmark"><span class="brand-mark"><svg><use href="#i-clock"/></svg></span>Time Chat</div><button class="quiet privacy-link" data-privacy><svg><use href="#i-lock"/></svg>Privacy</button></header>
+    <main class="signin">
+      <div class="intro">
+        <h1>Private<br><em>conversations.</em></h1>
+        <p>Send encrypted texts and emojis to people on the Time network.</p>
+        <button class="primary signin-button" id="signin" disabled><svg><use href="#i-clock"/></svg><span id="signin-label">Sign in with Time</span><svg><use href="#i-arrow"/></svg></button>
+        <p class="signin-note">Approve sign-in in your Time wallet.</p>
+        <p class="feedback" id="signin-status" role="status"></p>
+        <button class="quiet switch-account" id="switch-account" hidden>Use a different account</button>
+      </div>
+      <div class="illustration" aria-hidden="true">
+        <div class="art-grid"></div><div class="art-orbit"></div>
+        <div class="art-message art-back"><span class="art-avatar"></span><span class="art-line"></span><span class="art-line short"></span></div>
+        <div class="art-message art-front"><span class="art-avatar light"><svg><use href="#i-clock"/></svg></span><span class="art-line"></span><span class="art-line short"></span><span class="art-seal"><svg><use href="#i-lock"/></svg></span></div>
+      </div>
+    </main>
+  </div>
+  <main id="workspace" hidden>
+    <aside class="rail">
+      <div class="rail-head"><div class="wordmark"><span class="brand-mark"><svg><use href="#i-clock"/></svg></span>Time Chat</div><button id="new-chat" class="circle dark" title="New conversation" aria-label="New conversation"><svg><use href="#i-new"/></svg></button></div>
+      <h2>Messages</h2>
+      <label class="search"><svg><use href="#i-search"/></svg><input id="filter" type="search" aria-label="Search conversations" placeholder="Search conversations" spellcheck="false" autocomplete="off" autocorrect="off" translate="no"></label>
+      <nav id="chats" aria-label="Conversations"></nav>
+      <div class="profile"><span id="user-avatar" class="avatar"></span><span class="profile-text"><strong id="user-name"></strong><small>Time account</small></span><button id="settings" class="circle" aria-label="Account settings" title="Account settings"><svg><use href="#i-info"/></svg></button></div>
+    </aside>
+    <section class="room">
+      <div id="empty-room" class="room-empty"><span class="empty-icon"><svg><use href="#i-chat"/></svg></span><h2>Your conversations</h2><p>Choose a chat or find someone by their Time name.</p><button id="empty-new" class="primary"><svg><use href="#i-new"/></svg>New conversation</button></div>
+      <section id="conversation" translate="no" hidden>
+        <header class="room-head"><button id="back" class="circle back" aria-label="Back to conversations"><svg><use href="#i-back"/></svg></button><span class="avatar large" id="room-avatar"></span><div class="room-titles"><h2 id="room-title"></h2><small id="room-detail"></small></div><button id="verify" class="quiet" title="Verify contacts"><svg><use href="#i-key"/></svg><span>Verify</span></button><button id="room-options" class="circle" aria-label="Conversation settings" title="Conversation settings"><svg><use href="#i-info"/></svg></button></header>
+        <div class="history"><div id="message-search" class="message-search" hidden><label class="search"><svg><use href="#i-search"/></svg><input id="message-query" type="search" placeholder="Search loaded messages" aria-label="Search loaded messages" spellcheck="false" autocomplete="off" autocorrect="off" translate="no"></label><small id="search-count" role="status"></small><button class="circle" id="end-search" aria-label="Close message search"><svg><use href="#i-close"/></svg></button></div>
+        <div class="timeline" id="timeline" tabindex="0" aria-label="Message history"><button hidden class="quiet older" id="older">Earlier messages</button><div id="messages"></div></div></div>
+        <div class="compose-wrap"><p id="room-status" class="feedback" role="status"></p><div class="compose-mode" id="compose-mode" hidden><span><strong id="mode-label"></strong><small id="mode-target"></small></span><button class="circle" id="cancel-mode" aria-label="Cancel reply or edit"><svg><use href="#i-close"/></svg></button></div><div class="emoji-tray" id="emoji-tray" aria-label="Choose emoji" hidden></div>
+        <form id="composer"><button type="button" id="emoji" class="circle" aria-label="Choose emoji" aria-expanded="false"><svg><use href="#i-smile"/></svg></button><textarea id="draft" rows="1" placeholder="Write a message…" aria-label="Message text" autocomplete="off" spellcheck="false" autocorrect="off" translate="no"></textarea><button class="circle dark" aria-label="Send message" title="Send" id="send"><svg><use href="#i-send"/></svg></button></form></div>
+      </section>
+    </section>
+  </main>
+  <dialog id="dialog" aria-labelledby="dialog-title"><header class="dialog-head"><h2 id="dialog-title"></h2><button id="dialog-close" class="circle" aria-label="Close dialog"><svg><use href="#i-close"/></svg></button></header><div id="dialog-body"></div><p class="feedback" id="dialog-status" role="status"></p></dialog>
+  <noscript>Time Chat requires JavaScript to sign in and encrypt messages on this device.</noscript>
+</body>
+</html>

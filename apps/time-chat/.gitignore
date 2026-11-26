@@ -1,0 +1,13 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+*.sqlite*
+*.db*
+*.pem
+*.key
+*.p12
+*.pfx
+push-keys.json
+time-checkpoint-*.json

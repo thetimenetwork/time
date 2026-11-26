@@ -6,11 +6,13 @@ An account has a name and Ed25519 keys, and can give each key one role: signing 
 A browser wallet, a JavaScript SDK and a gateway let a website ask for a login or a payment. A light-client verifier, written in Rust and compiled to WebAssembly, checks validator signatures and Merkle proofs, so a wallet does not have to believe the server it talks to.
 A deployment kit and a genesis ceremony tool are there for the people who would run validators.
 
+[Time Chat on the testnet](https://chat.testnet.thetimenetwork.org) uses the wallet to sign in and bind a separate encryption key to an account. Its direct and group conversations carry signed, end-to-end encrypted text and emoji. The [app guide](apps/time-chat/README.md) explains contact verification, the independently installed client and what the relay can see.
+
 ## Status
 
 Read this before anything else.
 
-- **The network has not launched.** There is no public network and no currency to buy, sell or hold.
+- **The monetary network has not launched.** The public testnet is for development and its seconds have no monetary value.
 - **The software accepts development chains only.** The node refuses any chain id that does not start with `time-devnet-v4-`, and every binary reports `publicLaunchAllowed=false`. There is no switch that turns this off.
 - **There has been no external audit.** The code has had internal reviews; their findings, fixed and open, are in [AUDIT-2026-11.md](AUDIT-2026-11.md). That document is the project's own review, not an audit by an outside party.
 - **Nothing here holds real value, and nothing built from it should.** What must be done before any launch with real value is listed at the end of the same document.
@@ -43,7 +45,7 @@ Each Rust crate has its own `Cargo.lock`; there is no workspace.
 You need:
 
 - Rust 1.99.1. `rustup` installs it from `rust-toolchain.toml` the first time you run `cargo` here.
-- Node.js 26. Nothing is installed with npm; the JavaScript has no dependencies outside this repository.
+- Node.js 26. The core checks use the JavaScript shipped in this repository. The optional Time Chat app installs its own locked npm dependencies.
 - A C toolchain and linker, as for any Rust project.
 
 Every check has a name in one list, `tools/ci-checks.mjs`:

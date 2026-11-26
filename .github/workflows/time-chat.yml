@@ -1,0 +1,33 @@
+name: Time Chat
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/time-chat/**'
+      - 'client-v4/**'
+      - 'web-v4/shared/verifier/**'
+      - '.github/workflows/time-chat.yml'
+  pull_request:
+    paths:
+      - 'apps/time-chat/**'
+      - 'client-v4/**'
+      - 'web-v4/shared/verifier/**'
+      - '.github/workflows/time-chat.yml'
+permissions:
+  contents: read
+jobs:
+  chat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/time-chat
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: npm ci --ignore-scripts
+      - run: npx --no-install playwright-core install --with-deps chromium
+      - run: npm run build
+      - run: npm test

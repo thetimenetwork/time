@@ -15,7 +15,7 @@ import { checkWebhookURL, webhookSecretProblem, WEBHOOK_SECRET_RULE } from '../.
 // data directory, JSON lines, and a config error that never quotes the file.
 import { claim, jsonLog, readConfig, LOCK_LOST_EXIT } from '../watch/start.mjs';
 
-const KEYS = ['rpc_url', 'trust', 'data_directory', 'start_height', 'host', 'port', 'hosts', 'cors_origins', 'rate_limit', 'trusted_proxies', 'webhooks', 'max_lag_seconds', 'rpc_timeout_seconds', 'max_streams', 'max_stream_seconds', 'reserved_stream_clients', 'serve_explorer', 'explorer_join', 'max_touch_streams', 'max_touch_streams_per_client', 'unfiltered_stream_percent', 'max_proof_reads_per_client'];
+const KEYS = ['rpc_url', 'trust', 'data_directory', 'start_height', 'host', 'port', 'hosts', 'cors_origins', 'rate_limit', 'trusted_proxies', 'webhooks', 'max_lag_seconds', 'rpc_timeout_seconds', 'max_streams', 'max_stream_seconds', 'reserved_stream_clients', 'serve_explorer', 'explorer_join', 'max_touch_streams', 'max_touch_streams_per_client', 'unfiltered_stream_percent', 'max_proof_reads_per_client', 'stats_census'];
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const canonicalId = (value) => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) < 18446744073709551615n;
 
@@ -72,6 +72,15 @@ export function validateConfig(config) {
   if (config.explorer_join !== undefined && config.serve_explorer !== true) throw new Error('explorer_join is shown by the explorer this service serves: it needs "serve_explorer": true');
   const join = config.explorer_join === undefined ? null : checkExplorerJoin(config.explorer_join, trust.chain_id);
   const perSecond = integer(limit.per_second, 'rate_limit.per_second', 20, 1, 1000);
+  // The count of the accounts that hold time (GET /v1/stats, `holders`): off unless set.
+  let census = null;
+  if (config.stats_census !== undefined) {
+    const c = config.stats_census;
+    if (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).some((k) => !['every_seconds', 'max_accounts', 'named_accounts', 'top'].includes(k))) throw new Error('stats_census takes every_seconds, max_accounts, named_accounts and top');
+    const named = c.named_accounts ?? [];
+    if (!Array.isArray(named) || !named.every(canonicalId) || named.length > 10000) throw new Error('stats_census.named_accounts lists the numbers of the network\'s own accounts, decimal in quotes');
+    census = { every_seconds: integer(c.every_seconds, 'stats_census.every_seconds', 300, 60, 86400), max_accounts: integer(c.max_accounts, 'stats_census.max_accounts', 2000, 1, 100000), named_accounts: [...new Set(named)], top: integer(c.top, 'stats_census.top', 20, 1, 100) };
+  }
   return {
     rpc_url: rpc.href, trust, data_directory: path.resolve(config.data_directory),
     start_height: integer(config.start_height, 'start_height', 1, 1, Number.MAX_SAFE_INTEGER),
@@ -92,6 +101,7 @@ export function validateConfig(config) {
     // The hints for wallets (GET /v1/touches), only when set: 2000 places, 16 per client, unless the config says otherwise.
     ...(config.max_touch_streams === undefined ? {} : { max_touch_streams: integer(config.max_touch_streams, 'max_touch_streams', 2000, 0, 100000) }),
     ...(config.max_touch_streams_per_client === undefined ? {} : { max_touch_streams_per_client: integer(config.max_touch_streams_per_client, 'max_touch_streams_per_client', 16, 1, 1000) }),
+    ...(census ? { stats_census: census } : {}),
   };
 }
 
@@ -126,6 +136,7 @@ export async function start(rawConfig, inject = {}) {
       unfilteredStreamPercent: config.unfiltered_stream_percent, maxProofReadsPerClient: config.max_proof_reads_per_client,
       ...(config.max_touch_streams === undefined ? {} : { maxTouchStreams: config.max_touch_streams }), ...(config.max_touch_streams_per_client === undefined ? {} : { maxTouchStreamsPerClient: config.max_touch_streams_per_client }),
       explorer: config.serve_explorer === true, explorerJoin: config.explorer_join ?? null, log,
+      census: config.stats_census ? { everyMs: config.stats_census.every_seconds * 1000, maxAccounts: config.stats_census.max_accounts, named: config.stats_census.named_accounts, top: config.stats_census.top } : null,
       ...(inject.readState ? { readState: inject.readState } : {}), ...(inject.webhookFetcher ? { webhookFetcher: inject.webhookFetcher } : {}),
       ...(inject.now ? { now: inject.now } : {}), ...(inject.pollMs ? { pollMs: inject.pollMs } : {}),
     });
@@ -135,6 +146,7 @@ export async function start(rawConfig, inject = {}) {
       // From the trust data: whether every verified read carries the question about scheduled upgrades.
       nodes_report_upgrades: config.trust.nodes_report_upgrades === true,
       start_height: config.start_height, webhooks: config.webhooks.map((hook) => new URL(hook.url).origin), cors_origins: config.cors_origins.length, trusted_proxies: config.trusted_proxies.length, serve_explorer: config.serve_explorer === true, explorer_join: config.explorer_join !== undefined,
+      stats_census: config.stats_census ? { every_seconds: config.stats_census.every_seconds, max_accounts: config.stats_census.max_accounts, named_accounts: config.stats_census.named_accounts.length } : null,
     });
     let closing;
     return { url: service.url, service, close: () => closing ??= (async () => { await service.close(); await release(); })() };

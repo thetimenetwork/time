@@ -34,6 +34,8 @@ const SDK = globalThis.TimeSDK;
 const MAX_U64 = 18446744073709551615n;
 const ANONYMOUS = MAX_U64.toString();
 export const SCHEMA_VERSION = 3;
+/// An hour in micros: the unit of the counts per hour (`hours()`).
+export const HOUR_MICROS = 3600000000;
 /// More transactions than 4 MiB of the smallest action can hold; a block answer above this is refused.
 export const MAX_BLOCK_TXS = 32768;
 /// The largest signed action the engine accepts (`wire::HEADER + MAX_PAYLOAD + 64`, rounded up as the gateway does).
@@ -317,6 +319,8 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
       seq INTEGER PRIMARY KEY AUTOINCREMENT, target TEXT NOT NULL, event_id TEXT NOT NULL, body TEXT NOT NULL,
       dead INTEGER NOT NULL DEFAULT 0 CHECK(dead IN (0, 1)), attempts INTEGER NOT NULL DEFAULT 0, UNIQUE (target, event_id));
     CREATE INDEX IF NOT EXISTS outbox_queue ON outbox (target, dead, seq);
+    CREATE TABLE IF NOT EXISTS hourly (
+      hour INTEGER PRIMARY KEY, blocks INTEGER NOT NULL, actions INTEGER NOT NULL, payments INTEGER NOT NULL, moved_micros TEXT NOT NULL);
   `);
   const getMeta = db.prepare('SELECT value FROM meta WHERE key = ?'), putMeta = db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value');
   const scope = { schema: String(SCHEMA_VERSION), network_id: networkId, chain_id: chainId, start_height: String(startHeight) };
@@ -385,6 +389,9 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
     outboxDropTarget: db.prepare('DELETE FROM outbox WHERE target = ?'),
     outboxOverflow: db.prepare('DELETE FROM outbox WHERE target = ? AND dead = 0 AND seq <= (SELECT seq FROM outbox WHERE target = ? AND dead = 0 ORDER BY seq DESC LIMIT 1 OFFSET ?)'),
     outboxDeadOverflow: db.prepare('DELETE FROM outbox WHERE target = ? AND dead = 1 AND seq <= (SELECT seq FROM outbox WHERE target = ? AND dead = 1 ORDER BY seq DESC LIMIT 1 OFFSET ?)'),
+    hour: db.prepare('SELECT blocks, actions, payments, moved_micros FROM hourly WHERE hour = ?'),
+    putHour: db.prepare('INSERT INTO hourly (hour, blocks, actions, payments, moved_micros) VALUES (?, ?, ?, ?, ?) ON CONFLICT (hour) DO UPDATE SET blocks = excluded.blocks, actions = excluded.actions, payments = excluded.payments, moved_micros = excluded.moved_micros'),
+    hours: db.prepare('SELECT hour, blocks, actions, payments, moved_micros FROM hourly ORDER BY hour ASC'),
   };
   // Lists in chain order, either way, from a cursor. One prepared statement per shape; every
   // value a caller chose is a bound parameter.
@@ -484,6 +491,33 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
     db.exec('BEGIN IMMEDIATE');
     try { const result = work(); db.exec('COMMIT'); return result; } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
+  /// Adds a block's counts to the hour of its time (UTC hours since 1970). Inside the transaction that writes it.
+  function countHour(timeMicros, actions, payments, moved) {
+    const hour = Math.floor(timeMicros / HOUR_MICROS), row = statements.hour.get(hour);
+    statements.putHour.run(hour, (row?.blocks ?? 0) + 1, (row?.actions ?? 0) + actions, (row?.payments ?? 0) + payments, (BigInt(row?.moved_micros ?? '0') + moved).toString());
+  }
+  // The counts per hour (`hours()`, for the API's figures) came after the index. `hourly_through` is the height they
+  // count up to, written with each block. An index written before them, or blocks written by a program that does not
+  // keep them (an older release run on the same data), are counted when the index opens, in one transaction: an index
+  // with no mark from scratch, one whose mark is below its highest block from the block after the mark.
+  {
+    const mark = getMeta.get('hourly_through')?.value, high = statements.high.get().height ?? 0;
+    if (mark === undefined || Number(mark) < high) {
+      transaction(() => {
+        const from = mark === undefined ? 0 : Number(mark), hours = new Map();
+        if (mark === undefined) db.exec('DELETE FROM hourly');
+        for (const row of db.prepare(`SELECT time_micros / ${HOUR_MICROS} AS hour, COUNT(*) AS blocks, SUM(tx_count) AS actions, SUM(payment_count) AS payments FROM blocks WHERE height > ? GROUP BY hour`).all(from))
+          hours.set(row.hour, { blocks: row.blocks, actions: row.actions, payments: row.payments, moved: 0n });
+        for (const row of db.prepare(`SELECT b.time_micros / ${HOUR_MICROS} AS hour, a.amount FROM actions a INDEXED BY actions_transfers JOIN blocks b ON b.height = a.height WHERE a.transfers = 1 AND a.height > ?`).all(from))
+          hours.get(row.hour).moved += BigInt(row.amount);
+        for (const [hour, h] of hours) {
+          const row = statements.hour.get(hour);
+          statements.putHour.run(hour, (row?.blocks ?? 0) + h.blocks, (row?.actions ?? 0) + h.actions, (row?.payments ?? 0) + h.payments, (BigInt(row?.moved_micros ?? '0') + h.moved).toString());
+        }
+        putMeta.run('hourly_through', String(high));
+      });
+    }
+  }
   const store = {
     networkId, chainId, startHeight,
     /// The highest indexed height, or null while the index is empty.
@@ -499,6 +533,9 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
       return rows.length ? { ...rows[0], repeated: rows.length > 1 } : null;
     },
     account: (account) => statements.account.get(account) ?? null,
+    /// What the index holds, hour by hour of block time (UTC hours since 1970), oldest first: blocks, actions,
+    /// payments and the micros they moved (a decimal string). Hours without a block have no row.
+    hours: () => statements.hours.all().map((row) => ({ ...row })),
     /// The action of `sender` that carries `nonce`, other than the one with `hash`. A nonce is
     /// used once, so there is at most one. (Actions without a nonce carry 0 and are not looked up.)
     actionBySenderNonce: (sender, nonce, hash) => (nonce === '0' ? null : statements.actionBySenderNonce.get(sender, nonce, hash) ?? null),
@@ -610,6 +647,8 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
           }
         });
         statements.setPaymentCount.run(payments.length, block.height);
+        countHour(block.time_micros, actions.length, payments.length, payments.reduce((sum, payment) => sum + BigInt(payment.amount), 0n));
+        putMeta.run('hourly_through', String(block.height));
         for (const [account, t] of totals) statements.putAccount.run(account, t.actions_sent, t.payments_sent, t.sent.toString(), t.payments_received, t.received.toString(), t.first_height, block.height);
         for (const event of events) statements.enqueue.run(event.target, event.id, event.body);
         statements.dropVerified.run(block.height);

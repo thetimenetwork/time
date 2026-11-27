@@ -69,7 +69,7 @@ test('real answers against the OpenAPI description', async () => {
     const tx = Buffer.from(SDK.concat(SDK.buildAction({ networkId: NETWORK, from: '5', nonce: '1', authEpoch: '0', publicKey: 'bb'.repeat(32), kind: 3, payload: { to: '8', amount: '5' } }), new Uint8Array(64))).toString('base64');
     const json = { 'Content-Type': 'application/json' };
     const requests = [
-      ['GET', '/v1/status'], ['GET', '/v1/health'], ['GET', '/v1/blocks'], ['GET', '/v1/blocks?cursor=3&order=asc&limit=1'], ['GET', '/v1/blocks/2'], ['GET', '/v1/blocks/99'], ['GET', '/v1/blocks/2/actions'],
+      ['GET', '/v1/status'], ['GET', '/v1/health'], ['GET', '/v1/stats'], ['GET', '/v1/blocks'], ['GET', '/v1/blocks?cursor=3&order=asc&limit=1'], ['GET', '/v1/blocks/2'], ['GET', '/v1/blocks/99'], ['GET', '/v1/blocks/2/actions'],
       ['GET', `/v1/actions/${hash}`], ['GET', `/v1/actions/${'AB'.repeat(32)}`], ['GET', '/v1/accounts/7'], ['GET', '/v1/accounts/999'], ['GET', '/v1/accounts/7/activity'], ['GET', '/v1/accounts/1/payments'],
       ['GET', '/v1/accounts/1/payments?bogus=1'], ['POST', '/v1/transactions', { headers: json, body: JSON.stringify({ tx }) }], ['POST', '/v1/transactions', { headers: json, body: '{}' }],
       ['POST', '/v1/transactions', { headers: { 'Content-Type': 'text/plain' }, body: '{}' }], ['DELETE', '/v1/status'], ['GET', '/v1/nothing'], ['GET', '/v1/status', { headers: { Origin: 'https://evil.example' } }],

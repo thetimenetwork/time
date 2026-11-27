@@ -3,8 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
-import { checkAddress, plainText, checkDate, readConfig, dateWords, endsWords, timeOfIso, groupDigits, agoWords, statusWords, follow, NOT_ANSWERING, EVERY_MS, KEYS } from '../web-v4/site/app.js';
+import { checkAddress, plainText, checkDate, readConfig, dateWords, endsWords, timeOfIso, groupDigits, agoWords, statusWords, follow, NOT_ANSWERING, EVERY_MS, KEYS, REQUIRED_KEYS, APP_KEYS, derivedLinks, statsView, secondsText, durationWords, clockText, shareText } from '../web-v4/site/app.js';
 
+const LINK_KEYS_OF_PAGE = ['wallet', 'faucet', 'explorer', 'blog'];
 const folder = new URL('../web-v4/site/', import.meta.url);
 const file = name => readFile(new URL(name, folder), 'utf8');
 
@@ -24,10 +25,13 @@ test('an address becomes a link only if it is https:// (or http://127.0.0.1 with
 test('the settings file: every value checked, the problems said, the example complete', async () => {
   const example = JSON.parse(await file('site-config.example.json'));
   assert.deepEqual(Object.keys(example), KEYS);
-  assert.deepEqual(readConfig(example), { config: { wallet: 'https://wallet.example/', faucet: 'https://faucet.example/', explorer: 'https://api.example/explorer/', blog: 'https://blog.example/', api: 'https://api.example', network_name: 'Time test network', ends: '2026-12-20' }, problems: [] });
+  assert.deepEqual(readConfig(example), { config: { wallet: 'https://wallet.example/', faucet: 'https://faucet.example/', explorer: 'https://api.example/explorer/', blog: 'https://blog.example/', api: 'https://api.example', network_name: 'Time test network', ends: '2026-12-20', hardware: 'https://hardware.example/', source: 'https://source.example/time', chat: 'https://chat.example/' }, problems: [] });
   const empty = readConfig({});
   assert.deepEqual(empty.config, Object.fromEntries(KEYS.map(key => [key, null])));
-  assert.deepEqual(empty.problems, KEYS.map(key => `"${key}" is not set.`));
+  // An app's address may be left out: its card is not shown, and nothing is said.
+  assert.deepEqual(empty.problems, REQUIRED_KEYS.map(key => `"${key}" is not set.`));
+  assert.deepEqual(KEYS, [...REQUIRED_KEYS, ...APP_KEYS]);
+  assert.deepEqual(readConfig({ ...example, chat: 'http://chat.example' }).problems, ['"chat" is not an https:// address.']);
   const wrong = readConfig({ ...example, wallet: 'javascript:alert(1)', api: 'https://api.example/v1', network_name: 'a‮b', ends: '2026-02-30', extra: 1 });
   assert.equal(wrong.config.wallet, null); assert.equal(wrong.config.api, null); assert.equal(wrong.config.network_name, null); assert.equal(wrong.config.ends, null); assert.equal(wrong.config.faucet, 'https://faucet.example/');
   assert.deepEqual(wrong.problems, ['"wallet" is not an https:// address.', '"api" is not an https:// origin without a path.', '"network_name" is not a short plain name.', '"ends" is not a date written YYYY-MM-DD.', '"extra" is not a setting of this page.']);
@@ -103,11 +107,67 @@ test('the page: exactly its files, nothing loaded from outside its folder, no in
   assert(!/^\s*import\s|\bimport\(|innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/m.test(script));
   const literals = [...script.matchAll(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g)].map(match => match[0]);
   assert.deepEqual(literals.filter(text => /https?:\/\/\w|\/\/[\w-]+\.[\w-]/.test(text)), [], 'no address of another site in the script');
-  assert.deepEqual([...script.matchAll(/fetch\(([^,)]+)/g)].map(match => match[1]), ["`${api}/v1/status`", "'site-config.json'"]);
+  // The settings, and the API's two routes (follow: `${api}${path}`, path /v1/status or /v1/stats).
+  assert.deepEqual([...script.matchAll(/fetch\(([^,)]+)/g)].map(match => match[1]), ["`${api}${path}`", "'site-config.json'"]);
+  assert.deepEqual([...script.matchAll(/path(?: =|:) '([^']+)'/g)].map(match => match[1]).sort(), ['/v1/stats', '/v1/status']);
   assert(!/url\(|@import|https?:\/\//.test(styles));
-  for (const words of ['Test network.', 'have no value', 'may be reset at any time', 'has not had its outside audit', 'Create your account', 'Get test time', 'Send some to a friend', 'Sign in to the demo blog', 'Your keys in one minute', 'The backup file', 'Protect my account', 'five recovery words', 'written by hand on paper', 'Look up any account or payment, and check it in your own browser.', 'one for the whole network and not one per person']) assert(html.includes(words), words);
-  // The four steps, the wallet's explanation of keys, the explorer.
-  assert.equal((html.match(/data-link="/g) || []).length, 6);
-  for (const key of html.matchAll(/data-link="([^"]+)"/g)) assert(['wallet', 'faucet', 'explorer', 'blog'].includes(key[1]), key[1]);
+  for (const words of ['Test network.', 'have no value', 'may be reset at any time', 'has not had its outside audit', 'Create your account', 'Get test time', 'Send some to a friend', 'Sign in to the demo blog', 'Your keys in one minute', 'The backup file', 'Protect my account', 'five recovery words', 'written by hand on paper', 'Look up any account or payment, and check it in your own browser.', 'one for the whole network and not one per person', 'Seconds in existence', 'Who holds time', 'Every person\'s account is shown as Anonymous.', 'its word, not a proof', 'Apps']) assert(html.includes(words), words);
+  // The four steps, the wallet's explanation of keys, and the ten apps. An app the network may not have (data-app-of)
+  // is hidden by the script when its address is not set; the network's own pages are always offered.
+  assert.equal((html.match(/data-link="/g) || []).length, 15);
+  const derived = Object.keys(derivedLinks({}));
+  for (const key of html.matchAll(/data-link="([^"]+)"/g)) assert([...LINK_KEYS_OF_PAGE, ...APP_KEYS, ...derived].includes(key[1]), key[1]);
+  for (const card of html.matchAll(/data-app-of="([^"]+)"/g)) assert(APP_KEYS.includes(card[1]), card[1]);
+  // Every app card is one link, with its name and its sentence; the icons are drawn inline, not loaded.
+  assert.equal((html.match(/class="app"/g) || []).length, 10);
+  assert.equal((html.match(/class="app-about"/g) || []).length, 10);
   assert(!/Seconds devnet|LOCAL DEVNET|laboratory|\bLAB\b|devnet/i.test(html + script), 'old names');
+});
+
+test('the links made from the settings, and amounts, lengths and shares in words', () => {
+  assert.deepEqual(derivedLinks({ explorer: 'https://explorer.example/explorer/', wallet: 'https://wallet.example/', source: 'https://source.example/time' }), {
+    validators: 'https://explorer.example/explorer/#/validators', device: 'https://wallet.example/device-check.html', developers: 'https://source.example/time/blob/main/docs/integration-guide.md' });
+  assert.deepEqual(derivedLinks({}), { validators: null, device: null, developers: null });
+  assert.deepEqual([0n, 999n, 1000n, 44000n, 300000n, 59963000n, 999999499n, 999999500n, 11653445000000n, null, -1n].map(secondsText),
+    ['0', 'less than 0.001', '0.001', '0.044', '0.3', '59.963', '999.999', '1,000', '11,653,445', '–', '–']);
+  assert.deepEqual([0, 59000, 3600000, 3661000, 203472000, 86400000 * 400].map(durationWords), ['0 seconds', '59 seconds', '1 hour', '1 hour 1 minute', '2 days 8 hours 31 minutes', '400 days']);
+  assert.deepEqual([5000, 3725000, 86400000 + 61000, 2 * 86400000 + 30672000].map(clockText), ['00:00:05', '01:02:05', '1 day 00:01:01', '2 days 08:31:12']);
+  assert.deepEqual([[0n, 10n], [1n, 3n], [1n, 20000n], [5n, 10n], [1n, 0n], [null, 1n]].map(([a, b]) => shareText(a, b)), ['0%', '33.3%', 'less than 0.1%', '50.0%', '–', '–']);
+});
+
+test('an answer of /v1/stats becomes the figures, and nothing malformed reaches the page', () => {
+  // The shape client-v4/api.mjs answers (GET /v1/stats, openapi.json Stats).
+  const answer = {
+    chain: { source: 'state_proof', state_height: '248120', state_time_micros: String(1795800000000000n), genesis_time_micros: String(1795800000000000n - 203_472_000_000n), elapsed_micros: String(203_472_000_000n),
+      supply_micros: String(203_472_000_000n), supply_equals_elapsed: true, supply_parts_micros: { in_accounts: '62000000000', staked: String(141_107_000_000n), not_yet_paid: '365000000', auction_reserve: '0' }, accounts: '85', validators: 5 },
+    activity: { source: 'index', proven: false, blocks: 248120, actions: 3812, payments: 1204, moved_micros: '52310500000', last_24_hours: { blocks: 100000, actions: 456, payments: 1, moved_micros: '1234000000' },
+      days: [{ day: '2026-11-25', blocks: 1, actions: 2, payments: 3, moved_micros: '4000000' }, { day: '2026-02-30', blocks: 1, actions: 1, payments: 1, moved_micros: '1' }, { day: '2026-11-26', blocks: 1, actions: 5, payments: 0, moved_micros: '0' }],
+      block_interval_ms: 860 },
+    holders: { source: 'state_proof', from_height: '248000', to_height: '248010', read_at: '2026-11-27T17:30:00.123Z', every_seconds: 300, accounts_read: 85, complete: true, holding: 41, held_micros: '62000000000',
+      top: [{ rank: 1, anonymous: false, account: '66', name: 'faucet', balance_micros: '12000000000', staked_micros: '0' }, { rank: 2, anonymous: true, account: null, name: null, balance_micros: '60000000', staked_micros: '0' },
+        { rank: 3, anonymous: false, account: '7', name: '<b>x</b>‮', balance_micros: '1', staked_micros: '0' }] },
+  };
+  const view = statsView(answer);
+  assert.equal(view.chain.figure, '203,472');
+  assert.equal(view.chain.words, '2 days 8 hours 31 minutes of chain time, at block 248,120.');
+  assert.match(view.chain.check, /^Equal to the time the chain has run/);
+  assert.deepEqual(view.chain.parts.map(p => [p.name, p.text, p.share]), [['On accounts', '62,000 s', '30.5%'], ['Staked in pools', '141,107 s', '69.3%'], ['Not yet paid out', '365 s', '0.2%']]);
+  assert.equal(view.chain.since, 'Since 25 November 2026, 08:48 UTC');
+  assert.equal(view.chain.genesisMs, Number((1795800000000000n - 203_472_000_000n) / 1000n));
+  assert.deepEqual([view.chain.accounts, view.chain.validators], ['85', 5]);
+  assert.deepEqual([view.activity.actions, view.activity.payments, view.activity.moved, view.activity.pace], ['3,812', '1,204 payments among them', '52,311 s', 'A block every 0.86 s']);
+  assert.deepEqual(view.activity.day, { payments: '1 payment', detail: '1,234 s moved, 456 actions' });
+  // A day that does not exist is left out.
+  assert.deepEqual(view.activity.days.map(d => [d.day, d.label, d.payments, d.moved]), [['2026-11-25', '25 November 2026', 3, '4 s'], ['2026-11-26', '26 November 2026', 0, '0 s']]);
+  assert.equal(view.holders.holding, '41 accounts hold time');
+  assert.equal(view.holders.summary, '41 accounts hold 62,000 s between them.');
+  assert.equal(view.holders.when, 'Counted account by account between blocks 248,000 and 248,010, at 27 November 2026, 17:30 UTC, again every 5 minutes.');
+  // A name the server says is the network's own is shown only if it is plain text; anything else is anonymous.
+  assert.deepEqual(view.holders.rows.map(r => [r.rank, r.name, r.anonymous, r.held, r.share]), [['1', 'faucet', false, '12,000 s', '5.9%'], ['2', null, true, '60 s', 'less than 0.1%'], ['3', null, true, 'less than 0.001 s', 'less than 0.1%']]);
+  // Each part on its own: a broken part is null, the others stand.
+  const broken = statsView({ ...answer, chain: { ...answer.chain, supply_micros: '1e9' }, holders: { ...answer.holders, top: 'x' } });
+  assert.equal(broken.chain, null); assert.equal(broken.holders, null); assert.equal(broken.activity.actions, '3,812');
+  assert.equal(statsView({ ...answer, chain: { ...answer.chain, supply_equals_elapsed: false } }).chain.check, null);
+  for (const bad of [null, 'x', 5, [], {}]) assert.deepEqual(statsView(bad), { chain: null, activity: null, holders: null });
+  assert.deepEqual(statsView({ activity: { ...answer.activity, actions: -1 } }).activity, null);
 });

@@ -9,6 +9,25 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 27 November 2026, third publication of the day: the network in figures, and every app on the main page
+
+### The main page (`web-v4/site`)
+
+- **The network now, in figures.** The seconds in existence, read from the chain's own counters with a proof, with the check that they equal the time the chain has run, and where they are (on accounts, staked in pools, not yet paid out) as a thin split bar with its legend. A clock that counts the time since the chain started. Accounts, and how many hold time; actions recorded, payments among them and the seconds they moved; the last 24 hours; validators and the pace of blocks; the newest block. Payments per day as a bar chart, each bar reachable by pointer and keyboard, with a table view.
+- **Who holds time**: the ten largest holders and their share of all seconds. Only the network's own accounts are named (the validators' operators, the registration sponsors, the faucet, the demo blog, the staking pools); every person's account is shown as Anonymous.
+- **Apps**: every app built on Time, each with one sentence and its link: the wallet, the faucet, the explorer, the Validators page, the demo blog, Time Chat, "Check this device", the Time Watch design, the guide for developers and the source. Time Chat, the watch and the source are shown only when the page's settings name them.
+- **Rule change**: `site-config.json` takes three more addresses, `hardware`, `source` and `chat`, each optional; the example names them. The page asks `GET /v1/stats` every 30 seconds while it is shown.
+
+### The API (`client-v4/api.mjs`, `deploy/api`)
+
+- **`GET /v1/stats`** (`deploy/api/README.md`, "The network in figures"; `openapi.json` 1.4.0, schema `Stats`): `chain` from the state's counters read with a proof, `activity` from the index, `holders` from a census. It costs 5 from the rate-limit budget and counts as a proof read.
+- **The census of holders**, off unless the new setting `stats_census` is set: every `every_seconds` the service reads every account with a proof, eight at a time, values stakes at what their pools hold, and names only the accounts of `named_accounts`. **Rule change**: a new setting of the API's config.
+- **Stored format**: the index keeps a table `hourly` (blocks, actions, payments and seconds moved per hour of block time), written in the same transaction as each block. With it the index keeps the height the counts reach; when it opens it counts what lies above (all of an index written before the table, or blocks an older release wrote on the same data). The schema version is unchanged and nothing is rebuilt.
+
+### Tests
+
+- The figures of a state, the counts per hour and their first count on an old index, the holders and who is named, the route with and without a census and with the node behind, the config setting, and the answer against the description (`client-v4/api.test.mjs`, `api-review-openapi.test.mjs`); the page's figures, words and links (`client-v4/site-page.test.mjs`). The page was looked at in Chrome at 320, 390, 768 and 1280 pixels, light and dark; not on a phone, in Safari or Firefox, or with a screen reader.
+
 ## 27 November 2026, second publication of the day: the hardware pages
 
 A new site of pages, `web-v4/hardware`: the design of the Time Watch, a watch that holds seconds and pays by touch. It is a **design draft**: no watch has been built or tested, and the page says so on every screen. Nothing in it changes the wallet, the services or the chain.

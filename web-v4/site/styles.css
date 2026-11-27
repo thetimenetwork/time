@@ -1,7 +1,7 @@
 /* The main page of the test network. The visual language of the wallet (web-v4/wallet/styles.css): its tokens below
-   are copied from it as they are, so every Time page has the same names and values. This page explains, so it has
-   the large line drawing; the rest is flat, grouped by spacing and headings. Colours follow the reader's system
-   setting; nothing is loaded from elsewhere: system fonts, the drawing and the mark inline in the page. */
+   are copied from it as they are, so every Time page has the same names and values. The page is flat, grouped by
+   spacing and headings; its figures are drawn in the ink and three greys. Colours follow the reader's system
+   setting; nothing is loaded from elsewhere: system fonts, the icons and the mark inline in the page. */
 :root {
   color-scheme: light dark;
   --page: #ffffff; --surface: #f1f1f1; --track: #e4e4e4; --card: #ffffff; --ink: #222222; --soft: #666666;
@@ -99,15 +99,90 @@ main { max-width: 60rem; margin: 0 auto; padding: 0 var(--gutter) var(--s6); }
 .tag.safe { background: var(--warn-bg); color: var(--warn); border-style: dashed; border-color: var(--warn); }
 .tag.later { border-style: dashed; }
 
-/* The network now: one figure, with its unit in words. */
-.figure { font-size: 1.75rem; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; font-variant-numeric: tabular-nums; margin: var(--s2) 0; overflow-wrap: anywhere; }
-.figure.bad { color: var(--bad); font-size: 1.25rem; }
+/* The network now. The greys of the split bar, light and dark: the ink, then lighter steps for the smaller parts. */
+:root { --part-1: #222222; --part-2: #767676; --part-3: #b0b0b0; --part-4: #e4e4e4; --hover: #555555; }
+@media (prefers-color-scheme: dark) { :root { --part-1: #ededed; --part-2: #8d8d8d; --part-3: #5a5a5a; --part-4: #2c2c2c; --hover: #bdbdbd; } }
+.label { margin: 0; color: var(--soft); font-size: .875rem; font-weight: 600; }
+.supply { margin: var(--s4) 0 var(--s5); }
+.hero-figure { margin: var(--s1) 0 0; font-size: 3rem; line-height: 1.05; font-weight: 800; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.hero-figure .unit { font-size: 1.5rem; font-weight: 700; letter-spacing: 0; color: var(--soft); }
+@media (min-width: 48rem) { .hero-figure { font-size: 3.5rem; } }
+.check { display: flex; align-items: flex-start; gap: var(--s2); margin: var(--s2) 0 0; color: var(--ok); font-size: .9375rem; font-weight: 600; }
+.check svg { flex: none; width: 1.25rem; height: 1.25rem; margin-top: .0625rem; }
+.check circle { fill: var(--ok-bg); stroke: var(--ok); stroke-width: 1.5; }
+.check path { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.split { margin-top: var(--s4); }
+.split-bar { display: block; height: 8px; line-height: 0; }
+.split-bar svg { display: block; }
+.part-in_accounts { fill: var(--part-1); }
+.part-staked { fill: var(--part-2); }
+.part-not_yet_paid { fill: var(--part-3); }
+.part-auction_reserve { fill: var(--part-4); }
+.split-legend { list-style: none; margin: var(--s3) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); font-size: .875rem; }
+.split-legend li { display: flex; align-items: center; gap: var(--s2); }
+.split-legend svg { flex: none; }
+.legend-name { font-weight: 600; }
+.legend-value { color: var(--soft); font-variant-numeric: tabular-nums; }
+
+/* The tiles: a label, one value, one line of detail. Two across on a phone, four on a wide screen. */
+.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.tile { padding: var(--s4); border-radius: var(--radius-field); background: var(--surface); min-width: 0; }
+.tile .value { margin: var(--s1) 0 0; font-size: 1.5rem; line-height: 1.2; font-weight: 800; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.tile .small { margin: var(--s1) 0 0; }
+.tile.wide { grid-column: 1 / -1; }
+@media (max-width: 30rem) { .tile .value, .figure { font-size: 1.25rem; } }
+@media (max-width: 22.5rem) { .tile { padding: var(--s3); } .tile .value, .figure { font-size: 1.125rem; } }
+@media (min-width: 48rem) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tile.wide { grid-column: span 2; } }
+#running { font-variant-numeric: tabular-nums; }
+
+/* The newest block, in its tile. */
+.figure { font-size: 1.5rem; font-weight: 800; letter-spacing: -.01em; line-height: 1.2; margin: var(--s1) 0 0; overflow-wrap: anywhere; }
+.figure.bad { color: var(--bad); font-size: 1.125rem; }
 #live-detail:empty { display: none; }
 
+/* Payments per day: ink bars from one baseline, a hairline axis, quiet tick labels. */
+.chart-part, .holders-part { margin-top: var(--s6); }
+.chart { margin-top: var(--s3); min-height: 168px; }
+.chart svg { display: block; max-width: 100%; overflow: visible; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.chart .tick { fill: var(--soft); font: 12px var(--sans); font-variant-numeric: tabular-nums; }
+.chart .bar { fill: var(--ink); transition: fill var(--fast) var(--ease); }
+.chart .hit { fill: transparent; }
+.chart .day { cursor: default; outline: none; }
+.chart .day:hover .bar, .chart .day:focus .bar { fill: var(--hover); }
+.chart .day:focus-visible .hit { stroke: var(--link); stroke-width: 2; }
+.readout { min-height: 1.5em; margin: var(--s2) 0 0; font-variant-numeric: tabular-nums; }
+.table-view { margin-top: var(--s2); }
+.table-view summary { display: inline-flex; align-items: center; min-height: 2.75rem; cursor: pointer; font-weight: 600; }
+.table-view summary:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+
+/* Tables: aligned figures, hairlines between rows. */
+table { width: 100%; border-collapse: collapse; font-size: .9375rem; }
+th, td { padding: var(--s2) var(--s2); border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+thead th { color: var(--soft); font-size: .8125rem; font-weight: 600; }
+th:first-child, td:first-child { padding-left: 0; }
+th:last-child, td:last-child { padding-right: 0; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.holders { margin-top: var(--s3); }
+.holders td:first-child { width: 2rem; color: var(--soft); text-align: left; }
+.holders .named { font-weight: 600; overflow-wrap: anywhere; }
+.holders .anonymous { color: var(--soft); font-style: italic; }
+
+/* Apps: one card a link, each with its icon, name and one sentence. */
+.apps { list-style: none; margin: var(--s4) 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+@media (min-width: 40rem) { .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 60rem) { .apps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.app { display: flex; align-items: flex-start; gap: var(--s4); height: 100%; min-height: var(--row-height); padding: var(--s4); border: 1px solid var(--line); border-radius: var(--radius-field); color: var(--ink); text-decoration: none; transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease); }
+.app svg { flex: none; width: 2.75rem; height: 2.75rem; padding: .625rem; border-radius: 50%; background: var(--surface); fill: none; stroke: var(--ink); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.app-text { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+.app-name { font-weight: 700; font-size: 1.0625rem; }
+.app-about { color: var(--soft); font-size: .9375rem; }
+@media (hover: hover) { .app[href]:hover { background: var(--surface); border-color: var(--edge); } .app[href]:hover svg { background: var(--page); } }
+.app:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+.app:not([href]) { opacity: .4; cursor: not-allowed; }
+[data-app-of][hidden] { display: none; }
+
 @media (min-width: 48rem) {
-  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--s7); }
-  main > * { grid-column: 1 / -1; }
-  main > .part:not(.steps-part):not(.keys-part) { grid-column: auto; }
   .keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: column; grid-template-rows: auto auto; gap: var(--s2) var(--s5); }
   .keys dt, .keys dd { margin: 0; }
 }

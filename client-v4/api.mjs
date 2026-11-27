@@ -26,7 +26,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import './time-sdk.js';
 import { fetchCertifiedView, fetchLightBlock } from './certified-view.mjs';
 import { webhookAdapter, checkWebhookURL, withTimeout } from './security-watch-service.mjs';
-import { openIndex, createIndexer, paymentEvent, encodeCursor, decodeCursor, plainText, IndexerError, KIND_NAMES, MAX_ACTION_BYTES } from './indexer.mjs';
+import { openIndex, createIndexer, paymentEvent, encodeCursor, decodeCursor, plainText, IndexerError, KIND_NAMES, MAX_ACTION_BYTES, HOUR_MICROS } from './indexer.mjs';
 import { touchesOfBytes } from './touches.mjs';
 
 const SDK = globalThis.TimeSDK;
@@ -425,6 +425,62 @@ function createWebhookDispatcher({ store, webhooks, fetcher, log, baseMs = 2000,
   };
 }
 
+// ------------------------------------------------------------------ the network in figures (GET /v1/stats)
+/// A whole number of the state or the index, written in decimal: a BigInt, else null.
+const wholeOf = (value) => (typeof value === 'string' && /^(0|[1-9][0-9]{0,24})$/.test(value) ? BigInt(value) : null);
+/// What a verified state says of the whole network: the time since its genesis, the seconds that exist and where
+/// they are, the accounts and the validators. The four parts are the state's own counters, which the verifier checks
+/// add up to the time elapsed (verifier-v4 `current_rows`): `in_accounts` (on accounts), `staked` (in the staking
+/// pools and on their way out), `not_yet_paid` (the network's bank: new time and fees not yet paid out),
+/// `auction_reserve`. Amounts in micros, as decimal strings. Null when the state lacks one of them.
+export function chainFigures(state) {
+  const genesis = wholeOf(state?.genesis?.genesis_time_micros), time = wholeOf(state?.time_micros);
+  const parts = { in_accounts: wholeOf(state?.liquid_total), staked: wholeOf(state?.pos_assets_total), not_yet_paid: wholeOf(state?.bank), auction_reserve: wholeOf(state?.auction_reserve_total) };
+  if (genesis === null || time === null || time < genesis || Object.values(parts).some((value) => value === null)) return null;
+  const supply = Object.values(parts).reduce((sum, value) => sum + value, 0n), accounts = wholeOf(state.account_count);
+  return {
+    state_height: String(state.height), state_time_micros: time.toString(), genesis_time_micros: genesis.toString(), elapsed_micros: (time - genesis).toString(),
+    supply_micros: supply.toString(), supply_equals_elapsed: supply === time - genesis, supply_parts_micros: Object.fromEntries(Object.entries(parts).map(([name, value]) => [name, value.toString()])),
+    accounts: accounts === null ? null : accounts.toString(), validators: Array.isArray(state.pos?.active) ? state.pos.active.length : null,
+  };
+}
+const HOUR_MS = HOUR_MICROS / 1000;
+/// UTC day of a day number (days since 1970): YYYY-MM-DD.
+const dayName = (day) => new Date(day * 86400000).toISOString().slice(0, 10);
+/// The index's counts (store.hours()) as figures: all of them, the last 24 hours before `nowMs` (by whole hours of
+/// block time: the hour under way and the 23 before it), and day by day (UTC) for the last `days` days to the newest
+/// one, days without a block counted as nothing.
+export function activityFigures(hours, { nowMs, days = 30 } = {}) {
+  const zero = () => ({ blocks: 0, actions: 0, payments: 0, moved: 0n });
+  const add = (into, row) => { into.blocks += row.blocks; into.actions += row.actions; into.payments += row.payments; into.moved += BigInt(row.moved_micros); };
+  const out = (t) => ({ blocks: t.blocks, actions: t.actions, payments: t.payments, moved_micros: t.moved.toString() });
+  const total = zero(), recent = zero(), byDay = new Map(), nowHour = Math.floor(nowMs / HOUR_MS);
+  for (const row of hours) {
+    add(total, row);
+    if (row.hour > nowHour - 24 && row.hour <= nowHour) add(recent, row);
+    const day = Math.floor(row.hour / 24);
+    if (!byDay.has(day)) byDay.set(day, zero());
+    add(byDay.get(day), row);
+  }
+  const known = [...byDay.keys()], last = known.length ? Math.max(...known) : null, first = last === null ? null : Math.max(Math.min(...known), last - days + 1);
+  const list = [];
+  for (let day = first; last !== null && day <= last; day++) list.push({ day: dayName(day), ...out(byDay.get(day) ?? zero()) });
+  return { ...out(total), last_24_hours: out(recent), days: list };
+}
+/// The holders as GET /v1/stats shows them, from a census (rows { id, name, balance, staked } with BigInt amounts):
+/// how many hold anything, how much they hold, and the `top` largest, each with its name only when its id is one of
+/// `named` (the network's own accounts); every other account is anonymous: no name and no number.
+export function holderFigures(rows, { named = new Set(), top = 20 } = {}) {
+  const holding = rows.filter((row) => row.balance + row.staked > 0n).sort((a, b) => {
+    const x = a.balance + a.staked, y = b.balance + b.staked;
+    return x === y ? (BigInt(a.id) < BigInt(b.id) ? -1 : 1) : (x > y ? -1 : 1);
+  });
+  return {
+    holding: holding.length, held_micros: holding.reduce((sum, row) => sum + row.balance + row.staked, 0n).toString(),
+    top: holding.slice(0, top).map((row, i) => ({ rank: i + 1, anonymous: !named.has(row.id), account: named.has(row.id) ? row.id : null, name: named.has(row.id) ? row.name : null, balance_micros: row.balance.toString(), staked_micros: row.staked.toString() })),
+  };
+}
+
 // ------------------------------------------------------------------ the service
 const blockView = (row) => ({
   height: String(row.height), hash: row.hash.toUpperCase(), previous_hash: row.previous_hash.toUpperCase(), time: row.time, time_micros: String(row.time_micros),
@@ -446,13 +502,24 @@ const blockView = (row) => ({
 /// - `explorer`: true serves the explorer's pages under /explorer/ (see EXPLORER_FILES);
 /// - `explorerJoin`: with `explorer`, this network's facts for the explorer's "Run a validator", served as
 ///   /explorer/join.json (see checkExplorerJoin); null serves none;
+/// - `census`: null (no count of holders), or { everyMs, maxAccounts, named, top, pauseMs }: every `everyMs` the
+///   service reads the accounts 0 to `maxAccounts` - 1 with proofs, eight at a time with a pause of `pauseMs`
+///   between reads, and GET /v1/stats shows how many hold time and the `top` largest; only the accounts of `named`
+///   (ids: the network's own) are shown with their names (holderFigures);
 /// - for tests: `readState`, `webhookFetcher`, `webhookTiming` { retryMs, attemptDelayMs }, `now`, `log`, `pollMs`, `autoStart`, `requestTimeoutMs`
 ///   (15000: how long a request may take to arrive in full).
 export async function createApiService({
   trust, rpc, verifier, dataFile, startHeight = 1, host = '127.0.0.1', port = 8930, hosts = [], corsOrigins = [], rateLimit = {}, trustedProxies = [],
   webhooks = [], webhookTiming = {}, maxLagSeconds = 120, maxStreams = 100, maxStreamsPerClient = 5, maxStreamSeconds = 900, reservedStreamClients = [], unfilteredStreamPercent = UNFILTERED_STREAM_PERCENT,
-  maxProofReadsPerClient = PROOF_READS_PER_CLIENT, maxTouchStreams = 2000, maxTouchStreamsPerClient = 16, stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, readState, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true, requestTimeoutMs = 15000,
+  maxProofReadsPerClient = PROOF_READS_PER_CLIENT, maxTouchStreams = 2000, maxTouchStreamsPerClient = 16, stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, census: censusOptions = null, readState, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true, requestTimeoutMs = 15000,
 }) {
+  if (censusOptions !== null) {
+    const { everyMs, maxAccounts, named = [], top = 20, pauseMs = 100, ...rest } = censusOptions;
+    if (Object.keys(rest).length || !Number.isSafeInteger(everyMs) || everyMs < 1000 || !Number.isSafeInteger(maxAccounts) || maxAccounts < 1 || maxAccounts > 100000
+      || !Number.isSafeInteger(top) || top < 1 || top > 100 || !Number.isSafeInteger(pauseMs) || pauseMs < 0 || !Array.isArray(named) || !named.every((id) => typeof id === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(id)))
+      throw new Error('census is { everyMs (from 1000), maxAccounts (1 to 100000), named: [account ids], top (1 to 100), pauseMs }');
+    censusOptions = { everyMs, maxAccounts, named: new Set(named), top, pauseMs };
+  }
   if (String(trust?.app_version) !== '4' || !/^[0-9a-f]{64}$/.test(trust?.network_id ?? '') || typeof trust?.chain_id !== 'string') throw new Error('trust is the application-4 trust manifest the SDK takes');
   for (const hook of webhooks) { checkWebhookURL(hook.url); PARAMETERS.account(hook.account); }
   for (const [name, value, least, most] of [['maxTouchStreams', maxTouchStreams, 0, 100000], ['maxTouchStreamsPerClient', maxTouchStreamsPerClient, 1, 1000], ['maxProofReadsPerClient', maxProofReadsPerClient, 1, 64], ['unfilteredStreamPercent', unfilteredStreamPercent, 0, 90]])
@@ -474,7 +541,7 @@ export async function createApiService({
   const streams = new Set();
   let explorerFiles;
   try { explorerFiles = explorer ? loadExplorerFiles() : null; } catch (error) { store.close(); throw error; }
-  let server, indexer, dispatcher, feeMicros = null, noAuction = null, feeAsked = 0, heartbeat = null, stateRefresh = null, closing = null;
+  let server, indexer, dispatcher, feeMicros = null, noAuction = null, feeAsked = 0, heartbeat = null, stateRefresh = null, censusTimer = null, closing = null;
   const startedAt = now();
 
   try {
@@ -556,6 +623,67 @@ export async function createApiService({
     entry.reading = verifiedState(selection, client).then((result) => { entry.result = result; entry.at = now(); return result; }, (error) => { if (sharedReads.get(key) === entry) sharedReads.delete(key); throw error; });
     sharedReads.set(key, entry);
     return entry.reading;
+  }
+  // ---- the network in figures
+  /// The index's figures, worked out at most once every five seconds, whoever asks.
+  let activityHeld = null;
+  function activityNow() {
+    const at = now();
+    if (!activityHeld || at < activityHeld.at || at - activityHeld.at >= 5000) {
+      const first = store.block(store.startHeight), high = store.high(), last = high === null ? null : store.block(high);
+      activityHeld = { at, figures: { ...activityFigures(store.hours(), { nowMs: at }), counted_from_height: String(store.startHeight),
+        first_block_time: first?.time ?? null, block_interval_ms: first && last && last.height > first.height ? Math.round((last.time_micros - first.time_micros) / (last.height - first.height) / 1000) : null } };
+    }
+    return activityHeld.figures;
+  }
+  /// The census of holders (`census`): every account read with a proof, eight at a time, one read after the other,
+  /// so that callers' reads go first. Stakes are valued at what their pool holds: shares × pool assets ÷ pool shares,
+  /// plus the bond of a validator's owner. The last complete census is kept; one that fails is logged and tried again
+  /// at the next turn.
+  let census = null, censusRunning = false;
+  const pause = (ms) => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
+  async function takeCensus() {
+    if (censusRunning || censusOptions === null || closing) return;
+    censusRunning = true;
+    const started = now();
+    try {
+      const first = await verifiedState({ include_pos: true }), heights = [BigInt(first.state.height)];
+      const next = wholeOf(first.state.next_account_id);
+      if (next === null) throw new Error('The state has no next account id');
+      const pools = new Map(), bonds = new Map(), candidates = (first.state.pos?.candidate_ids ?? []).map(String).filter((id) => wholeOf(id) !== null);
+      for (let i = 0; i < candidates.length && !closing; i += 16) {
+        const batch = candidates.slice(i, i + 16), read = await verifiedState({ candidates: batch });
+        heights.push(BigInt(read.state.height));
+        for (const id of batch) {
+          const row = read.state.candidates?.[id], assets = wholeOf(row?.pool_assets), shares = wholeOf(row?.pool_shares), bond = wholeOf(row?.self_bond), owner = wholeOf(row?.owner);
+          if (assets !== null && shares !== null && shares > 0n) pools.set(id, { assets, shares });
+          if (bond !== null && owner !== null) bonds.set(owner.toString(), (bonds.get(owner.toString()) ?? 0n) + bond);
+        }
+        await pause(censusOptions.pauseMs);
+      }
+      const end = next < BigInt(censusOptions.maxAccounts) ? Number(next) : censusOptions.maxAccounts, rows = [];
+      for (let start = 0; start < end && !closing; start += 8) {
+        const batch = Array.from({ length: Math.min(8, end - start) }, (_, i) => String(start + i)), read = await verifiedState({ ids: batch, owners: batch });
+        heights.push(BigInt(read.state.height));
+        for (const account of read.state.accounts ?? []) {
+          const id = String(account.id), balance = wholeOf(account.balance);
+          if (!batch.includes(id) || balance === null) continue;
+          let staked = bonds.get(id) ?? 0n;
+          for (const position of read.state.stake_owners?.[id]?.positions ?? []) {
+            const pool = pools.get(String(position.candidate)), shares = wholeOf(position.shares);
+            if (pool && shares !== null) staked += shares * pool.assets / pool.shares;
+          }
+          rows.push({ id, name: typeof account.name === 'string' ? account.name : null, balance, staked });
+        }
+        await pause(censusOptions.pauseMs);
+      }
+      if (closing) return;
+      const low = heights.reduce((a, b) => (b < a ? b : a)), high = heights.reduce((a, b) => (b > a ? b : a));
+      census = { from_height: low.toString(), to_height: high.toString(), read_at: new Date(now()).toISOString(), seconds_taken: Math.round((now() - started) / 1000),
+        accounts_read: rows.length, complete: BigInt(end) >= next, ...holderFigures(rows, censusOptions) };
+    } catch (error) {
+      log('warn', 'the census of holders failed', { error: plainText(error?.message, 160) });
+    } finally { censusRunning = false; }
   }
   /// How many proof reads each client has under way (see PROOF_READS_PER_CLIENT). A request of a route marked
   /// `proof` holds one from the moment its parameters are accepted until it is answered, whether its read is its own,
@@ -815,6 +943,26 @@ export async function createApiService({
       return { status: reasons.length ? 503 : 200, body: { ok: reasons.length === 0, reasons, indexed_height: s.indexed_height === null ? null : String(s.indexed_height), seconds_behind: s.seconds_behind,
         blocks_behind_reported: s.blocks_behind_reported, headers_to_verify: s.headers_to_verify, consecutive_failures: s.consecutive_failures, last_error: s.last_error, fault: s.fault,
         streams: streams.size, touch_streams: touchStreams.size, webhooks: dispatcher.status() } };
+    },
+    'GET /v1/stats': async ({ client }) => {
+      // Three parts, each saying what it is. `chain`: the state's own counters, read with a proof (null, with the
+      // reason, when no proven state can be read now: the index still answers). `activity`: this server's index.
+      // `holders`: the last census (null when the service counts none, or before its first).
+      const selection = { include_pos: true };
+      let chain = null, unavailable = null;
+      try {
+        const figures = chainFigures((await sharedState(selection, client)).state);
+        if (figures) chain = { source: 'state_proof', checked_by: 'this server, with its own trust anchor', ...figures, verify: { query: selection, how: 'SDK: client.getVerifiedState(query) gives the same counters: liquid_total, pos_assets_total, bank and auction_reserve_total, which the verifier checks add up to time_micros less genesis.genesis_time_micros; account_count; pos.active.' } };
+        else unavailable = 'state_without_counters';
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 503) throw error;
+        unavailable = error.code;
+      }
+      return { status: 200, body: {
+        chain, ...(chain ? {} : { chain_unavailable: unavailable }),
+        activity: { source: 'index', proven: false, ...activityNow(), index: indexNote() },
+        holders: census === null ? null : { source: 'state_proof', checked_by: 'this server, account by account, with its own trust anchor', every_seconds: Math.round(censusOptions.everyMs / 1000), ...census },
+      } };
     },
     'GET /v1/openapi.json': () => ({ status: 200, raw: OPENAPI }),
     'GET /v1/blocks': ({ query }) => {
@@ -1279,7 +1427,7 @@ export async function createApiService({
   });
   server.requestTimeout = requestTimeoutMs; server.headersTimeout = Math.min(5000, requestTimeoutMs); server.keepAliveTimeout = 5000; server.maxRequestsPerSocket = 1000; server.maxConnections = 2048 + maxTouchStreams;
   const close = () => closing ??= (async () => {
-    clearInterval(heartbeat); clearInterval(stateRefresh);
+    clearInterval(heartbeat); clearInterval(stateRefresh); clearTimeout(censusTimer);
     await indexer.stop();
     await dispatcher.stop();
     for (const stream of streams) stream.response.end();
@@ -1304,11 +1452,17 @@ export async function createApiService({
     // read on a timer, so that a week without account requests does not let its checkpoint expire.
     stateRefresh = setInterval(() => { verifiedState({}).catch(() => {}); }, stateRefreshMs);
     stateRefresh.unref?.();
+    // The census of holders: first a minute after the start (the light client and the index settle first), then
+    // `everyMs` after the end of the one before, so that two never run at once.
+    if (censusOptions !== null) {
+      const turn = (ms) => { censusTimer = setTimeout(async () => { await takeCensus(); if (!closing) turn(censusOptions.everyMs); }, ms); censusTimer.unref?.(); };
+      turn(Math.min(60000, censusOptions.everyMs));
+    }
   }
   const address = server.address();
   return {
     url: `http://${address.family === 'IPv6' ? `[${address.address}]` : address.address}:${address.port}`,
-    indexer, store, webhooks: dispatcher, close, tendStreams: tend,
+    indexer, store, webhooks: dispatcher, close, tendStreams: tend, takeCensus,
   };
 }
 
@@ -1319,6 +1473,7 @@ export const ROUTES = Object.freeze([
   { method: 'GET', path: '/v1/status', query: {}, cost: 1 },
   { method: 'GET', path: '/v1/health', query: {}, cost: 1 },
   { method: 'GET', path: '/v1/openapi.json', query: {}, cost: 1 },
+  { method: 'GET', path: '/v1/stats', query: {}, cost: 5, proof: true },
   { method: 'GET', path: '/v1/blocks', query: { limit: 'limit', cursor: 'height', order: 'order' }, cost: 1 },
   { method: 'GET', path: '/v1/blocks/{height}', query: {}, cost: 1 },
   { method: 'GET', path: '/v1/blocks/{height}/actions', query: { limit: 'limit', cursor: 'cursor' }, cost: 1 },

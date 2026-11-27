@@ -14,8 +14,9 @@ import * as verifier from './proof-verifier.mjs';
 import { createLightClient } from './light-client.mjs';
 import { fetchLightBlock } from './certified-view.mjs';
 import { verifyWebhookSignature } from './security-watch-service.mjs';
-import { describeAction, IndexerError } from './indexer.mjs';
-import { createApiService, createRateLimiter, createReadGate, networkKey, clientKey, holderKey, normalIp, webhookTargetId, ROUTES, MAX_PAGE, MAX_BODY_BYTES, REPLAY_PAYMENTS, STREAM_MIN_AGE_MS, STATE_SHARE_MS, NEWER_ACTIONS } from './api.mjs';
+import { describeAction, IndexerError, openIndex } from './indexer.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { createApiService, createRateLimiter, createReadGate, networkKey, clientKey, holderKey, normalIp, webhookTargetId, ROUTES, MAX_PAGE, MAX_BODY_BYTES, REPLAY_PAYMENTS, STREAM_MIN_AGE_MS, STATE_SHARE_MS, NEWER_ACTIONS, chainFigures, activityFigures, holderFigures } from './api.mjs';
 import { validateConfig, start } from '../deploy/api/start.mjs';
 
 const SDK = globalThis.TimeSDK;
@@ -1496,4 +1497,128 @@ test('a request whose body is still arriving at the time limit is answered 408 a
     assert.match(answer, /^HTTP\/1\.1 408 /);
     assert(Date.now() - started < 3500, `answered after ${Date.now() - started} ms`);
   }, { requestTimeoutMs: 1000 });
+});
+
+// ---- the network in figures (GET /v1/stats)
+const H = 3600000000; // an hour in micros
+/// A verified state with the aggregate counters the verifier checks, at `elapsed` micros after the genesis.
+const counters = (elapsed, more = {}) => ({ network_id: NETWORK, height: '3', time_micros: String(1000000000000n + elapsed), genesis: { genesis_time_micros: '1000000000000' },
+  liquid_total: String(elapsed - 300n), pos_assets_total: '200', bank: '100', auction_reserve_total: '0', account_count: '9', next_account_id: '9', pos: { active: [{}, {}, {}], candidate_ids: ['0', '1'] }, config: {}, ...more });
+
+test('the figures of a verified state: the seconds that exist add up to the time elapsed, and nothing else is taken', () => {
+  assert.deepEqual(chainFigures(counters(5000n)), {
+    state_height: '3', state_time_micros: '1000000005000', genesis_time_micros: '1000000000000', elapsed_micros: '5000', supply_micros: '5000', supply_equals_elapsed: true,
+    supply_parts_micros: { in_accounts: '4700', staked: '200', not_yet_paid: '100', auction_reserve: '0' }, accounts: '9', validators: 3 });
+  assert.equal(chainFigures(counters(5000n, { bank: '101' })).supply_equals_elapsed, false);
+  for (const broken of [{ bank: 5 }, { liquid_total: '-1' }, { liquid_total: '01' }, { genesis: {} }, { time_micros: '1' }]) assert.equal(chainFigures(counters(5000n, broken)), null, JSON.stringify(broken));
+  assert.equal(chainFigures(null), null);
+});
+
+test('the counts per hour become totals, the last 24 hours and the days, with the days between counted as nothing', () => {
+  const day = 24, rows = [
+    { hour: 10 * day + 1, blocks: 5, actions: 3, payments: 2, moved_micros: '7' },
+    { hour: 12 * day + 23, blocks: 1, actions: 1, payments: 1, moved_micros: '18446744073709551615' }, // more than a signed 64-bit number
+    { hour: 13 * day + 5, blocks: 2, actions: 0, payments: 0, moved_micros: '0' },
+  ];
+  const figures = activityFigures(rows, { nowMs: (13 * day + 5) * 3600000 + 10 });
+  assert.deepEqual({ ...figures, days: undefined }, { blocks: 8, actions: 4, payments: 3, moved_micros: '18446744073709551622', last_24_hours: { blocks: 3, actions: 1, payments: 1, moved_micros: '18446744073709551615' }, days: undefined });
+  assert.deepEqual(figures.days.map((d) => [d.day, d.payments]), [['1970-01-11', 2], ['1970-01-12', 0], ['1970-01-13', 1], ['1970-01-14', 0]]);
+  assert.deepEqual(activityFigures(rows, { nowMs: (13 * day + 5) * 3600000, days: 2 }).days.map((d) => d.day), ['1970-01-13', '1970-01-14']);
+  assert.deepEqual(activityFigures([], { nowMs: 0 }), { blocks: 0, actions: 0, payments: 0, moved_micros: '0', last_24_hours: { blocks: 0, actions: 0, payments: 0, moved_micros: '0' }, days: [] });
+});
+
+test('the holders: only the network\'s own accounts are named, the others have neither name nor number', () => {
+  const rows = [{ id: '3', name: 'alice', balance: 50n, staked: 0n }, { id: '0', name: 'operator_0', balance: 10n, staked: 40n }, { id: '9', name: 'zero', balance: 0n, staked: 0n }, { id: '2', name: 'bob', balance: 70n, staked: 5n }];
+  const figures = holderFigures(rows, { named: new Set(['0']), top: 2 });
+  assert.deepEqual(figures, { holding: 3, held_micros: '175', top: [
+    { rank: 1, anonymous: true, account: null, name: null, balance_micros: '70', staked_micros: '5' },
+    // A tie is ordered by account number: operator_0 (0) before alice (3).
+    { rank: 2, anonymous: false, account: '0', name: 'operator_0', balance_micros: '10', staked_micros: '40' }] });
+  assert.equal(JSON.stringify(figures).includes('alice') || JSON.stringify(figures).includes('bob'), false);
+});
+
+test('GET /v1/stats: the proven counters, the index\'s counts, and the census of holders when the service makes one', async () => {
+  const pool = { owner: '0', pool_assets: '600', pool_shares: '300', self_bond: '1' };
+  const people = { 0: { id: '0', name: 'operator_0', balance: '11' }, 1: { id: '1', name: 'operator_1', balance: '0' }, 4: { id: '4', name: 'alice', balance: '1000' }, 5: { id: '5', name: 'faucet', balance: '7' }, 8: { id: '8', name: 'bob', balance: '0' } };
+  const asked = [];
+  await lab(async ({ service, state }) => {
+    state.readState = async (selection) => {
+      asked.push(selection);
+      if (state.stateDown) throw new Error('node behind');
+      return { verified: true, requested: selection, proof: { height: '3', entries: [] }, state: counters(5000n, {
+        accounts: (selection.ids ?? []).filter((id) => people[id]).map((id) => people[id]),
+        stake_owners: Object.fromEntries((selection.owners ?? []).filter((id) => id === '8' || id === '1').map((id) => [id, { owner: id, positions: [{ candidate: '0', shares: '100' }, { candidate: '7', shares: '5' }] }])),
+        candidates: Object.fromEntries((selection.candidates ?? []).filter((id) => id === '0').map((id) => [id, pool])) }) };
+    };
+    // Blocks of the fixture chain, and their actions: what the index counts.
+    await indexAll(service);
+    const actions = [1, 2, 3, 4].reduce((sum, h) => sum + (fixture.txs[h] ?? []).length, 0);
+    let answer = await call(service, '/v1/stats');
+    assert.equal(answer.status, 200);
+    assert.equal(answer.body.chain.source, 'state_proof');
+    assert.deepEqual([answer.body.chain.supply_micros, answer.body.chain.elapsed_micros, answer.body.chain.supply_equals_elapsed, answer.body.chain.accounts, answer.body.chain.validators], ['5000', '5000', true, '9', 3]);
+    assert.deepEqual([answer.body.activity.source, answer.body.activity.proven, answer.body.activity.blocks, answer.body.activity.actions], ['index', false, 4, actions]);
+    assert.equal(answer.body.activity.counted_from_height, '1');
+    assert.equal(answer.body.holders, null, 'no census: nothing is said of holders');
+    // The node behind: the index still answers, and says why the chain's part is missing.
+    state.stateDown = true; state.clock += 5000;
+    answer = await call(service, '/v1/stats');
+    assert.equal(answer.status, 200); assert.equal(answer.body.chain, null); assert.equal(answer.body.chain_unavailable, 'state_unavailable'); assert.equal(answer.body.activity.blocks, 4);
+    state.stateDown = false;
+    // The census: accounts 0 to 8 eight at a time with their stakes, the pools read first.
+    asked.length = 0;
+    await service.takeCensus();
+    assert.deepEqual(asked.map((s) => Object.keys(s).sort().join(',')), ['include_pos', 'candidates', 'ids,owners', 'ids,owners']);
+    assert.deepEqual(asked.slice(2).map((s) => s.ids), [['0', '1', '2', '3', '4', '5', '6', '7'], ['8']]);
+    state.clock += 5000;
+    answer = await call(service, '/v1/stats');
+    const holders = answer.body.holders;
+    assert.deepEqual([holders.source, holders.every_seconds, holders.accounts_read, holders.complete, holders.holding], ['state_proof', 300, 5, true, 5]);
+    // alice 1000; bob and operator_1 100 shares of a pool of 600 for 300 = 200 each (the unknown pool counts nothing);
+    // operator_0 11 on the account and its bond of 1; faucet 7 (fifth, below the top 4). Ties by account number.
+    assert.deepEqual(holders.top.map((h) => [h.rank, h.name, h.balance_micros, h.staked_micros]), [[1, null, '1000', '0'], [2, 'operator_1', '0', '200'], [3, null, '0', '200'], [4, 'operator_0', '11', '1']]);
+    assert.equal(holders.held_micros, '1419');
+    assert.equal(JSON.stringify(holders).includes('alice') || JSON.stringify(holders).includes('bob'), false, 'a person\'s name never leaves the service');
+    // The index's counts are kept up block by block: the four blocks of the chain.
+    assert.equal(service.store.hours().reduce((sum, row) => sum + row.blocks, 0), 4);
+  }, { census: { everyMs: 300000, maxAccounts: 2000, named: ['0', '1', '5'], top: 4, pauseMs: 0 } });
+});
+
+test('an index written before the counts per hour is counted once when it opens, and the same as one kept up block by block', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'time-api-hours-'));
+  let store = null;
+  try {
+    const filename = path.join(directory, 'index.sqlite'), open = () => openIndex({ filename, networkId: NETWORK, chainId: CHAIN });
+    store = open();
+    const blocks = [[signedAction(3, { to: '8', amount: '7' })], [], [signedAction(3, { to: '8', amount: '9' }, { nonce: '2' }), signedAction(3, { to: '9', amount: '18446744073709551615' }, { nonce: '3' })]];
+    blocks.forEach((raws, i) => {
+      const height = i + 1, actions = raws.map((raw, idx) => ({ ...describeAction(raw, NETWORK), hash: sha(raw).toString('hex').toUpperCase(), raw, idx }));
+      store.writeBlock({ previousChecked: height > 1, events: [], actions, block: { height, hash: sha(Buffer.from(`b${height}`)).toString('hex'), previous_hash: height > 1 ? sha(Buffer.from(`b${height - 1}`)).toString('hex') : '',
+        time_micros: 1000 * H + (height === 3 ? H : 0) + height, time: 'x', proposer: 'AA'.repeat(20), app_hash: 'BB'.repeat(32), data_hash: 'CC'.repeat(32) } });
+    });
+    const kept = store.hours();
+    assert.deepEqual(kept, [{ hour: 1000, blocks: 2, actions: 1, payments: 1, moved_micros: '7' }, { hour: 1001, blocks: 1, actions: 2, payments: 2, moved_micros: '18446744073709551624' }]);
+    store.close();
+    const raw = (sql) => { const db = new DatabaseSync(filename); db.exec(sql); db.close(); };
+    // As an index of before: no counts, and no mark that they were made.
+    raw("DELETE FROM hourly; DELETE FROM meta WHERE key = 'hourly_through'");
+    store = open();
+    assert.deepEqual(store.hours(), kept);
+    store.close();
+    // Opened again: not counted a second time.
+    store = open(); assert.deepEqual(store.hours(), kept); store.close();
+    // Blocks 2 and 3 written by an older program that kept no counts: the mark stayed at 1 and the counts hold block 1
+    // only. They are added when the index opens, and nothing is counted twice.
+    raw("UPDATE meta SET value = '1' WHERE key = 'hourly_through'; DELETE FROM hourly; INSERT INTO hourly VALUES (1000, 1, 1, 1, '7')");
+    store = open(); assert.deepEqual(store.hours(), kept); store.close();
+    store = open(); assert.deepEqual(store.hours(), kept);
+  } finally { store?.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5 }); }
+});
+
+test('the API\'s config: stats_census is checked and off unless set', () => {
+  const base = { rpc_url: 'http://127.0.0.1:26657/', trust: fixture.trust, data_directory: path.resolve(os.tmpdir(), 'time-api-config') };
+  assert.equal(Object.hasOwn(validateConfig(base), 'stats_census'), false);
+  assert.deepEqual(validateConfig({ ...base, stats_census: { named_accounts: ['0', '66', '0'] } }).stats_census, { every_seconds: 300, max_accounts: 2000, named_accounts: ['0', '66'], top: 20 });
+  for (const bad of [{ every_seconds: 10 }, { max_accounts: 0 }, { named_accounts: ['01'] }, { named_accounts: 'x' }, { top: 101 }, { other: 1 }, null, []])
+    assert.throws(() => validateConfig({ ...base, stats_census: bad }), /stats_census/, JSON.stringify(bad));
 });

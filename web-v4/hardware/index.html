@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Time Watch: an open design for a watch that holds seconds of the Time currency and pays by touch. The parts, the secure chips, the fingerprint sensor, a demonstration, and the plan for watch makers.">
+  <title>Time Watch: an open hardware design</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <p class="strip"><strong>Design draft 0.1.</strong> No watch has been built or tested. Nothing here is for sale.</p>
+  <nav class="top" aria-label="On this page">
+    <a class="brand" href="#top"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time <span class="soft">Hardware</span></a>
+    <ul>
+      <li><a href="#demo">Demo</a></li>
+      <li><a href="#inside">Inside</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#paying">Paying</a></li>
+      <li><a href="#makers">Makers</a></li>
+      <li><a href="#status">Status</a></li>
+    </ul>
+  </nav>
+  <main id="top">
+    <header class="hero">
+      <div class="hero-text">
+        <h1>Time Watch</h1>
+        <p class="lede">An open design for a watch that holds seconds and pays by touch. It has no buttons: a glass, a fingerprint sensor and two secure chips. Any watch maker may build it.</p>
+        <ul class="points">
+          <li>Shows the time, for weeks on one charge.</li>
+          <li>Pays another watch, a phone or a shop when the two touch.</li>
+          <li>Works when the watch itself is offline.</li>
+          <li>Keeps its key in a chip that never gives it out.</li>
+        </ul>
+        <p class="actions"><a class="button" href="#demo">Try a payment</a><a class="button secondary" href="#inside">Open the watch</a></p>
+      </div>
+      <figure class="stage">
+        <canvas id="hero-scene" class="scene" tabindex="0" role="img" aria-label="A round watch with a dark strap, drawn in three dimensions. Its screen shows the time now and a balance of 842 seconds. A flat fingerprint pad sits on its right side."></canvas>
+        <figcaption>
+          <span class="soft small" id="hero-hint">Drag to turn it, or use the arrow keys.</span>
+          <span class="views" role="group" aria-label="View">
+            <button type="button" class="chip" data-view="angle" aria-pressed="true">Angle</button>
+            <button type="button" class="chip" data-view="front" aria-pressed="false">Front</button>
+            <button type="button" class="chip" data-view="side" aria-pressed="false">Side</button>
+            <button type="button" class="chip" data-view="back" aria-pressed="false">Back</button>
+          </span>
+        </figcaption>
+      </figure>
+    </header>
+    <noscript><p class="problem">The drawings and the demonstration on this page need JavaScript. Everything else is written out below.</p></noscript>
+
+    <section class="part" id="demo" aria-labelledby="demo-title">
+      <h2 id="demo-title">Try a payment</h2>
+      <p class="intro">You are @sam. Your watch is offline. Give some seconds to @anna, whose watch has a connection.</p>
+      <div class="demo">
+        <figure class="stage wide">
+          <canvas id="demo-scene" class="scene" tabindex="0" role="img" aria-label="Two watches side by side: yours on the left, @anna's on the right. What they show is written under them."></canvas>
+          <figcaption class="names"><span>Your watch, @sam</span><span>@anna's watch</span></figcaption>
+        </figure>
+        <div class="panel">
+          <p id="demo-story" class="story" role="status" aria-live="polite">Your watch is offline and holds 842 s. @anna's watch has a connection through her phone.</p>
+          <p id="demo-note" class="note" role="status" hidden></p>
+          <div class="controls" id="controls-idle">
+            <button type="button" class="button" id="demo-give">Give seconds</button>
+          </div>
+          <div class="controls" id="controls-amount" hidden>
+            <div class="stepper" role="group" aria-label="Amount">
+              <button type="button" class="round" id="demo-minus" aria-label="Less">&minus;</button>
+              <output id="demo-amount" class="amount" aria-live="polite">90 s</output>
+              <button type="button" class="round" id="demo-plus" aria-label="More">+</button>
+            </div>
+            <div class="units" role="group" aria-label="Each step is">
+              <button type="button" class="chip" data-unit="0" aria-pressed="false">1 ms</button>
+              <button type="button" class="chip" data-unit="1" aria-pressed="true">1 s</button>
+              <button type="button" class="chip" data-unit="2" aria-pressed="false">1 min</button>
+            </div>
+            <button type="button" class="button" id="demo-touch">Touch the watches</button>
+            <button type="button" class="button secondary" data-act="cancel">Cancel</button>
+          </div>
+          <div class="controls" id="controls-review" hidden>
+            <dl class="review" id="demo-review">
+              <dt>To</dt><dd id="review-to">@anna</dd>
+              <dt>Amount</dt><dd id="review-amount">90 s</dd>
+              <dt>Fee</dt><dd id="review-fee">1 ms</dd>
+              <dt>Total</dt><dd id="review-total">90.001 s</dd>
+              <dt>Carried by</dt><dd id="review-carrier">@anna's watch</dd>
+            </dl>
+            <p class="soft small">Final once sent. This is what your watch shows before it signs.</p>
+            <button type="button" class="button" id="demo-hold">Rest your finger on the sensor</button>
+            <p class="soft small" id="hold-hint">Press and hold until the ring closes.</p>
+            <button type="button" class="button secondary" id="demo-pin">Use the PIN instead</button>
+            <button type="button" class="button secondary" data-act="cancel">Cancel</button>
+          </div>
+          <div class="controls" id="controls-blocked" hidden>
+            <button type="button" class="button secondary" data-act="cancel">Back</button>
+          </div>
+          <div class="controls" id="controls-done" hidden>
+            <button type="button" class="button" id="demo-again">Start again</button>
+          </div>
+          <fieldset class="switches">
+            <legend>Who has a connection</legend>
+            <label><input type="checkbox" id="you-online"> Your watch, through your phone</label>
+            <label><input type="checkbox" id="other-online" checked> @anna's watch, through her phone</label>
+          </fieldset>
+          <p class="soft small">A demonstration with example names and amounts. Nothing is sent anywhere and no key is used.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="features" aria-labelledby="features-title">
+      <h2 id="features-title">What it does</h2>
+      <ul class="grid">
+        <li><h3>A watch first</h3><p>The time and the date, always on, readable in sunlight. The same screen shows your seconds.</p></li>
+        <li><h3>Three gestures</h3><p>Turn a finger around the edge to set an amount. Bring two watches together. Rest a finger on the sensor to approve.</p></li>
+        <li><h3>Seconds and milliseconds</h3><p>Plus and minus are the two halves of the glass. One step is a millisecond, a second or a minute.</p></li>
+        <li><h3>You read before you sign</h3><p>After the touch the watch shows who receives, the amount, the fee and the total. Only then does a finger or the PIN send it.</p></li>
+        <li><h3>A pocket, not a vault</h3><p>The watch may spend a set amount a day, 600 seconds unless you change it. Your seconds stay on the network, so a lost watch loses nothing: you remove it from your account.</p></li>
+        <li><h3>Locks off the wrist</h3><p>Finger or PIN once when you put it on. It locks by itself when it leaves your wrist.</p></li>
+        <li><h3>Offline on your side</h3><p>The watch signs with no connection. The other side carries the signed payment to the network.</p></li>
+        <li><h3>Upgradable</h3><p>New firmware arrives through a phone. The watch accepts it only if it is signed by several keys and is newer than what it runs, and it asks you first.</p></li>
+      </ul>
+    </section>
+
+    <section class="part" id="inside" aria-labelledby="inside-title">
+      <h2 id="inside-title">Inside the watch</h2>
+      <p class="intro">Nine groups of parts. Open the watch, then choose a number.</p>
+      <div class="inside">
+        <figure class="stage tall">
+          <canvas id="inside-scene" class="scene" tabindex="0" role="img" aria-label="The watch taken apart along its axis: glass, screen, antenna coil, case with strap and fingerprint pad, board with its chips, battery and back. Each group carries the number it has in the list beside it."></canvas>
+          <figcaption>
+            <button type="button" class="button" id="open-toggle" aria-pressed="false">Open the watch</button>
+            <span class="soft small">Drag to turn it.</span>
+          </figcaption>
+        </figure>
+        <ol class="parts" id="parts">
+          <li><button type="button" class="part-name" data-group="glass" aria-pressed="false">Glass with a touch layer</button>
+            <p>Hardened glass over the whole face, with the touch layer under it. There is no button anywhere on the case. The touch layer is wired to the secure processor, never to a radio chip.</p></li>
+          <li><button type="button" class="part-name" data-group="display" aria-pressed="false">Screen</button>
+            <p>A round reflective screen of about 1.2 inches that keeps its picture without power, the kind sports watches use to run for weeks. Black and white, always on, lit by daylight. Only the secure processor can draw on it.</p></li>
+          <li><button type="button" class="part-name" data-group="antenna" aria-pressed="false">Touch antenna</button>
+            <p>A flat coil around the screen, for the short-range radio that bank cards use (NFC, 13.56 MHz). It lets a phone or a shop's reader read the watch, and lets the watch read another watch. Two small coils reading each other is the first thing to measure on a bench: it is the main technical risk of this design.</p></li>
+          <li><button type="button" class="part-name" data-group="case" aria-pressed="false">Case and strap</button>
+            <p>42 mm across, about 11 mm thick, sealed, with a 20 mm strap on standard bars. Aluminium or steel. This is the part each maker designs for itself.</p></li>
+          <li><button type="button" class="part-name" data-group="finger" aria-pressed="false">Fingerprint sensor</button>
+            <p>A flat pad on the side, where a crown would be. The finger is compared inside the sensor's own secure processor: no picture of it is kept and nothing about it leaves the watch. A fingerprint is not a secret, so a finger alone approves only within the day's limit, and the PIN always works in its place.</p>
+            <p class="soft">Other choice: a sensor under the glass, as on phones. It needs a different kind of screen, which by our estimate empties the battery in about a week.</p></li>
+          <li><button type="button" class="part-name" data-group="processor" aria-pressed="false">Secure processor</button>
+            <p>A small low-power processor that runs the open firmware. It is the only chip wired to the screen, the touch layer and the fingerprint sensor. What you read and what you approve cannot be changed from the radio side.</p></li>
+          <li><button type="button" class="part-name" data-group="secure" aria-pressed="false">Two secure chips</button>
+            <p>Two tamper-resistant chips from two different makers: the aim is that a hidden fault in one of them is not enough. The key is made inside a chip and never leaves it. The chips count wrong PIN tries themselves. They sign with Ed25519, the signature Time uses, so the network needs no special rule for a watch.</p>
+            <p class="soft">Parts that fit today: TROPIC01, whose design is open to audit, and a certified chip such as those of NXP's EdgeLock SE05x family.</p></li>
+          <li><button type="button" class="part-name" data-group="radio" aria-pressed="false">Radios</button>
+            <p>NFC for the touch and Bluetooth for the link with a phone: updates, the clock, the balance. No Wi-Fi and no mobile data. The radio chips sit on the other side of one narrow link. They pass signed messages and may ask for a signature. They cannot see a key, draw on the screen or read the glass.</p>
+            <p class="soft">Parts that fit today: a Bluetooth chip of the class of Nordic's nRF54L15, and an NFC chip that can both read and be read, of the class of ST's ST25R3916B.</p></li>
+          <li><button type="button" class="part-name" data-group="power" aria-pressed="false">Battery, motor and back</button>
+            <p>A battery of about 200 mAh. A motor that taps the wrist when a payment is sent or received. A sensor in the back that feels the skin, so the watch locks when it leaves the wrist. Two contacts for charging. With no button, the watch restarts when it is put on its charger.</p></li>
+        </ol>
+      </div>
+      <p class="soft small">The parts named are examples that meet the need today. No company named on this page is a partner of this project or has reviewed this design.</p>
+    </section>
+
+    <section class="part" id="security" aria-labelledby="security-title">
+      <h2 id="security-title">How the key is kept</h2>
+      <p class="intro">The watch is built as two sides with one narrow link between them.</p>
+      <div class="sides" role="img" aria-label="Two sides. The secure side holds the secure processor, the two secure chips, the screen, the touch glass and the fingerprint sensor. The radio side holds Bluetooth and NFC. One narrow link joins them: it carries requests and signed messages only.">
+        <div class="side secure" aria-hidden="true">
+          <h3>Secure side</h3>
+          <ul class="boxes"><li>Screen</li><li>Touch glass</li><li>Fingerprint sensor</li><li class="strong">Secure processor</li><li class="strong">Secure chip 1</li><li class="strong">Secure chip 2</li></ul>
+          <p class="soft small">Open firmware. Holds the key. Shows and asks.</p>
+        </div>
+        <div class="link" aria-hidden="true"><span>one narrow link</span><span class="soft small">requests in, signed messages out</span></div>
+        <div class="side radio" aria-hidden="true">
+          <h3>Radio side</h3>
+          <ul class="boxes"><li>Bluetooth</li><li>NFC</li></ul>
+          <p class="soft small">Treated as hostile. Carries, never decides.</p>
+        </div>
+      </div>
+      <div class="two">
+        <div>
+          <h3>The rules of the design</h3>
+          <ul class="rules">
+            <li>The key is made inside a secure chip and cannot be read out, by anyone, with any tool the firmware offers.</li>
+            <li>The chips count wrong PIN tries and lock themselves. The count cannot be reset from outside.</li>
+            <li>The fingerprint is compared inside the watch and never stored as a picture.</li>
+            <li>Every payment ends with the finger or the PIN, after the watch has shown who receives and how much. A swipe never sends.</li>
+            <li>The firmware is open, built so that anyone gets the same bytes from the same source, signed by several keys, and never replaced by an older one.</li>
+            <li>Each watch can prove which maker built it and which firmware it runs.</li>
+            <li>An independent laboratory attacks the watch before any maker sells it, and its report is published.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>If the watch is stolen</h3>
+          <ul class="rules">
+            <li>It is locked: it left your wrist.</li>
+            <li>The thief needs your finger or your PIN, and the chips allow few tries.</li>
+            <li>At worst the watch can spend its day's limit. The rest of your account needs keys the watch does not hold.</li>
+            <li>From your wallet you remove the watch from your account. Your seconds were never in it.</li>
+          </ul>
+          <h3>What it does not protect</h3>
+          <ul class="rules">
+            <li>Someone who forces you to approve.</li>
+            <li>A payment you approve to the wrong person: it is final.</li>
+            <li>A watch from a maker who did not follow the design. Check the maker and the model.</li>
+            <li>Anything at all, today: this is a draft that no laboratory has examined.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="part" id="paying" aria-labelledby="paying-title">
+      <h2 id="paying-title">Paying, online and offline</h2>
+      <ol class="cases">
+        <li>
+          <h3>One side has a connection <span class="tag">first version</span></h3>
+          <p>Either side will do. Your watch signs; the side that has a connection carries the payment to the network and both watches show the result. Nobody has to trust the other's watch: the network checks the signature and the balance.</p>
+        </li>
+        <li>
+          <h3>Watch to a phone with no wallet <span class="tag later">needs a new rule</span></h3>
+          <p>Your watch hands the phone a link by touch. The seconds wait on the network for whoever opens the link first, and come back to you if nobody does. The network has no such rule yet.</p>
+        </li>
+        <li>
+          <h3>Both sides offline <span class="tag later">later, small amounts</span></h3>
+          <p>Seconds are set aside on the network and the chip in the watch counts them down. Here only the chip stands in the way of spending twice: a person who breaks open their own chip could pay several people with the same seconds, each up to the limit. So the limit is small, and this comes after the rest.</p>
+        </li>
+      </ol>
+      <p class="soft">What works with the network's rules of today: a watch as one more key of an account, under the account's daily limit. A limit of its own for the watch, the link for a phone and paying with both sides offline each need a rule the network does not have yet.</p>
+    </section>
+
+    <section class="part" id="specs" aria-labelledby="specs-title">
+      <h2 id="specs-title">Targets</h2>
+      <p class="intro">What the design aims at. None of it is measured: no prototype exists.</p>
+      <dl class="specs">
+        <dt>Case</dt><dd>42 mm round, about 11 mm thick, 20 mm strap, sealed</dd>
+        <dt>Screen</dt><dd>About 1.2 inches, round, reflective, always on, black and white</dd>
+        <dt>Controls</dt><dd>Touch glass and fingerprint pad. No buttons</dd>
+        <dt>Approval</dt><dd>Fingerprint, or a PIN typed on the glass</dd>
+        <dt>Key</dt><dd>Ed25519, made and kept in a secure chip</dd>
+        <dt>Radios</dt><dd>NFC (ISO/IEC 14443, reads and is read), Bluetooth Low Energy</dd>
+        <dt>Battery</dt><dd>About 200 mAh. Two to four weeks between charges</dd>
+        <dt>Amounts</dt><dd>Steps of 1 ms, 1 s or 1 min. Fee of the network: 1 ms</dd>
+        <dt>Limit</dt><dd>600 s a day unless the owner changes it</dd>
+        <dt>Firmware</dt><dd>Open source, reproducible, signed by several keys</dd>
+        <dt>Parts, per watch</dt><dd>About 70 to 80 US dollars at 5,000 to 10,000 watches. Our estimate from list prices, not a maker's quotation</dd>
+      </dl>
+    </section>
+
+    <section class="part" id="makers" aria-labelledby="makers-title">
+      <h2 id="makers-title">For watch makers</h2>
+      <p class="intro">The aim: any maker can build a watch that holds and pays seconds, without asking anyone and without paying anyone.</p>
+      <h3>Three ways to build one</h3>
+      <ol class="ways">
+        <li>
+          <h4>The whole watch</h4>
+          <p>Built from the reference design: its board, its parts list and its firmware, in a case of your own.</p>
+          <p class="soft small">Security: the full design.</p>
+        </li>
+        <li>
+          <h4>The module in your digital watch</h4>
+          <p>The secure side as one module: processor, two secure chips, fingerprint sensor. While a payment is on the screen, the module drives your screen and your touch layer and your own software waits.</p>
+          <p class="soft small">Security: the same, checked for each model.</p>
+        </li>
+        <li>
+          <h4>A chip in a classic watch</h4>
+          <p>A secure chip and a coil under the dial or in the strap, with no battery: the reader powers it, as with a bank card. Hands and movement stay as they are.</p>
+          <p class="soft small">Security: the key is as safe, but the wearer reads the amount on the other device, not on the watch. So it pays small amounts only.</p>
+        </li>
+      </ol>
+      <div class="two">
+        <div>
+          <h3>What will be open</h3>
+          <ul class="rules">
+            <li><strong>The touch specification:</strong> what two devices say to each other, byte for byte.</li>
+            <li><strong>The firmware of the secure side,</strong> under the Apache 2.0 licence, like the rest of Time.</li>
+            <li><strong>The reference board:</strong> drawings, layout and parts list, under the CERN Open Hardware Licence, permissive version.</li>
+            <li><strong>The tests</strong> a watch must pass, run against the public test network.</li>
+            <li><strong>The screens:</strong> what a watch must show before it signs.</li>
+          </ul>
+          <p class="soft">Both licences let you build, change and sell without a fee and without permission.</p>
+        </div>
+        <div>
+          <h3>What stays yours</h3>
+          <ul class="rules">
+            <li>The case, the strap, the name and the price.</li>
+            <li>The factory, and the key that marks each watch as yours.</li>
+            <li>The approvals each country asks of a radio product. You are the maker in law. This project sells no watch.</li>
+          </ul>
+          <h3>How a watch is recognised</h3>
+          <p>At the factory, your maker's key signs the key of each watch. Makers' keys are kept in an open list beside the source. A wallet can then show who built a watch and which model it is.</p>
+          <p class="soft">An ordinary payment does not rest on this: to the network, a watch is a key with a limit. It matters for paying with both sides offline, where the chip is trusted.</p>
+        </div>
+      </div>
+      <h3>To say a watch follows this design</h3>
+      <ol class="steps">
+        <li>It passes the public tests on the test network.</li>
+        <li>Its secure side runs the open firmware, or its changes are published.</li>
+        <li>An independent laboratory has attacked it, and the report is public.</li>
+        <li>Its maker's key is in the open list.</li>
+      </ol>
+      <p class="actions"><a class="button secondary" href="https://github.com/thetimenetwork/time" rel="noopener noreferrer">The source of Time</a><a class="button secondary" href="https://thetimenetwork.org" rel="noopener noreferrer">The Time network</a></p>
+    </section>
+
+    <section class="part" id="status" aria-labelledby="status-title">
+      <h2 id="status-title">Where this stands</h2>
+      <p class="intro">Draft of 27 November 2026.</p>
+      <div class="two">
+        <div>
+          <h3>Exists</h3>
+          <ul class="rules">
+            <li>This design draft and the demonstration on this page.</li>
+            <li>The Time test network and its open source, where a watch would be one more key of an account.</li>
+          </ul>
+          <h3>Does not exist yet</h3>
+          <ul class="rules">
+            <li>Any watch, board or prototype.</li>
+            <li>The firmware and the touch specification.</li>
+            <li>A measurement of two small antennas reading each other, or of the battery.</li>
+            <li>A laboratory's examination.</li>
+            <li>The network rules named under Paying.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>The order of work</h3>
+          <ol class="steps">
+            <li>The touch specification, reviewed in the open.</li>
+            <li>A bench prototype on development boards: the touch, finger to chip to a signed payment on the test network, the battery draw.</li>
+            <li>A few watches that can be worn, with the real chips.</li>
+            <li>The laboratory, then the first maker.</li>
+          </ol>
+          <h3>Still open</h3>
+          <ul class="rules">
+            <li>How the two secure chips share the work, so that breaking one is not enough.</li>
+            <li>The sensor on the side or under the glass.</li>
+            <li>How two watches pay each other when both phones are out of reach.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer>Time Watch, design draft 0.1. A design, not a product. Time is a currency whose unit is the second: <a href="https://thetimenetwork.org" rel="noopener noreferrer">thetimenetwork.org</a>.</footer>
+  </main>
+</body>
+</html>

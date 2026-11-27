@@ -9,6 +9,16 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 27 November 2026, second publication of the day: the hardware pages
+
+A new site of pages, `web-v4/hardware`: the design of the Time Watch, a watch that holds seconds and pays by touch. It is a **design draft**: no watch has been built or tested, and the page says so on every screen. Nothing in it changes the wallet, the services or the chain.
+
+- **The watch, drawn in three dimensions** (`engine.js`, `watch.js`). A small drawing engine of its own, with no library: every part is a flat outline pushed along an axis, drawn as fine lines on a canvas in the two colours of the page. The watch can be turned, and opened into its nine groups of parts, numbered as in the list beside it.
+- **A demonstration of a payment** between two watches: an amount set on the glass or with the buttons, the touch, the review (who receives, the amount, the fee, the total, who carries it to the network), and a finger held on the sensor or the PIN. With both watches offline it refuses and says why. Example names and amounts; nothing is sent and no key is used.
+- **What the page documents**: the parts and what each is wired to, the two sides of the design (the secure side holds the key, the screen and the glass; the radio side carries and never decides), what a thief can and cannot do, paying with one side or both sides offline, the targets, and the plan for watch makers: three ways to build one, what will be open and under which licences, and what a maker must show before saying a watch follows the design.
+- **What it says is missing**: any prototype, the firmware, the touch specification, a laboratory's examination, and three rules the network does not have yet (a limit of its own for a watch, a payment a phone without a wallet can collect, paying with both sides offline).
+- Tests: `client-v4/hardware-page.test.mjs` (the order in which parts are drawn, the payment of the demonstration and its limits, and that the pages hold no inline code or style, fetch nothing and store nothing). Looked at in Chrome at five sizes, light and dark, with real clicks, drags and a held press. Not yet run on real devices.
+
 ## 27 November 2026: Time Chat security update
 
 Time Chat now checks that an ordinary wallet sign-in belongs to the chosen relay. The installed client binds sessions to the browser origin. Opening or sending in a conversation checks the participants' Time identities and pinned chat keys. Update an installed client before signing in. See `apps/time-chat/README.md` for the privacy model and operating limits.

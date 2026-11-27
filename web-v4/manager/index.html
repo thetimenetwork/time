@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Time password vault</title>
+  <link rel="stylesheet" href="/manager.css">
+  <script defer src="/vendor/argon2-4.12.0.umd.min.js"></script>
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <main>
+    <header><span class="mark" aria-hidden="true">T</span> Time password vault</header>
+    <h1 id="title">Saved accounts</h1>
+    <p id="intro">Your device and your master passphrase unlock one password at a time.</p>
+    <p id="context" hidden></p>
+    <section id="home" hidden>
+      <label for="accounts">Account</label><select id="accounts"></select>
+      <label for="purpose">What do you need?</label><select id="purpose">
+        <option value="signin">Sign-in password</option><option value="spend">Payment password</option>
+        <option value="recover">Offline recovery words</option>
+      </select>
+      <button id="choose">Continue</button>
+      <button id="update" class="secondary">Update after a wallet key change</button>
+    </section>
+    <form id="unlock" hidden autocomplete="off">
+      <div id="replacement-field" hidden>
+        <label id="replacement-label" for="replacement">New password from the wallet</label>
+        <input id="replacement" type="password" maxlength="2048" autocomplete="one-time-code" spellcheck="false" autocapitalize="none" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore>
+      </div>
+      <label id="master-label" for="master">Master passphrase</label>
+      <input id="master" type="password" minlength="15" maxlength="2048" required autocomplete="off" spellcheck="false" autocapitalize="none" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore>
+      <div id="generator-controls" hidden>
+        <div class="generator-actions">
+          <button id="generate-master" class="secondary" type="button">Generate strong passphrase</button>
+          <button id="toggle-generated" class="secondary" type="button" aria-controls="generated-value" aria-expanded="false" hidden>Show passphrase</button>
+        </div>
+        <p id="generated-value" class="secret" dir="ltr" hidden></p>
+      </div>
+      <p class="hint" id="hint"></p>
+      <button id="approve" type="submit">Unlock</button>
+    </form>
+    <section id="paper" hidden>
+      <p>Write these five words in order on paper, together with your account name. Keep the paper somewhere private. Anyone who has it can request recovery.</p>
+      <output id="words" class="secret"></output>
+      <button id="saved">I wrote them down</button>
+    </section>
+    <section id="display" hidden>
+      <output id="value" class="secret"></output>
+      <button id="hide">Hide and lock</button>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+    <button type="button" id="cancel" class="secondary" hidden>Cancel</button>
+  </main>
+</body>
+</html>

@@ -24,7 +24,7 @@ export const STATIC_TEXT = Object.freeze({
   'skip-link': 'page.skip', 'brand': 'page.brand', 'network-warning': 'page.warning', 'nav-home': 'page.home', 'nav-validators': 'page.validators', 'search-label': 'page.searchLabel', 'search-button': 'page.searchButton',
   'toggle-exact': 'page.exact', 'toggle-utc': 'page.utc', 'legend-title': 'page.legend', 'legend-index': 'page.legendIndex', 'legend-checked': 'page.legendChecked', 'legend-unchecked': 'page.legendUnchecked', 'legend-quoted': 'page.legendQuoted', 'trust-title': 'trust.title', 'boot-note': 'page.boot',
 });
-const FEES = new Map([['none', 'fee.none'], ['network_fee', 'fee.network'], ['at_most_network_fee', 'fee.atMost']]);
+const FEES = new Map([['none', 'fee.none'], ['network_fee', 'fee.network'], ['at_most_network_fee', 'fee.atMost'], ['market_fee', 'fee.market']]);
 const CHECK_REASONS = ['refused', 'silent', 'no_trust', 'wrong_network', 'no_verifier', 'trust_expired', 'clock', 'unavailable', 'behind', 'too_new', 'not_kept', 'upgrade_required', 'network_reset'];
 /// A whole number small enough to stand in one of the page's own sentences.
 const smallCount = (value, max) => Number.isSafeInteger(value) && value >= 0 && value <= max;
@@ -341,7 +341,7 @@ export function createExplorer({ document, window, api, checker, live = null, t,
     const made = timeOfIso(action.time);
     return [
       ['action.time', made === null ? missing() : [timeNode(made), ' (', agoNode(made), ')']],
-      ['action.fee', [h('span', { text: t(FEES.get(action.fee_rule) ?? 'fee.unknown') }), isMicros(action.fee_micros) && action.fee_rule === 'network_fee' ? [': ', amountNode(action.fee_micros)] : null]],
+      ['action.fee', [h('span', { text: t(FEES.get(action.fee_rule) ?? 'fee.unknown') }), isMicros(action.fee_micros) && (action.fee_rule === 'network_fee' || action.fee_rule === 'market_fee') ? [': ', amountNode(action.fee_micros)] : null]],
       ['action.results', h('span', { text: t(action.results_checked === true ? 'action.resultsYes' : 'action.resultsNo') })],
     ];
   }
@@ -654,10 +654,13 @@ export function createExplorer({ document, window, api, checker, live = null, t,
         h('li', {}, join ? [h('p', { text: t('validators.step2') }), h('pre', { class: 'commands', attrs: { 'aria-label': t('validators.commandsLabel') }, text: t('validators.commands', { script: join.script_url }) })] : t('validators.step2General')),
         h('li', { text: t('validators.step3') }), h('li', { text: t('validators.step4') })),
       h('h3', { text: t('validators.scriptTitle') }),
-      h('ul', {}, ['validators.script1', 'validators.script2', 'validators.script3', 'validators.script4', 'validators.script5'].map((key) => h('li', { text: t(key) })),
+      h('ul', {}, ['validators.script1', 'validators.script2', 'validators.script3', 'validators.script4', 'validators.script5', 'validators.script7'].map((key) => h('li', { text: t(key) })),
         h('li', {}, fill('validators.script6', { status: code(t('validators.statusCommand')), uninstall: code(t('validators.uninstallCommand')) }))),
       join ? [h('h3', { text: t('validators.filesTitle') }), facts([
         ['validators.fileScript', h('a', { outside: join.script_url, text: join.script_url })],
+        ...(join.script_sha256 ? [['validators.fileScriptHash', hexNode(join.script_sha256)]] : []),
+        ...(join.source_url ? [['validators.fileSource', code(join.source_url)]] : []),
+        ...(join.release_key ? [['validators.fileRelease', hexNode(join.release_key)]] : []),
         ['validators.fileChain', code(join.chain_id)],
         ['validators.fileNode', hexNode(join.files.node_sha256)],
         ['validators.fileCometbft', hexNode(join.files.cometbft_sha256)],

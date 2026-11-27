@@ -415,6 +415,66 @@ details.trust > summary { font-weight: 500; color: var(--soft); }
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
+/* The market of seconds against bitcoin (market-ui.mjs). Flat, like every screen: sections apart by space and thin lines.
+   An address is never shortened: it wraps, in groups of four, in the font that tells 1 from l. An amount to pay is the
+   largest thing on its screen, with its unit. No state is told by colour alone: every tag is a word. */
+.holding + .holding { margin-top: var(--s2); }
+#market-back { margin-bottom: var(--s2); }
+#market-view h2 { margin-top: var(--s3); }
+#market-view-title:focus-visible { outline: 2px dotted var(--soft); outline-offset: 4px; }
+.market-pay .eyebrow { margin-top: var(--s4); }
+.market-pay .eyebrow:first-child { margin-top: 0; }
+.market-address { margin: var(--s2) 0; padding: var(--s3) var(--s4); border: 1px solid var(--edge); border-radius: var(--radius-field); background: var(--surface); font-family: var(--mono); font-size: 1.0625rem; font-weight: 600; line-height: 1.7; word-spacing: .35em; overflow-wrap: anywhere; user-select: all; }
+.market-address-row { padding: var(--s3) 0 var(--s4); border-top: 1px solid var(--line); }
+.market-address-row .button-row { margin-top: var(--s2); }
+.market-address-row button, .market-list button { min-height: 2.75rem; padding: .375rem var(--s4); font-size: .875rem; }
+.market-list { margin: var(--s4) 0; }
+.tag.market-free { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.tag.market-used { background: var(--surface); color: var(--soft); border-style: dashed; }
+.tag.market-listed, .tag.market-in_use { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.market-facts { display: grid; grid-template-columns: minmax(6.5rem, max-content) minmax(0, 1fr); gap: 0 var(--s4); margin: var(--s4) 0; }
+.market-facts dt { padding: var(--s2) 0; border-top: 1px solid var(--line); font-size: .875rem; color: var(--soft); }
+.market-facts dd { margin: 0; padding: var(--s2) 0; border-top: 1px solid var(--line); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.market-facts dt:first-of-type, .market-facts dd:first-of-type { border-top: 0; }
+@media (max-width: 22.5rem) { .market-facts { grid-template-columns: minmax(0, 1fr); } .market-facts dd { padding-top: 0; border-top: 0; } }
+.market-warnings li { margin: var(--s2) 0; }
+.market-amount { margin: var(--s2) 0 0; font-size: 2rem; font-weight: 800; line-height: 1.15; letter-spacing: -.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.market-amount small { display: block; margin-top: var(--s1); font-size: 1rem; font-weight: 600; color: var(--soft); letter-spacing: 0; }
+.market-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: var(--s3) 0; font-weight: 700; }
+.market-pay { margin: var(--s4) 0; padding: var(--s4); border: 1px solid var(--line); border-radius: var(--radius-sheet); }
+.market-terms { margin: var(--s4) 0; }
+.market-terms > summary { min-height: 2.75rem; display: flex; align-items: center; font-weight: 600; cursor: pointer; }
+.market-check { display: flex; align-items: flex-start; gap: var(--s3); margin: var(--s2) 0; padding: var(--s3) 0; border-top: 1px solid var(--line); font-weight: 400; }
+.market-check input { flex: none; margin-top: .25rem; }
+.market-check .market-address { margin: 0; flex: 1 1 auto; min-width: 0; }
+#market-payment-wrap { margin-top: var(--s4); }
+/* The traders' view (market-trade-ui.mjs): tables of numbers, right-aligned and tabular; the depth as a bar with its
+   number beside it; a candle chart drawn in the text colour, hollow for a candle that closed at or above its open and
+   filled for one that closed below, so that it reads without colour. */
+.market-trade section { margin: var(--s5) 0; padding-top: var(--s4); border-top: 1px solid var(--line); }
+.market-trade h4 { margin: var(--s3) 0 var(--s1); font-size: .9375rem; }
+.market-sides, .market-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 var(--s6); }
+@media (min-width: 64rem) { .market-sides, .market-two { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workspace-panel:has(.market-trade) { max-width: 76rem; } }
+.market-two > section { min-width: 0; }
+.market-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .9375rem; }
+.market-table th { padding: var(--s2) var(--s2) var(--s2) 0; border-bottom: 1px solid var(--edge); text-align: left; font-size: .8125rem; font-weight: 600; color: var(--soft); }
+.market-table td { padding: var(--s2) var(--s2) var(--s2) 0; border-bottom: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+.market-table td.num { font-weight: 600; white-space: nowrap; }
+.market-table td small { display: block; margin-top: .125rem; font-size: .75rem; color: var(--soft); }
+.market-table button { min-height: 2.75rem; padding: .375rem var(--s3); font-size: .875rem; }
+.market-table progress.bar { min-width: 3rem; }
+.chip.active { background: var(--ink); color: var(--page); border-color: var(--ink); }
+.market-trade .chip { font-family: var(--sans); }
+.market-chart-frame { margin: var(--s3) 0 var(--s1); }
+.market-chart-frame p { margin: 0; font-size: .8125rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--soft); }
+.market-chart { display: block; width: 100%; height: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.market-chart .chart-grid { stroke: var(--line); stroke-width: 1; }
+.market-chart .candle-wick { stroke: var(--ink); stroke-width: 1.5; }
+.market-chart .candle-up { fill: var(--page); stroke: var(--ink); stroke-width: 1.5; }
+.market-chart .candle-down { fill: var(--ink); stroke: var(--ink); stroke-width: 1.5; }
+.market-trade select { margin-bottom: var(--s2); }
+.market-trade fieldset.kinds { margin: var(--s4) 0 0; }
+
 /* Signs. Each is a line drawing of 24 by 24, used as a mask over the text colour, so it follows the theme. */
 :root {
   --i-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5.5H9V20H5a1 1 0 0 1-1-1Z'/%3E%3C/svg%3E");
@@ -450,6 +510,7 @@ details.trust > summary { font-weight: 500; color: var(--soft); }
 .more-list [data-panel="upgrade"] { --icon: var(--i-signal); }
 .more-list [data-panel="integrate"] { --icon: var(--i-code); }
 .more-list [data-panel="validator"] { --icon: var(--i-server); }
+.more-list [data-panel="market"] { --icon: var(--i-pay); }
 
 /* Printing. "Print this page" on Keys prints the cards of what you hold: no secret is on them. "Print the sheet"
    prints the recovery sheet that is on the screen at that moment, and nothing else. */
@@ -476,3 +537,12 @@ details.trust > summary { font-weight: 500; color: var(--soft); }
 [data-network-menu] .tn-item { min-height: 2.75rem; }
 [data-network-menu] .tn-list { border-radius: .875rem; }
 [data-network-menu] details.tn-menu { margin: 0; padding: 0; border: 0; background: none; }
+
+.vault-unlock { display: none; }
+.vault-account input:not([hidden]):not(:disabled) + .vault-unlock,
+#lost-phrase:not([hidden]):not(:disabled) + .vault-unlock {
+  display: inline-block;
+  margin-block: .25rem .5rem;
+}
+#vault-manage:not([hidden]) { display: inline-block; margin-block-end: 1rem; }
+@media print { .vault-unlock, #vault-manage { display: none !important; } }

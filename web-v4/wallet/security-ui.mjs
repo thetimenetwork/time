@@ -15,16 +15,18 @@ import * as security from '/sdk/account-security.mjs';
 import { openVault, validateName, b64, fromB64, forgetSecret, vaultDevice } from './vault.mjs';
 import { lockOf, settleSwap, lockPlaces, newKeysByRule, LOCK_WORDS } from './device-lock.mjs';
 import { wayChoice } from './device-lock-ui.mjs';
-import { withSigningLock, parseSeconds } from './guards.mjs';
+import { isLimitChange, limitReceiptSlot, retireReservation, withSigningLock, parseSeconds } from './guards.mjs';
 import { failureNotice, sentNotice } from './actions.mjs';
 import { isBusyError, busyProtective } from './busy.mjs';
-import { accountSecured } from './security-flows.mjs';
+import { accountSecured, MARKET_KINDS } from './security-flows.mjs';
+import { limitWords } from './market.mjs';
+import { clearWalletField, takeWalletField } from './manager-fields.mjs';
 import {
   createSecurityFlows, elapsedOf, waitsOf, momentOf, encodeSheet, sheetKey, keyFromSeed, newSheetSeed, passphraseKey, generatePassphrase, parsePassphrase, recoveryPaperKind, accountWordsKeys, rememberRecoveryKind,
   checkPasswords, choosePolicy, defaultHours, minimumHours, vaultSlots, stageVaults, stagedSeenAt, stagedNote, settleStaged, discardStaged, hasStaged, stagedNames,
   spendRecord, progressKey, parseProgress, progressRecord, recoveryStatus, protectiveSlot, protectiveObsolete, lostDeviceSlots, protocol4Actions, deviceRows, assertSpendKeyKind, stakeOutflow, SIGNAL_KIND, minSelfBond,
   parseSigninRequest, limitExposure, storeLoginRequest, loginRequestOf, withdrawLoginRequest, settleLoginRequest, fingerprint,
-  DEFAULT_DAILY_LIMIT_SECONDS, dailyLimitWords, accountPassphraseKey, sealedKeys,
+  DEFAULT_DAILY_LIMIT_SECONDS, dailyLimitWords, checkLimitFee, accountPassphraseKey, sealedKeys,
 } from './security-flows.mjs';
 import { makeRecoveryKeys as makePapers, forgetRecoveryKeys, printSheet, paperSteps, saveKit, SAVE_NOW, WRITE_NOW } from './papers.mjs';
 import { readRecoveryKit, openRecoveryKit, recoveryKitMismatch, MAX_RECOVERY_KIT_BYTES } from './recovery-file.mjs';
@@ -34,8 +36,8 @@ const $ = id => document.getElementById(id);
 const assert = (value, message) => { if (!value) throw new Error(message); };
 function node(tag, text, className) { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; return el; }
 /// Reads a secret field once and clears it.
-function take(id) { const el = $(id), value = el.value; el.value = ''; return value; }
-const scrub = ids => { for (const id of ids) $(id).value = ''; };
+function take(id) { return takeWalletField($(id)); }
+const scrub = ids => { for (const id of ids) clearWalletField($(id)); };
 function duration(secondsText) {
   const s = BigInt(secondsText);
   if (s % 3600n === 0n) return `${s / 3600n} hour${s === 3600n ? '' : 's'}`;
@@ -149,6 +151,7 @@ export function createSecurityUI(c) {
   async function showMadeOf(name, made, why) {
     const login = made.find(m => m.record.intent === 'signin')?.made ?? null, payment = made.find(m => m.record.intent === 'spend')?.made ?? null;
     if (!login && !payment) return;
+    if (c.managed?.(name)) why = 'Save these new credentials in Time Vault. Open your saved account there and choose Update after a wallet key change for each new password.';
     c.setBusy(false);
     try { await c.showMade({ name, login, payment, why }); }
     catch (error) { for (const one of made) { one.key.privateKey = null; one.storageKey = null; } throw error; }
@@ -179,8 +182,10 @@ export function createSecurityUI(c) {
       const row = flows.rowOf(state, account), now = elapsedOf(state), waitsNow = waits(state);
       const built = await build({ state, account, row, now, waitsNow }); check();
       const slot = built.sequenced ? String(account.id) : protectiveSlot(built.kind, account.id);
+      const changingLimit = isLimitChange({ kind: built.kind, label });
+      if (changingLimit) assert(!limitRequests(account.id).length, 'Check your earlier request under Daily limit before changing the limit again.');
       let old = c.pending.get(networkId, slot);
-      if (old && !built.sequenced && retired(old, row, now)) { c.pending.clear(networkId, slot, old.hash); old = null; }
+      if (old && !built.sequenced && retired(old, row, now)) { retireReservation(c.pending, networkId, account.id, slot, old); old = c.pending.get(networkId, slot); }
       assert(!old, `A signed action is still waiting for its receipt (${old?.hash || ''}). Check it before signing again.`);
       const hash = await c.sdk.transactionHash(built.tx); check();
       if (beforeSubmit) await beforeSubmit({ account, built, hash }); check();
@@ -188,12 +193,24 @@ export function createSecurityUI(c) {
       c.notice(`Submitting: ${label.toLowerCase()}. Waiting for a verified receipt…`, 'busy');
       let receipt;
       try { receipt = await c.client().submit(built.tx, patience(built.kind)); }
-      catch (error) { if (busyKept(error, slot, label)) error.noticeShown = true; throw error; }
+      catch (error) {
+        check();
+        if (changingLimit) {
+          drawLimitRequests(account);
+          if (error.code === 'TX_PENDING' && error.hash?.toUpperCase() === hash.toUpperCase()) {
+            hideStep('limit-form');
+            c.notice('Your signed limit change is waiting for confirmation. Choose Check status under Daily limit.');
+            error.noticeShown = true;
+          }
+        } else if (busyKept(error, slot, label)) error.noticeShown = true;
+        throw error;
+      }
       check();
       assert(receipt?.verified === true, 'No verified receipt yet. The signed action is kept; check it again later.');
       if (afterReceipt) afterReceipt(receipt);
       // Recorded (its write waited for) before the reservation is cleared, as in signing.mjs.
-      await settle(slot, hash, receipt, label);
+      if (changingLimit) await recordLimitReceipt(account.id, hash, receipt, label);
+      else await settle(slot, hash, receipt, label);
       return { receipt, built };
     });
   }
@@ -221,8 +238,8 @@ export function createSecurityUI(c) {
   /// Resends the exact bytes of a reservation after checking them against its hash.
   async function resend(slot, item) {
     const tx = fromB64(item.tx, 512 * 1024 + 512);
-    assert(await c.sdk.transactionHash(tx) === item.hash.toUpperCase(), 'The stored signed action is damaged. It was not sent.');
-    c.setBusy(true, 'Sending the same signed action again…');
+    assert(await c.sdk.transactionHash(tx) === item.hash.toUpperCase(), 'This browser could not read the saved request. Check its receipt before trying again.');
+    c.setBusy(true, 'Sending your original request again…');
     const receipt = await c.client().submit(tx, patience(item.kind));
     assert(receipt?.verified === true, 'No verified receipt yet. The signed action is kept; check it again later.');
     await settle(slot, item.hash, receipt, item.label);
@@ -465,6 +482,27 @@ export function createSecurityUI(c) {
       return await withSpend(take('signal-payment'), c.session().binding.name, signer => c.sendSigned(SIGNAL_KIND, payload, label, { signer }));
     } finally { scrub(['signal-payment']); }
   }
+  // ---------------------------------------------------------------- 3d. the market of seconds against bitcoin with the payment key
+  /// What an action of the market would use of the daily limit, or why it cannot be signed now (market.mjs, limitWords;
+  /// spec/market.md, section 7), from the account's proven security row. `charge`: market.mjs, marketCharge.
+  async function marketLimit(charge, what) {
+    const check = c.capture(), state = await readState(); check();
+    const account = c.ownAccount(state), row = flows.rowOf(state, account);
+    assert(row, 'This account is not secured.');
+    const now = waits(state);
+    return limitWords({ charge, what, balance: account.balance, secured: true, allowance: security.allowance(row, now), frozen: security.frozen(row, now), limit: effectiveLimit(row, now), seconds: value => c.seconds(String(value)) });
+  }
+  /// An action of the market, reviewed by market-ui.mjs first, signed by the payment key opened with `password` for this
+  /// one action. Nothing outside the market's list gets here, and the limit is judged again on a fresh proven row.
+  async function marketAction(kind, payload, label, { password, charge, what } = {}) {
+    assert(MARKET_KINDS.includes(kind), 'This is not an action of the market.');
+    const said = await marketLimit(charge, what);
+    assert(!said.refusal, said.refusal);
+    return withSpend(password, c.session().binding.name, signer => c.sendSigned(kind, payload, label, { signer }));
+  }
+  /// Whether a security row is frozen at a moment on the clock of the waits (the wallet library's reading): market-ui.mjs
+  /// asks it of the owner of an order, whose order takes no new purchase while the owner is frozen.
+  const frozenRow = (row, now) => security.frozen(row, now);
   function showStakeOver(check, row) {
     const whole = ((check.total + 999999n) / 1000000n) * 1000000n;
     stakeOver = { fitsToday: check.fitsToday, suggestedLimit: whole > check.dailyLimit ? whole : check.dailyLimit };
@@ -481,7 +519,12 @@ export function createSecurityUI(c) {
   $('stake-raise-limit').addEventListener('click', () => {
     if (!stakeOver) return;
     $('limit-amount').value = c.seconds(stakeOver.suggestedLimit); hideStakeOver();
-    c.showPanel?.('home'); openStep('limit-form', 'limit-payment'); sayLimitChange();
+    c.showPanel?.('home');
+    if ($('limit-open').disabled) {
+      c.notice($('limit-fee-note').textContent || (!$('limit-pending').hidden ? 'Check your earlier request under Daily limit.' : 'See Daily limit on Home for your current limit.'));
+      return;
+    }
+    openStep('limit-form', 'limit-payment'); sayLimitChange();
     c.notice('On Home, under Protection, “Daily limit”: enter your payment password to ask for this higher limit. It applies after your waiting period, and you can cancel it meanwhile.');
   });
   $('stake-over-cancel').addEventListener('click', () => { hideStakeOver(); scrub(['stake-payment']); c.notice('Nothing was staked.'); });
@@ -707,8 +750,9 @@ export function createSecurityUI(c) {
     const rows = [];
     for (const kind of kinds) {
       const slot = protectiveSlot(kind, accountId); let item;
-      try { item = c.pending.get(net(), slot); } catch (error) { rows.push(node('p', error.message, 'subtle')); continue; }
+      try { item = c.pending.get(net(), slot); } catch (error) { rows.push(node('p', failureNotice(error, 'This browser could not read the saved request. Check Activity before trying again.'), 'subtle')); continue; }
       if (!item) continue;
+      if (isLimitChange(item)) continue; // The Daily limit card owns both signing routes and their receipts.
       if (retired(item, row, elapsedOf(state))) { c.pending.clear(net(), slot, item.hash); continue; }
       rows.push(inboxRow(`${item.label || LABEL[kind]}: waiting for its receipt`, item.hash, [
         ['Check receipt', async () => { await checkReceipt(slot, item); await afterPending(); c.notice('Verified.'); }],
@@ -824,6 +868,82 @@ export function createSecurityUI(c) {
   }); });
 
   // ---------------------------------------------------------------- 9. daily limit
+  function limitRequests(accountId) {
+    const requests = [];
+    for (const slot of [String(accountId), protectiveSlot(73, accountId), limitReceiptSlot(accountId, 77), limitReceiptSlot(accountId, 73)]) {
+      const item = c.pending.get(net(), slot);
+      if (isLimitChange(item)) requests.push({ slot, item, obsolete: slot === limitReceiptSlot(accountId, item.kind) });
+    }
+    return requests;
+  }
+  function limitFeeNote(account) {
+    try { checkLimitFee(account, fee()); return ''; }
+    catch (error) {
+      if (error.code !== 'LIMIT_FEE_SHORTFALL') return 'The wallet could not check the network fee. Refresh Home and try again.';
+      const funding = $('faucet-button').hidden ? 'Use Receive on Home to add seconds.' : 'Choose Get test time on Home to add seconds.';
+      return failureNotice(error, 'The wallet could not check whether your balance covers the fee.') + ' ' + funding;
+    }
+  }
+  function drawLimitRequests(account, row, state) {
+    const networkId = net();
+    if (row && state) for (const { slot, item, obsolete } of limitRequests(account.id)) {
+      if (obsolete) continue;
+      const spent = item.kind === 73 ? retired(item, row, elapsedOf(state))
+        : BigInt(account.nonce) >= BigInt(item.nonce) || String(account.auth_epoch) !== item.authEpoch;
+      if (spent) retireReservation(c.pending, networkId, account.id, slot, item);
+    }
+    const requests = limitRequests(account.id), note = limitFeeNote(account);
+    put('limit-fee-note', note); $('limit-fee-note').hidden = !note;
+    $('limit-pending').replaceChildren(...requests.map(({ slot, item, obsolete }) => {
+      const title = obsolete ? 'Earlier limit change awaiting a receipt' : 'Limit change awaiting confirmation';
+      const detail = (obsolete ? 'Your account has moved on. The original can no longer execute again. ' : 'This browser saved the signed request. ') + 'Transaction ' + item.hash;
+      const buttons = [['Check status', () => checkLimitReceipt(account, slot, item)]];
+      if (obsolete) buttons.push(['Dismiss old request', async () => {
+        if (!await c.review('Dismiss old limit request', [['Transaction', item.hash], ['Effect', 'Remove the saved request from this browser. Its original outcome is still unconfirmed.']], 'Dismiss request')) return;
+        c.pending.clear(networkId, slot, item.hash); await c.refresh();
+      }]);
+      return inboxRow(title, detail, buttons);
+    }));
+    $('limit-pending').hidden = !requests.length;
+    if (requests.length || note) hideStep('limit-form');
+  }
+  async function recordLimitReceipt(accountId, hash, receipt, label) {
+    const check = c.capture(), networkId = net();
+    assert(receipt?.verified === true && receipt.hash?.toUpperCase() === hash.toUpperCase(), 'Could not verify the receipt for this limit change.');
+    assert(await c.record(receipt, label) !== false, 'Your limit change was verified. Check status again to save its receipt in this browser.');
+    check();
+    // A refresh in another tab can retire the original while this tab saves the verified receipt.
+    for (const saved of limitRequests(accountId)) if (saved.item.hash === hash) c.pending.clear(networkId, saved.slot, hash);
+    c.cleared?.();
+  }
+  async function checkLimitReceipt(account, slot, item) {
+    const check = c.capture(), networkId = net(), hash = item.hash;
+    await withSigningLock(navigator.locks, networkId, String(account.id), async () => {
+      check();
+      assert(c.pending.get(networkId, slot)?.hash === hash, 'This request changed. Refresh Home to see its current status.');
+      c.setBusy(true); c.notice('Checking the original limit change…', 'busy');
+      let receipt;
+      try { receipt = await c.client().waitReceipt(hash, { timeoutMs: 10000 }); }
+      catch (error) {
+        check();
+        if (error.code !== 'TX_PENDING' || error.hash?.toUpperCase() !== hash.toUpperCase()) throw error;
+        await c.refresh(); check();
+        c.notice('Confirmation is still pending. Your original request is saved here.'); return;
+      }
+      check();
+      await recordLimitReceipt(account.id, hash, receipt, item.label);
+      await c.refresh(); check();
+      const state = c.state();
+      if (BigInt(state.height) < BigInt(receipt.height)) {
+        c.notice('Your limit change is confirmed. Refresh Home in a moment to see the updated limit.'); return;
+      }
+      const row = flows.rowOf(state, c.ownAccount(state)), now = waits(state);
+      const scheduled = row.pending_limit;
+      const next = scheduled && BigInt(scheduled.ready_elapsed_micros) > now
+        ? ` A raise to ${seconds(scheduled.daily_limit_micros)} is scheduled ${timeWords(state, scheduled.ready_elapsed_micros, 'for')}.` : '';
+      c.notice(`Limit change verified. Your current daily limit is ${seconds(effectiveLimit(row, now))}.${next}`);
+    });
+  }
   // A lower limit applies at once. A higher one waits, or applies at once when a recovery paper is typed too. Which
   // of these the typed number will be is said under the field while it is typed (protection.mjs, limitChange), and
   // again in the review.
@@ -837,6 +957,8 @@ export function createSecurityUI(c) {
   $('limit-form').addEventListener('submit', event => { event.preventDefault(); guarded(STEPS['limit-form'], async () => {
     const check = c.capture(), amount = parseSeconds($('limit-amount').value.trim()), state = await readState(); check();
     const account = c.ownAccount(state), row = flows.rowOf(state, account), now = waits(state), current = effectiveLimit(row, now), change = limitChangeOf(row, state, amount);
+    assert(!limitRequests(account.id).length, 'Check your earlier request under Daily limit before changing the limit again.');
+    const feeNote = limitFeeNote(account); assert(!feeNote, feeNote);
     assert(change.kind !== 'same', 'The daily limit already has this value.');
     assert(change.kind !== 'too-low', change.text);
     if (change.kind === 'raise-now') {
@@ -909,7 +1031,7 @@ export function createSecurityUI(c) {
     const file = $('lost-file').files?.[0] ?? null, reading = ++kitReading;
     if (!file) return sayKit('');
     let header = null, problem = null;
-    try { assert(file.size <= MAX_RECOVERY_KIT_BYTES, 'This file is too large to be a Recovery Kit.'); header = readRecoveryKit(await file.text()); } catch (error) { problem = error.message; }
+    try { assert(file.size <= MAX_RECOVERY_KIT_BYTES, 'This file is too large to be a Recovery Kit.'); header = readRecoveryKit(await file.text()); } catch (error) { problem = failureNotice(error, 'The wallet could not read this Recovery Kit. Choose the original file and try again.'); }
     if (reading !== kitReading) return;
     if (problem) return sayKit(problem, true);
     if (!kitName() && header.networkId === net()) $('lost-name').value = header.accountName;
@@ -1165,7 +1287,7 @@ export function createSecurityUI(c) {
     $('send-allowance').textContent = `You can pay ${c.seconds(left)} more seconds today, fees included.${frozen ? ' The account is frozen.' : ''}`;
     $('stake-allowance').textContent = `Today's limit: you can stake ${c.seconds(left)} more seconds, fee included.`;
     $('stake-frozen-note').hidden = !frozen;
-    card = viewOf(account, row, state); drawCard(card, row);
+    card = viewOf(account, row, state); drawCard(card, row); drawLimitRequests(account, row, state);
     settleRemembered(localStorage, pauseKey(net(), account.name), card.pause.on, Date.now());
     renderInbox(account, row, state);
     $('security-pending').replaceChildren(...pendingRows(account.id, row, state, PROTECTIVE));
@@ -1209,7 +1331,7 @@ export function createSecurityUI(c) {
     // The Protection card: its switches and buttons follow what the card last drew from proven state.
     const view = row ? card : null;
     $('freeze-switch').disabled = !ready || !view || view.freeze.locked; $('pause-switch').disabled = !ready || !view || view.pause.locked;
-    $('limit-open').disabled = !ready || !view || !view.limit.canChange;
+    $('limit-open').disabled = !ready || !view || !view.limit.canChange || !$('limit-pending').hidden || !$('limit-fee-note').hidden;
     for (const id of ['freeze-again', 'unfreeze-open', 'resume-cancel']) $(id).disabled = !ready || !view;
     $('resume-wait').disabled = !ready || !view || !view.pause.waitPossible; $('resume-now').disabled = !ready || !view || view.pause.locked;
     $('secure-form').querySelector('button').disabled = !ready || Boolean(row) || !session || flows.roleOf(account || { devices: [] }, session?.binding.publicKey) !== null || $('secure-form').dataset.blocked === 'true';
@@ -1229,6 +1351,7 @@ export function createSecurityUI(c) {
     resetSecure(); resetReplaceRecovery(); hideOver(); hideStakeOver(); lostProgress = null; removed = null; secureDrawnFor = null;
     // The Protection card shows nothing of the account that was open: no state, no open step, nothing typed.
     card = null; closeSteps(); $('protect-card').hidden = true; $('freeze-switch').checked = $('pause-switch').checked = false;
+    $('limit-pending').replaceChildren(); $('limit-pending').hidden = true; $('limit-fee-note').textContent = ''; $('limit-fee-note').hidden = true;
     for (const id of ['limit-amount', 'resume-amount']) $(id).value = '';
     for (const id of ['protect-status', 'freeze-note', 'limit-text', 'limit-when', 'pause-note', 'resume-amount-note', 'resume-wait-note', 'protect-waiting']) $(id).textContent = '';
     for (const ids of Object.values(SECRET_FIELDS)) scrub(ids);
@@ -1265,5 +1388,5 @@ export function createSecurityUI(c) {
   // (with the device where the keys are locked), the field that takes the recovery words or a printed sheet, and the
   // wallet's path for security actions (a fresh verified read, the reservation, the receipt).
   const tools = Object.freeze({ withSpend, recoveryPaper, sendSecurity });
-  return { tools, stake, stakeAction, stakeLimit, signalAction, signalRefusal, render, withoutDevice, availability, reset, start, pay, payWebsite, loginRefusal, secured, recover, canPay: () => Boolean(c.session()) && secured(c.state(), c.ownAccount()) };
+  return { tools, stake, stakeAction, stakeLimit, signalAction, signalRefusal, marketLimit, marketAction, frozenRow, render, recordLimitReceipt, checkLimitReceipt, withoutDevice, availability, reset, start, pay, payWebsite, loginRefusal, secured, recover, canPay: () => Boolean(c.session()) && secured(c.state(), c.ownAccount()) };
 }

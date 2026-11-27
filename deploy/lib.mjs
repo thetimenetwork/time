@@ -28,7 +28,7 @@ export function signed(attestation,trust,expected,now=Date.now()){
 // release has one canonical identity.
 export const ENGINES=Object.freeze({
  v4:Object.freeze({binary:'time-node-v4',dockerfile:'deploy/Dockerfile',version:'time-node-v4 0.4.0 devnet-only publicLaunchAllowed=false'}),
- v5:Object.freeze({binary:'time-node-v5',dockerfile:'deploy/Dockerfile.v5',version:'time-node-v5 0.9.0 protocol=4 devnet-only publicLaunchAllowed=false'})
+ v5:Object.freeze({binary:'time-node-v5',dockerfile:'deploy/Dockerfile.v5',version:'time-node-v5 0.10.0 protocol=4 devnet-only publicLaunchAllowed=false'})
 });
 export function releaseEngine(manifest){if(!Object.hasOwn(manifest,'engine'))return 'v4';if(manifest.engine!=='v5')throw new Error('Unsupported release engine');return 'v5';}
 // JSON.stringify omits `engine` when it is undefined, so v4 identities are unchanged.

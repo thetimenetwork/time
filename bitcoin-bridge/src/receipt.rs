@@ -290,7 +290,7 @@ impl HeaderChain {
     }
 }
 
-fn preflight_merkle_proof(bytes: &[u8]) -> Result<()> {
+pub(crate) fn preflight_merkle_proof(bytes: &[u8]) -> Result<()> {
     ensure!(
         (86..=MAX_MERKLE_PROOF_BYTES).contains(&bytes.len()),
         "Bitcoin merkle proof byte bound"
@@ -298,7 +298,7 @@ fn preflight_merkle_proof(bytes: &[u8]) -> Result<()> {
     let (hash_count, used) = deserialize_partial::<VarInt>(&bytes[84..])?;
     ensure!(
         (1..=64).contains(&hash_count.0),
-        "Bitcoin single-match proof hash bound"
+        "Bitcoin proof hash bound"
     );
     let offset = 84usize
         .checked_add(used)

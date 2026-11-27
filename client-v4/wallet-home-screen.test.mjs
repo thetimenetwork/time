@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
+import http from 'node:http';
 import path from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -20,12 +21,12 @@ const rpc = async (endpoint, p = {}) => {
   throw Error('Unexpected RPC');
 };
 const root = fileURLToPath(new URL('../', import.meta.url));
-async function withGateway(work) {
+async function withGateway(work, publicOrigins) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'time-home-screen-')), originalNow = Date.now;
   let servers = null;
   try {
     Date.now = () => fixture.now_ms;
-    servers = await createV4Servers({ root, manifest: { networkId: fixture.trust.network_id, chainId: fixture.trust.chain_id, trust: fixture.trust }, rpc, walletPort: 0, merchantPort: 0,
+    servers = await createV4Servers({ root, manifest: { networkId: fixture.trust.network_id, chainId: fixture.trust.chain_id, trust: fixture.trust }, rpc, publicOrigins, walletPort: 0, merchantPort: 0,
       checkpointPath: path.join(directory, 'checkpoint.json'), ordersPath: path.join(directory, 'orders.json'), upgradeCheck: { everyMs: 0 } });
     return await work(servers);
   } finally { Date.now = originalNow; await servers?.close(); await rm(directory, { recursive: true, force: true }); }
@@ -63,6 +64,23 @@ test('both pages turn off what they do not use of the browser, and the wallet ke
     // The blog opens that window and needs its reference to it: it has no opener policy of its own.
     for (const address of ['/', '/api/config']) assert.equal((await get(S, address)).opener, null, address);
   });
+});
+
+test('the canonical wallet keeps the manager popup and an approval window still answers its merchant', async () => {
+  const wallet = 'https://wallet.testnet.thetimenetwork.org';
+  await withGateway(async servers => {
+    async function headers(route) {
+      return new Promise((resolve, reject) => {
+        http.get(servers.walletListenOrigin + route, { headers: { host: new URL(wallet).host } }, response => {
+          response.resume();
+          response.on('end', () => resolve([response.statusCode, response.headers['cross-origin-opener-policy']]));
+        }).on('error', reject);
+      });
+    }
+    assert.deepEqual(await headers('/'), [200, 'same-origin-allow-popups']);
+    assert.deepEqual(await headers('/approve'), [200, undefined]);
+    assert.deepEqual(await headers('/manager.css'), [404, 'same-origin-allow-popups']);
+  }, { wallet, merchant: 'https://blog.testnet.thetimenetwork.org' });
 });
 
 test('the manifest, the icons and the service worker are served from the wallet origin with their types, and not from the shop', async () => {

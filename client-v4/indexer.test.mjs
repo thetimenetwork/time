@@ -159,13 +159,23 @@ test('every kind of action is described from the SDK decoder, and what it cannot
   // Every kind the SDK names decodes; none is taken for a payment unless it is one.
   const payloads = { 2: { name: 'alice', salt: 'ab'.repeat(32) }, 5: { operator: '1', amount: '5', min_shares: '1' }, 6: { operator: '1', shares: '5', min_amount: '1' }, 7: { entry: '1' }, 8: { public_key: key, can_manage: true, can_spend: false, proof: 'cc'.repeat(64) }, 9: { public_key: key },
     11: { guardians: ['1', '2'], threshold: '2', delay_seconds: '9' }, 13: { target: '1', policy_version: '1', recovery_id: 'ab'.repeat(32), new_public_key: key, expires_elapsed_micros: '9', proof: 'cc'.repeat(64) }, 16: {},
-    80: { activate_elapsed_micros: '1814400000000', spec: '5e'.repeat(32), version: '5' } };
+    80: { activate_elapsed_micros: '1814400000000', spec: '5e'.repeat(32), version: '5' },
+    // The market's kinds (50 to 58), each in a form the SDK takes (spec/market.md, section 6).
+    50: SDK.marketSellOrder({ amountMicros: '100000000', price: '250000000', scripts: [`0014${'01'.repeat(20)}`], confirmations: '3', payBlocks: '6', minSats: '1000', depositPpm: '50000', minDepositMicros: '0' }),
+    51: SDK.marketCancel({ order: '1' }), 52: SDK.marketTake({ order: '1', amountMicros: '40000000', price: '250000000', to: '8' }),
+    53: SDK.marketSell({ order: '2', amountMicros: '40000000', price: '250000000', confirmations: '3', script: `0014${'07'.repeat(20)}` }),
+    54: SDK.marketProof({ fill: '1', blockHash: 'ab'.repeat(32), transaction: `0200000001${'07'.repeat(32)}0000000000ffffffff01a00f000000000000160014${'01'.repeat(20)}00000000`, coinbase: `0200000001${'00'.repeat(32)}ffffffff0100ffffffff0100f2052a010000000000000000`, vout: '0', merkleProof: 'ab'.repeat(86) }),
+    55: SDK.marketExpire({ fill: '1' }), 56: SDK.marketRelease({ fill: '1' }), 57: SDK.marketSettle({ fill: '1' }), 58: SDK.marketNewScripts({ order: '1', scripts: [`0014${'02'.repeat(20)}`] }) };
   for (const [name, kind] of Object.entries(SDK.KINDS)) {
     assert.equal(KIND_NAMES[kind], name);
     if ([1, 4, 3, 10, 12, 14, 15, 40].includes(kind)) continue; // 1 and 4 cannot be built; the others are covered above
     const facts = describe(kind, payloads[kind] ?? { any: 'thing' });
     assert.deepEqual([facts.opaque, facts.kind, facts.sender, facts.transfers], [false, kind, '5', false], name);
   }
+  // The market's kinds pay the network's fee, and three of them pay it more than once: a sell order and new scripts for
+  // each script, a proof for its size. A buy order lists no script and pays it once.
+  assert.deepEqual([50, 51, 52, 53, 54, 55, 56, 57, 58].map((kind) => describe(kind, payloads[kind]).feeRule), ['market_fee', 'network_fee', 'network_fee', 'network_fee', 'market_fee', 'network_fee', 'network_fee', 'network_fee', 'market_fee']);
+  assert.equal(describe(50, SDK.marketBuyOrder({ amountMicros: '100000000', price: '250000000', forms: ['p2wpkh'], confirmations: '3', payBlocks: '6', minSats: '1000', depositPpm: '50000' })).feeRule, 'network_fee');
   // A validator's upgrade signal (80), in its two forms: decoded, never a payment, and it pays the network fee.
   for (const payload of [payloads[80], {}]) assert.deepEqual(describe(80, payload), { opaque: false, kind: 80, sender: '5', nonce: '9', recipient: null, amount: null, reference: null, transfers: false, feeRule: 'network_fee', waiting: null });
   assert.equal(KIND_NAMES[80], 'upgrade_signal');

@@ -6,7 +6,7 @@ import { createLockUI } from './device-lock-ui.mjs';
 import { madeDialog } from './made-dialog.mjs';
 import { gatherDialog } from './entropy-dialog.mjs';
 import { setGatherer, forgetGathered, readyToMake } from './entropy.mjs';
-import { GenerationFence, PendingReservations, withSigningLock, parseSeconds, formatSeconds, acceptApprovalEvent, APPROVAL_NOT_UNDERSTOOD, IDLE_LOCK_MS } from './guards.mjs';
+import { GenerationFence, PendingReservations, isLimitChange, retireReservation, withSigningLock, parseSeconds, formatSeconds, acceptApprovalEvent, APPROVAL_NOT_UNDERSTOOD, IDLE_LOCK_MS } from './guards.mjs';
 import { createPrivateStore, orderMarkers, withReceipt, sentSinceOf } from './locked-store.mjs';
 import { pendingIsObsolete, poolSharesForDeposit, registrationPendingDisposition, emergencyCancelSlot, nonceCancelSlot, recoveryFrozen, authorityReservationObsolete, emergencyReservationObsolete, createUpgradeMonitor, upgradeRequiredScreen, failureNotice, gatewayNotification, sponsorReceiptBinds, askFaucet, faucetReceiptPays, sentNotice, durationWords, keysView } from './actions.mjs';
 import { createRecoveryUI } from './recovery.mjs';
@@ -19,7 +19,12 @@ import { effectiveLimit, pauseState } from './protection.mjs';
 import { createSendSigned, signalSigner } from './signing.mjs';
 import { createSignalUI } from './upgrade-signal-ui.mjs';
 import { createSignupUI } from './signup-ui.mjs';
+import { managerOrigin, openManager } from './manager-client.mjs';
+import { installVaultFields, takeWalletField, clearVaultFields } from './manager-fields.mjs';
 import { createMoveUI } from './move-ui.mjs';
+import { createMarketUI } from './market-ui.mjs';
+import { createMarketApi } from './market-api.mjs';
+import { createTradeView } from './market-trade-ui.mjs';
 import { resetSeen, elsewhere, oldEntries, resetWords, resetOpenWords, RESET_RELOAD, trustReader } from './reset.mjs';
 import { isBusyError, askWhenFree, BUSY_STATUS, BUSY_CONNECTING, BUSY_STARTING, BUSY_OPENING, BUSY_UNLOCK, BUSY_SIGNUP, BUSY_REGISTRATION, busyProtective } from './busy.mjs';
 import { payeeCheck, lookAlike, firstPaymentWords, alikeWords, ownAlikeWords, paidAlikeWords, NAME_ACKNOWLEDGE, paidNamesFrom, withPaidName, paidNameOf, resembles, tooCloseName, tooCloseWords } from './names.mjs';
@@ -38,6 +43,28 @@ const lockAsker = () => (lockAskerMade ??= createLockAsker({ env: browserEnv(glo
 const paymentMarkers = orderMarkers(privateStore);
 const vaultPrefix = 'timecurrency.vault.v1:';
 let client, network, latest, session, mode = 'create', busy = false, approval, refreshTimer, idleTimer, lockChannel;
+const vaultOrigin = managerOrigin(location.origin);
+let activeVault = null, manualUnlock = false;
+function closeVault() { activeVault?.close(); activeVault = null; }
+function startManager() {
+  closeVault();
+  activeVault = openManager();
+  return activeVault;
+}
+function managedLogin(name) {
+  return Boolean(vaultOrigin && network && name && signupUI.managed(name));
+}
+function renderVaultLogin() {
+  const managed = mode === 'unlock' && managedLogin($('username').value.trim().replace(/^@/, ''));
+  $('vault-login-method').hidden = !managed;
+  if (mode !== 'unlock') return;
+  const useVault = managed && !manualUnlock;
+  typedPassword(!useVault, false);
+  $('password-note').hidden = useVault;
+  $('auth-copy').textContent = useVault ? 'Open your wallet with your vault password and device unlock.' : 'Enter the login password for the key saved in this browser.';
+  $('auth-submit').textContent = useVault ? 'Open with Time Vault' : 'Open my account';
+  $('vault-login-method').textContent = useVault ? 'Enter login password manually' : 'Use Time Vault';
+}
 // The open account's activity as the private store holds it (takePrivate), and the account's nonce from which it holds
 // every action this browser sent, or null when it does not know (locked-store.mjs, `since`).
 let activity = [], activitySince = null;
@@ -155,6 +182,7 @@ function renderAvailability() {
   signalUI.availability(ready && Boolean(device), frozen);
 }
 function setMode(value) {
+  closeVault(); clearVaultFields(); manualUnlock = false;
   mode = value;
   for (const m of ['create', 'unlock', 'link', 'recover']) $(`mode-${m}`).classList.toggle('active', m === value);
   $('auth-heading').textContent = value === 'unlock' ? 'Open your account' : value === 'recover' ? 'Recover with your guardians' : value === 'link' ? 'Add this browser to your account' : 'Create your account';
@@ -178,6 +206,7 @@ function setMode(value) {
   signupUI.reset(); signupUI.form(value === 'create' && signupUI.on());
   // "Open my account" with the name of a sign-up this browser keeps offers to let it go (signup-ui.mjs, letGo).
   signupUI.offer(value === 'unlock' ? $('username').value.trim() : null);
+  renderVaultLogin();
 }
 /// The fields of a password on the start screen (the password, and the same again): shown and asked, or hidden and not.
 function typedPassword(shown, again = shown) {
@@ -194,7 +223,7 @@ function lock(message = 'Locked. Your key stays in this browser, locked with you
   if (session) { forgetSecret(session.secret); session.privateKey = session.storageKey = null; }
   // What the account keeps privately is locked again: what was being written is written, and nothing stays readable.
   privateStore.close(); lockAskerMade?.forgetAll();
-  session = null; activity = []; activitySince = null; paidNames = []; checkedReceipts.clear();guardianTargetName='';recoveryUI.resetTarget();securityUI.reset();signalUI.reset();alertsUI.reset();lockUI.reset();moveUI.reset();
+  session = null; activity = []; activitySince = null; paidNames = []; checkedReceipts.clear();guardianTargetName='';recoveryUI.resetTarget();securityUI.reset();signalUI.reset();alertsUI.reset();lockUI.reset();moveUI.reset();marketUI.reset();
   $('password').value = $('password-confirm').value = '';
   $('backup-password').value=$('backup-export-password').value=$('backup-file').value='';
   $('enrollment-code').value = ''; $('device-request').value = '';
@@ -260,7 +289,7 @@ function downloadJSON(text,filename){
 }
 async function exportBackup(event){event.preventDefault();await run(async()=>{
   assert(session&&network,'Unlock an approved account before exporting its backup.');
-  const check=fence.capture(),binding={...session.binding},password=$('backup-export-password').value;
+  const check=fence.capture(),binding={...session.binding},password=takeWalletField($('backup-export-password'));
   $('backup-export-password').value='';setBusy(true,'Checking your encrypted backup and current device authority...');
   const raw=localStorage.getItem(vaultKey(binding.name));assert(raw,'The stored encrypted vault is unavailable.');
   // A key locked to this device leaves no file that a password alone opens (device-lock.mjs).
@@ -461,7 +490,7 @@ function renderActivity() {
     const save=textNode('button','Save public receipt','secondary');save.type='button';save.addEventListener('click',()=>run(async()=>{
       const check=fence.capture();setBusy(true);const evidence=await client.exportReceiptEvidence(item.hash);check();
       downloadJSON(JSON.stringify(evidence,null,2)+'\n',`seconds-receipt-${item.hash.toLowerCase()}.json`);
-      notice('Public receipt evidence downloaded. Reanchor it against current canonical history before reuse; the current trusted checkpoint expires after seven days.');
+      notice('Receipt downloaded. If you use this file later, check it again against the network. The saved network checkpoint expires after seven days.');
     }));r.append(save);
     $('activity-list').append(r);
   }
@@ -474,40 +503,44 @@ function renderPending() {
   $('pending-panel').replaceChildren(); $('home-pending').hidden = true; const account = ownAccount(); if (!account) return;
   const item = pending.get(network.networkId, String(account.id)); if (!item) return;
   $('home-pending').hidden = false;
-  $('pending-panel').append(textNode('p', `A signed action is waiting for its receipt: ${item.hash}. Do not sign the same again while nobody knows whether it was included.`));
+  $('pending-panel').append(textNode('p', `Your request is waiting for confirmation. Check its receipt to see whether it went through. Transaction ${item.hash}.`));
   const b = textNode('button', 'Check pending receipt', 'secondary'); b.addEventListener('click', () => run(reconcilePending)); $('pending-panel').append(b);
   const retry = textNode('button', 'Retry the exact signed action', 'secondary'); retry.addEventListener('click', () => run(async () => {
     const check = fence.capture();
     await withSigningLock(navigator.locks, network.networkId, String(account.id), async () => {
       const existing = pending.get(network.networkId, String(account.id)); assert(existing, 'No pending action.');
-      const tx = fromB64(existing.tx, 512*1024+512); assert((await sdk.transactionHash(tx)) === existing.hash.toUpperCase(), 'Pending transaction bytes are damaged.'); check();
+      const tx = fromB64(existing.tx, 512*1024+512); assert((await sdk.transactionHash(tx)) === existing.hash.toUpperCase(), 'The saved request is damaged. Check its receipt before trying again.'); check();
       const action = sdk.decodeAction(tx); if (action.kind === sdk.KINDS.merchant_payment) { await paymentMarkers.sync(network.networkId, action.from); await paymentMarkers.reserve(network.networkId, action.from, action.payload.reference, existing.hash); check(); }
-      setBusy(true); const receipt = await client.submit(tx); check(); await recordReceipt(receipt, existing.label); pending.clear(network.networkId, String(account.id), existing.hash); renderPending();
-    }); await refresh(); notice('The exact pending action is finalized. Its nonce prevents a second execution.');
+      setBusy(true); const receipt = await client.submit(tx); check();
+      if (isLimitChange(existing)) await securityUI.recordLimitReceipt(account.id, existing.hash, receipt, existing.label);
+      else { await recordReceipt(receipt, existing.label); pending.clear(network.networkId, String(account.id), existing.hash); renderPending(); }
+    }); await refresh(); notice('Your original request is confirmed. Sending the same request again cannot apply it twice.');
   })); $('pending-panel').append(retry);
   if (cancelOffered(account)) {
     const cancel = textNode('button', 'Cancel pending action', 'secondary'); cancel.addEventListener('click', () => run(async () => {
       const check = fence.capture(), fee = networkFee();
       assert(BigInt(account.balance) >= BigInt(fee), 'Cancelling a pending action costs the network fee, and this account holds less.');
-      if (!await review('Cancel a pending signed action', [['Pending action hash', item.hash], ['Race warning', 'The old action may win the nonce race until a cancellation is finalized. A finalized payment cannot be reversed.'], ['Effect', 'Consume the next nonce and advance the authority epoch. Keep the device keys. Old signatures and website sessions become obsolete.'], ['Fee', seconds(fee) + ' seconds']], 'Sign cancellation')) return;
+      if (!await review('Cancel a pending signed action', [['Original transaction ID', item.hash], ['If both are waiting', 'The network may confirm your original request first. A confirmed payment is final.'], ['Effect', 'If the cancellation is confirmed first, it stops the old request. Your device keys stay active. Earlier approvals expire and websites ask you to sign in again.'], ['Fee', seconds(fee) + ' seconds']], 'Sign cancellation')) return;
       check(); setBusy(true); await sendSigned('cancel_pending', {}, 'Cancel pending action'); await refresh(); notice('Cancellation finalized and verified. Older authority signatures are now obsolete. A finalized payment was not reversed.');
     })); $('pending-panel').append(cancel);
   }
 }
 async function reconcilePending() {
   const check = fence.capture(), account = ownAccount(); assert(account, 'Unlock an account first.');
+  const original = pending.get(network.networkId, String(account.id));
+  if (isLimitChange(original)) return securityUI.checkLimitReceipt(account, String(account.id), original);
   await withSigningLock(navigator.locks, network.networkId, String(account.id), async () => {
     check(); const item = pending.get(network.networkId, String(account.id)); if (!item) return;
     setBusy(true); notice('Checking the pending action against the chain…', 'busy');
     try {
       const receipt = await client.waitReceipt(item.hash, { timeoutMs: 10000 }); check();
-      await recordReceipt(receipt, item.label); pending.clear(network.networkId, String(account.id), item.hash); renderPending(); notice('Pending action is finalized and independently verified.');
+      await recordReceipt(receipt, item.label); pending.clear(network.networkId, String(account.id), item.hash); renderPending(); notice('Your wallet confirmed the original request.');
     } catch (error) {
       const state = await verifiedState(); check(); const now = ownAccount(state);
       const oldAction = sdk.decodeAction(fromB64(item.tx, 512*1024+512));
       if (pendingIsObsolete(now, item, oldAction, state)) {
-        pending.clear(network.networkId, String(account.id), item.hash);
-        notice('The verified account has moved past this signed action. Its nonce or authority is obsolete, so it cannot be replayed. The original action outcome was not verified; inspect activity before making a new payment.', 'error');
+        retireReservation(pending, network.networkId, account.id, String(account.id), item);
+        notice('Your account has changed, so this request can no longer go through again. The wallet could not confirm its original outcome. Check Activity before making a new payment.', 'error');
       } else throw error;
     }
   }); await refresh();
@@ -583,7 +616,7 @@ async function registerAccount() {
   await withSigningLock(navigator.locks, network.networkId, registrationOwner, async () => {
     check(); const previous = pending.get(network.networkId, registrationOwner); if (!previous) return;
     state = await verifiedState(); check(); const tx = fromB64(previous.tx, 512*1024+512), action = sdk.decodeAction(tx);
-    assert((await sdk.transactionHash(tx)) === previous.hash.toUpperCase(), 'Pending registration bytes are damaged.');
+    assert((await sdk.transactionHash(tx)) === previous.hash.toUpperCase(), 'This browser could not read your saved sign-up request. Check whether your account was created before starting again.');
     const disposition = registrationPendingDisposition(state, session.binding, action);
     if (disposition === 'retry_exact') { notice('Resuming the exact signed registration action…', 'busy'); const receipt = await client.submit(tx).catch(async error => { throw await nameRefusal(error); }); check(); recordReceipt(receipt, previous.label); }
     // Identity operations carry no funds. Verified state can establish the same key/name outcome or signed expiry without fabricating a historical receipt.
@@ -605,7 +638,7 @@ async function registerAccount() {
     const consent=sdk.sponsorConsentBytes({networkId:network.networkId,sponsorAccount:sponsor.account,publicKey:session.binding.publicKey,commitment:expected,expiresElapsedMicros:deadline});
     const proof=hex(await crypto.subtle.sign('Ed25519',session.privateKey,consent));check();
     const issued=await sponsor.ask({public_key:session.binding.publicKey,commitment:expected,expires_elapsed_micros:deadline,proof});check();
-    if(issued.hash){const receipt=await client.waitReceipt(issued.hash);check();assert(sponsorReceiptBinds(receipt,session.binding.publicKey,expected),'Sponsor receipt does not bind this device and name commitment');recordReceipt(receipt,'Name reserved for you (sponsored)');}else assert(issued.alreadyCommitted===true,'Sponsor outcome unavailable; check the current proved commitment before retrying');
+    if(issued.hash){const receipt=await client.waitReceipt(issued.hash);check();assert(sponsorReceiptBinds(receipt,session.binding.publicKey,expected),'The sign-up receipt does not match this device and account name. Check the name and try opening your account.');recordReceipt(receipt,'Name reserved for you (sponsored)');}else assert(issued.alreadyCommitted===true,'The wallet could not confirm your name reservation. Check whether your account was created before trying again.');
     // A receipt is verified a block ahead of the state this wallet reads next. The state is asked again until it
     // shows the commitment. (Seen in a browser on 2026-11-19, on a network with three blocks a second: the first
     // read came from the block before the sponsor's action, and the wallet stopped with "commitment differs".)
@@ -635,8 +668,11 @@ async function nameRefusal(error) {
 }
 async function auth(event) {
   event.preventDefault(); if (busy) return;
-  const check = fence.capture(), name = validateName($('username').value), password = $('password').value;
+  const check = fence.capture();
+  let name, password;
   try {
+    name = validateName($('username').value);
+    password = $('password').value;
     assert(network && latest?.verified, 'Waiting for an independently verified network.');
     // A new account needs a sponsor for its registration. A wallet whose service names none says so before it makes
     // a key or stores a vault: nothing is left behind for a name that could not be registered.
@@ -648,6 +684,14 @@ async function auth(event) {
     setBusy(true, mode === 'unlock' ? 'Unlocking your key with your password. This takes a few seconds…' : 'Making your new key and its password, and locking the key with it. This takes a few seconds…');
     let unlocked, signupLogin = null;
     if (mode === 'unlock') {
+      if (!manualUnlock && managedLogin(name)) {
+        setBusy(true, 'Unlock your sign-in key in Time Vault.');
+        const vault = startManager();
+        try { password = await vault.get({ name, networkId: network.networkId, role: 'signin' }); }
+        finally { vault.close(); }
+        check();
+        assert(mode === 'unlock' && name === validateName($('username').value), 'The account changed. Open it again.');
+      }
       const raw = localStorage.getItem(vaultKey(name));
       // The test network was reset, and this browser keeps accounts of the old one only (reset.mjs): that, and not "New device".
       if (!raw && resetSeen(Object.keys(localStorage), network.networkId)) throw new Error(resetOpenWords(name, elsewhere(Object.keys(localStorage), network.networkId).names));
@@ -699,11 +743,12 @@ async function auth(event) {
     const signingUp = mode === 'unlock' && signupUI.staged(name, session.binding.publicKey);
     if (mode === 'create' || signingUp || (mode === 'unlock' && !ownAccount())) { $('auth-progress').textContent = signingUp ? 'Creating your protected account on the network. This takes a few seconds…' : 'Registering your name on the network. This takes a few seconds…'; await registerAccount(); check(); }
     if (signingUp) await reopen(name, password, check, signupLogin);
-    await opened(check, signingUp ? PROTECTED_READY : mode === 'create' ? 'Your account is ready. This browser checked it with the network. Next: keep your account safe under Keys.' : 'Your account is open. This browser checked your balance with the network.');
+    const readyNotice = managedLogin(name) ? VAULT_READY : PROTECTED_READY;
+    await opened(check, signingUp ? readyNotice : mode === 'create' ? 'Your account is ready. This browser checked it with the network. Next: keep your account safe under Keys.' : 'Your account is open. This browser checked your balance with the network.');
   // A name the network refused as too close to another (nameRefusal) cannot be gone on with: the wallet says so, as an error, and shows the form for a new account again.
   } catch (error) {
     // The device lost the key these keys are locked to, or cannot be asked here: the way back is "Recover my account".
-    if (error?.deviceLock === true && error.wayBack === true && !session) { try { check(); wayBack(error.message, name); setBusy(false); } catch {} return; }
+    if (error?.deviceLock === true && error.wayBack === true && !session) { try { check(); wayBack(failureNotice(error, 'Unlock with your original device or recover your account.'), name); setBusy(false); } catch {} return; }
     openFailed(error, check);
   }
   finally { try { check(); $('password').value = $('password-confirm').value = ''; setBusy(false); } catch {} }
@@ -715,6 +760,7 @@ function wayBack(message, name) {
   $('notice').replaceChildren(textNode('span', `${message} `), button); $('notice').className = 'notice error'; $('notice').hidden = false;
 }
 const PROTECTED_READY = 'Your account is ready, protected from its first block. This browser checked it with the network. Next time, open it with your name and your login password.';
+const VAULT_READY = 'Your account is ready. Next time, open it with your device and vault password.';
 /// The login place of a protected sign-up holds its new login key now (signup-ui.mjs, register): the session moves to it,
 /// opened with the same password, and the registration key, which is on no account, is forgotten.
 /// `opened`: the login key the password opened already, to open the registration key kept under it (vault version 4):
@@ -742,7 +788,7 @@ async function openWithDevice(record, password, intent, check) {
 }
 /// The end of a protected sign-up whose Recovery Kit was saved and whose keys this browser keeps now (signup-ui.mjs): the
 /// account is created with the registration key, and then opened with its new login key, which this page still holds.
-async function signupCreated({ name, registration, salt, signin }) {
+async function signupCreated({ name, registration, salt, signin, managed = false }) {
   const check = fence.capture();
   session = { privateKey: registration.privateKey, binding: { networkId: network.networkId, name, publicKey: registration.publicKey }, secret: { nameSalt: salt }, intent: 'device' };
   $('lock-button').hidden = false;
@@ -755,7 +801,7 @@ async function signupCreated({ name, registration, salt, signin }) {
     upgrades?.unlocked(); paidNamesNow();
     await registerAccount(); check();
     session = { privateKey: signin.privateKey, binding: { networkId: network.networkId, name, publicKey: signin.publicKey }, secret: null };
-    await opened(check, PROTECTED_READY);
+    await opened(check, managed ? VAULT_READY : PROTECTED_READY);
   } catch (error) { openFailed(error, check); }
 }
 /// The end of a move of an account to this browser that this page saw land (move-ui.mjs): the account opens with the new
@@ -787,12 +833,12 @@ async function opened(check, said) {
 function readAgain() {
   if (busy || !session || refreshing) return;
   const sameSession = fence.capture(); refreshing = true;
-  refresh().then(() => { const said = openedSaid; openedSaid = null; try { sameSession(); } catch { return; } if (said && $('notice').textContent === BUSY_OPENING && currentDevice(ownAccount())) notice(said); }).catch(async e => { try { sameSession(); } catch { return; } if (isBusyError(e)) return; latest = null; renderAvailability(); upgradeRequired(e); if (await networkReset()) return; try { sameSession(); } catch { return; } notice(`Verification paused. ${failureNotice(e, 'No reason was given.')}`, 'error'); }).finally(() => { refreshing = false; });
+  refresh().then(() => { const said = openedSaid; openedSaid = null; try { sameSession(); } catch { return; } if (said && $('notice').textContent === BUSY_OPENING && currentDevice(ownAccount())) notice(said); }).catch(async e => { try { sameSession(); } catch { return; } if (isBusyError(e)) return; latest = null; renderAvailability(); upgradeRequired(e); if (await networkReset()) return; try { sameSession(); } catch { return; } notice(`Verification paused. ${failureNotice(e, 'Check your connection and refresh Home to check your account again.')}`, 'error'); }).finally(() => { refreshing = false; });
 }
 /// A failure while an account is opened or created. A refusal of a protected sign-up in its own words (signup-ui.mjs,
 /// `signup`) is said as it is: what is kept goes on at the next opening.
 function openFailed(error, check) {
-  try { check(); if(session&&isBusyError(error)){const signingUp=mode!=='unlock'||signupUI.staged(session.binding.name,session.binding.publicKey),words=signingUp?BUSY_SIGNUP:BUSY_UNLOCK;lock(words,false);notice(words,signingUp?'error':'');return;} const message=failureNotice(error,'Could not open wallet.');if(session&&error?.nameRefused===true){lock(message);setMode('create');notice(message,'error');}else if(session&&error?.signup===true){lock(message);notice(message,'error');}else if(session)lock('The encrypted vault is saved. Unlock again to resume safely. '+message);else notice(message,'error'); upgradeRequired(error); networkReset().catch(() => {}); } catch {}
+  try { check(); if(session&&isBusyError(error)){const signingUp=mode!=='unlock'||signupUI.staged(session.binding.name,session.binding.publicKey),words=signingUp?BUSY_SIGNUP:BUSY_UNLOCK;lock(words,false);notice(words,signingUp?'error':'');return;} const message=failureNotice(error,'Open your saved account again in this browser. If it still cannot open, use account recovery.');if(session&&error?.nameRefused===true){lock(message);setMode('create');notice(message,'error');}else if(session&&error?.signup===true){lock(message);notice(message,'error');}else if(session)lock('The encrypted vault is saved. Unlock again to resume safely. '+message);else notice(message,'error'); upgradeRequired(error); networkReset().catch(() => {}); } catch {}
 }
 // ---------------------------------------------------------------- a test network that was reset (reset.mjs)
 // A page that is open while its network is reset fails to verify. After a failure it reads the site's trust file again
@@ -826,7 +872,7 @@ async function refresh() {
   const account = ownAccount(state); assert(account, 'Account is not finalized yet. Unlock again to resume registration.');
   for (const slot of [String(account.id), emergencyCancelSlot(account.id), nonceCancelSlot(account.id)]) {
     const reservation = pending.get(network.networkId, slot);
-    if (reservation && (slot !== String(account.id) ? emergencyReservationObsolete(account, reservation) : authorityReservationObsolete(account, reservation))) pending.clear(network.networkId, slot, reservation.hash);
+    if (reservation && (slot !== String(account.id) ? emergencyReservationObsolete(account, reservation) : authorityReservationObsolete(account, reservation))) retireReservation(pending, network.networkId, account.id, slot, reservation);
   }
   // An activity that does not know where it starts (the private store could not be read with this login key: keys made by
   // a recovery, a backup of another key) starts at the account's nonce of now. The Alerts panel then counts the actions
@@ -877,6 +923,8 @@ async function refresh() {
   recoveryUI.render(account, state); securityUI.render(account, state); signalUI.render(account, state); renderKeys(account, state); lockUI.render(account, Boolean(securityRow(account, state))); moveUI.render(account, state); renderActivity(); renderAvailability();
   // The Alerts panel at the top of Home, from this same verified state (alerts-ui.mjs).
   alertsUI.render(account, state);
+  // The market of seconds against bitcoin, only on a network whose proven state has it (market-ui.mjs).
+  marketUI.render(account, state);
   if (wasAwaitingApproval && !busy) notice('This browser is now approved. It checked your account and balance with the network.');
 }
 // ---------------------------------------------------------------- Keys
@@ -884,12 +932,17 @@ async function refresh() {
 // security row in the verified state (the same test as security-flows.mjs, accountSecured).
 function securityRow(account, state) { return Array.isArray(state?.security) ? state.security.find(r => r.account === String(account.id)) || null : null; }
 function renderKeys(account, state) {
+  const managed = managedLogin(account.name);
+  if (managed) document.body.classList.add('vault-account');
+  else document.body.classList.remove('vault-account');
+  $('vault-manage').hidden = !managed;
+  if (managed) $('vault-manage').href = vaultOrigin + '/';
   const row = securityRow(account, state), slots = vaultSlots(network.networkId, account.name);
   let paymentKeyHere = false; try { paymentKeyHere = localStorage.getItem(slots.spend) !== null; } catch { paymentKeyHere = false; }
   // The limit in force and whether payments are paused, as the Protection card on Home reads them (protection.mjs): on
   // the clock of the waits, which a stop of the chain does not move (security-flows.mjs, waitsOf).
   const now = waitsOf(sdk, state);
-  const view = keysView({ protectedAccount: Boolean(row), name: account.name, limit: row ? seconds(effectiveLimit(row, now)) + ' seconds' : '', waiting: row ? durationWords(row.policy.delay_seconds) : '',
+  const view = keysView({ protectedAccount: Boolean(row), managed, name: account.name, limit: row ? seconds(effectiveLimit(row, now)) + ' seconds' : '', waiting: row ? durationWords(row.policy.delay_seconds) : '',
     paused: Boolean(row) && pauseState(row, now, networkFee()) !== 'off',
     paymentKeyHere, guardians: Boolean(account.recovery_policy), otherKeys: account.devices.filter(d => d.public_key !== session.binding.publicKey).length, recoveryKind: row ? recoveryKindOf(localStorage, network.networkId, account) : null, balanceMicros: String(account.balance ?? '0') });
   $('keys-lede').textContent = view.lede;
@@ -930,8 +983,9 @@ function printKeys() { document.body.classList.add('print-keys'); try { window.p
 // Home, Payments, Activity, Keys and More are the five places of the dashboard; Receive is the other half of Payments,
 // and the rows of More open their own screens (staking, devices, ...). Nothing is lost by moving between them: a
 // screen is only hidden.
-const MORE_PANELS = new Set(['earn', 'devices', 'recovery', 'upgrade', 'integrate', 'validator']);
+const MORE_PANELS = new Set(['earn', 'devices', 'recovery', 'upgrade', 'integrate', 'validator', 'market']);
 function showPanel(name) {
+  clearVaultFields(); closeVault();
   for (const panel of document.querySelectorAll('.workspace-panel')) panel.hidden = panel.id !== 'panel-' + name;
   const lit = MORE_PANELS.has(name) ? 'more' : name === 'receive' ? 'send' : name;
   for (const button of document.querySelectorAll('.nav [data-panel]')) {
@@ -940,6 +994,8 @@ function showPanel(name) {
   }
 }
 function clearHome() {
+  document.body.classList.remove('vault-account');
+  $('vault-manage').hidden = true;
   $('balance').textContent = '—'; $('account-name').textContent = '@—'; $('account-number').textContent = ''; $('proof-height').textContent = '';
   $('account-verification').textContent = 'Not checked yet'; $('account-verification').className = 'badge';
   $('approval-account').hidden = true; $('approval-account').textContent = '';
@@ -1045,12 +1101,12 @@ async function stakeForm(event) { event.preventDefault(); await run(async () => 
 }); }
 async function approveDevice(event) { event.preventDefault(); await run(async () => {
   const raw = $('device-request').value; assert(raw.length < 4096, 'Enrollment request is too large.'); let r; try { r = JSON.parse(raw); } catch { throw new Error('Paste a valid public enrollment request.'); }
-  assert(Object.keys(r).sort().join(',') === 'accountId,authEpoch,canManage,canSpend,networkId,proof,publicKey,version', 'Unknown or missing enrollment fields.');
+  assert(r && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).sort().join(',') === 'accountId,authEpoch,canManage,canSpend,networkId,proof,publicKey,version', 'The device request is incomplete or uses a different format. Copy a new request from the device you want to add.');
   const state = await verifiedState(), account = ownAccount(state), check = fence.capture();
-  assert(r.version === 1 && r.networkId === network.networkId && r.accountId === String(account.id) && r.authEpoch === String(account.auth_epoch), 'Request belongs to another account/network or has an obsolete authority epoch. Generate it again on the new device.');
+  assert(r.version === 1 && r.networkId === network.networkId && r.accountId === String(account.id) && r.authEpoch === String(account.auth_epoch), 'This device request is out of date or belongs to a different account or network. Create a new request on the device you want to add.');
   assert(typeof r.canManage === 'boolean' && typeof r.canSpend === 'boolean' && /^[0-9a-f]{64}$/.test(r.publicKey) && /^[0-9a-f]{128}$/.test(r.proof), 'Invalid enrollment proof fields.');
   const publicKey = await crypto.subtle.importKey('raw', sdk.hexToBytes(r.publicKey), 'Ed25519', false, ['verify']);
-  assert(await crypto.subtle.verify('Ed25519', publicKey, sdk.hexToBytes(r.proof), sdk.deviceProofBytes(r)), 'New device proof of key possession failed.'); check();
+  assert(await crypto.subtle.verify('Ed25519', publicKey, sdk.hexToBytes(r.proof), sdk.deviceProofBytes(r)), 'The wallet could not verify the new device. Create a new request on that device.'); check();
   if (!await review('Approve a new device', [['New public key · compare on both devices', r.publicKey], ['Spend authority', r.canSpend ? 'Can send and stake your seconds' : 'No'], ['Management authority', r.canManage ? 'Can add and revoke devices' : 'No'], ['Fee', seconds(networkFee()) + ' seconds']], 'Approve this device')) return;
   check(); setBusy(true); await sendSigned('add_device', { public_key: r.publicKey, can_manage: r.canManage, can_spend: r.canSpend, proof: r.proof }, 'Approve new device'); await refresh(); $('device-request').value = ''; notice('The new browser is approved. In that browser, press “Check again” to start using the account.');
 }); }
@@ -1085,15 +1141,15 @@ async function approveWebsite() { await run(async () => {
   let result;
   if (requested.request.type === 'login') {
     const challenge = requested.request.challenge;
-    assert(challenge.origin === requested.origin && challenge.networkId === network.networkId, 'Wrong login audience or network.');
+    assert(challenge.origin === requested.origin && challenge.networkId === network.networkId, 'This sign-in request belongs to a different website or network. Return to the website you wanted to use and start sign-in again.');
     const refusal = securityUI.loginRefusal(state, account); assert(!refusal, refusal);
     if (!await review('Approve website login', [['Website', requested.origin], ['Account', '@' + account.name], ['Permission', 'Sign in only. It cannot pay, and cannot change your keys.'], ['Expires', new Date(challenge.expiresAt).toLocaleString()]], 'Sign in')) return;
     check(); setBusy(true);
     result = await sdk.signLogin(challenge, { account, publicKey: session.binding.publicKey, privateKey: session.privateKey }); check();
   } else {
     const r = requested.request;
-    assert(r.networkId === network.networkId && typeof r.to === 'string' && /^[0-9]+$/.test(r.to) && typeof r.amount === 'string' && /^[1-9][0-9]*$/.test(r.amount), 'Invalid payment network, account or integer amount.');
-    assert(typeof r.orderId === 'string' && /^[0-9a-f]{64}$/.test(r.orderId), 'Payment order must have a fresh 32-byte hexadecimal reference.');
+    assert(r.networkId === network.networkId && typeof r.to === 'string' && /^[0-9]+$/.test(r.to) && typeof r.amount === 'string' && /^[1-9][0-9]*$/.test(r.amount), 'The website sent incomplete or incorrect payment details. Return to checkout and check the amount and recipient.');
+    assert(typeof r.orderId === 'string' && /^[0-9a-f]{64}$/.test(r.orderId), 'The website sent an invalid order number. Return to checkout to request a new payment.');
     // Checked against the state just verified; checkMerchantQuote reads the version from it.
     sdk.checkMerchantQuote(r.orderId,(BigInt(account.nonce)+1n).toString(),state);
     const recipient = state.accounts.find(a => String(a.id) === r.to); assert(recipient, 'Recipient does not exist.');
@@ -1116,9 +1172,9 @@ async function start() {
   document.dispatchEvent?.(new Event('time-wallet:started'));
   setupApproval();
   try {
-    assert(globalThis.isSecureContext, 'Open the wallet on localhost or HTTPS. This origin cannot use secure browser cryptography.');
-    assert(sdk && globalThis.hashwasm?.argon2id, 'A required local SDK or Argon2id asset is unavailable. No signing is allowed.');
-    assert(navigator.locks?.request, 'Web Locks are required to coordinate safe signing across tabs.');
+    assert(globalThis.isSecureContext, 'Open the wallet using its secure HTTPS address so your browser can protect your keys.');
+    assert(sdk && globalThis.hashwasm?.argon2id, 'Part of the wallet could not load. Reload the page before trying to sign in or approve a request.');
+    assert(navigator.locks?.request, 'This browser cannot safely coordinate wallet approvals across tabs. Use a current version of Chrome, Edge, Firefox, or Safari.');
   } catch (error) { cannotCheck(error); return; }
   await connect();
 }
@@ -1132,7 +1188,7 @@ async function connect() {
   try {
     if (!client) {
       const pin = await askWhenFree(() => fetch('/trust-manifest.json', { cache: 'no-store', redirect: 'error' }), busyOptions());
-      assert(pin.ok, 'Installed trust manifest unavailable');
+      assert(pin.ok, 'The wallet could not load the file it needs to verify this network. Reload the wallet and check your connection.');
       client = sdk.createClient({ trust: await pin.json(), verifier: installedVerifier, onBusy: busyTold });
     }
     if (!network) await connectNetwork();
@@ -1166,11 +1222,14 @@ async function connected() {
     const saved = Object.keys(localStorage).filter(k => k.startsWith(vaultPrefix + network.networkId + ':'));
     if (saved.length) { $('username').value = saved[0].slice((vaultPrefix + network.networkId + ':').length); setMode('unlock'); }
     // On a network that takes them, "Create an account" is the protected sign-up (signup-ui.mjs).
-    else if (signupUI.on()) setMode('create');
+    else setMode('create');
     notice('Connected to the Time test network, and checked by this browser. Create an account, or open yours.');
     // A protected sign-up that this browser keeps and that did not end: its name, and how to go on.
     const unfinished = saved.map(key => key.slice((vaultPrefix + network.networkId + ':').length)).find(name => signupUI.staged(name));
-    if (unfinished) { $('username').value = unfinished; signupUI.offer(unfinished); notice(`Creating @${unfinished} was not finished. Open it with your login password: this browser goes on from what the network shows.`); }
+    if (unfinished) {
+      $('username').value = unfinished; signupUI.offer(unfinished); renderVaultLogin();
+      notice(managedLogin(unfinished) ? `Open @${unfinished} with Time Vault to finish creating your account.` : `Creating @${unfinished} was not finished. Open it with your login password: this browser goes on from what the network shows.`);
+    }
     // The test network was reset, and this browser keeps accounts of the old one only (reset.mjs).
     showReset();
     await securityUI.start();
@@ -1181,6 +1240,7 @@ async function connected() {
 // review says first what each does to the daily limit (security-ui.mjs, stakeAction and stakeLimit).
 const posUI=createPosUI({sdk,network:()=>network,ownAccount,verifiedState,sendSigned:(kind,payload,label,options)=>securityUI.secured(latest?.state,ownAccount())?securityUI.stakeAction(kind,payload,label,options):sendSigned(kind,payload,label,options),limitLines:(kind,payload)=>securityUI.secured(latest?.state,ownAccount())?securityUI.stakeLimit(kind,payload):null,refresh,review,notice,run,setBusy,capture:()=>fence.capture(),seconds,parseSeconds});
 const securityUI = createSecurityUI({sdk, client: () => client, network: () => network, session: () => session, state: () => latest?.state, ownAccount, verifiedState, sendSigned, refresh, review, notice, run, setBusy, capture: () => fence.capture(), seconds, fee: networkFee, pending,
+  managed: managedLogin,
   record: (receipt, label) => (session ? recordReceipt(receipt, label) : undefined), cleared: () => { if (session) renderPending(); }, lock, argon2id: () => globalThis.hashwasm?.argon2id, download: downloadJSON,
   // A new login key this browser made for the open account: it may open what the account keeps privately (locked-store.mjs).
   // The device's own check, for keys locked to this device (device-lock.mjs), and whether it can lock keys from birth.
@@ -1212,16 +1272,29 @@ const signalUI = createSignalUI({ sdk, client: () => client, network: () => netw
   sign: signalSigner({ secured: () => securityUI.secured(latest?.state, ownAccount()), signalAction: (payload, label) => securityUI.signalAction(payload, label), sendSigned }) });
 // "Create an account" on a network that takes accounts protected from their first block (signup-ui.mjs).
 const signupUI = createSignupUI({ sdk, client: () => client, network: () => network, state: () => latest?.state, verifiedState, registrationSponsor, nameRefusal, failureNotice, notice, setBusy, run, review, capture: () => fence.capture(), fee: networkFee, parseSeconds,
+  startManager, managerAvailable: () => Boolean(vaultOrigin),
   argon2id: () => globalThis.hashwasm?.argon2id, storage: localStorage, locks: () => navigator.locks, record: (receipt, label) => (session ? recordReceipt(receipt, label) : undefined), created: signupCreated, download: downloadJSON,
   // Keys locked to this device from birth where it can, else passwords the wallet makes, shown once (the rule).
   env: () => browserEnv(globalThis.window ?? globalThis), showMade, typedPassword });
 // The Alerts panel on Home (alerts-ui.mjs): what needs the owner, from each verified state; the live hint while unlocked; the switch.
 // `sentSince`: how many actions this browser's own record (the activity) holds above a marker's nonce (alerts.mjs, K-4).
 // "Lock my keys to this device" on Keys (device-lock-ui.mjs, device-lock.mjs).
-const lockUI = createLockUI({ network: () => network, session: () => session, storage: localStorage, locks: () => navigator.locks, env: () => browserEnv(globalThis.window ?? globalThis), argon2id: () => globalThis.hashwasm?.argon2id, run, notice, setBusy, capture: () => fence.capture(), refresh, review, showMade });
+const lockUI = createLockUI({ network: () => network, session: () => session, managed: managedLogin, storage: localStorage, locks: () => navigator.locks, env: () => browserEnv(globalThis.window ?? globalThis), argon2id: () => globalThis.hashwasm?.argon2id, run, notice, setBusy, capture: () => fence.capture(), refresh, review, showMade });
 const alertsUI = createAlertsUI({ sdk, network: () => network, session: () => session, ownAccount, storage: localStorage, run, notice, setBusy, readAgain, onBusy: busyOptions().onBusy,
   // Null while the activity does not know everything this browser sent since that nonce (locked-store.mjs, sentSinceOf).
   sentSince: nonce => sentSinceOf({ since: activitySince, items: activity }, nonce) });
+// The market of seconds against bitcoin (market-ui.mjs; spec/market.md), under More, on a network that has it. Its lists
+// come from the trading API under this page's own address (market-api.mjs); everything a person pays or signs on is read
+// through verifiedState. It signs like every tab: sendSigned with this browser's key, or on a protected account the
+// payment key with the payment password, for that one action (security-ui.mjs, marketAction).
+const marketUI = createMarketUI({ sdk, codec: () => import('/web-v4/shared/bitcoin-address.mjs'), api: createMarketApi({ fetch: (path, options) => fetch(path, options) }), storage: localStorage,
+  network: () => network, session: () => session, state: () => latest?.state, ownAccount, verifiedState, review, notice, run, setBusy, capture: () => fence.capture(), refresh, seconds, parseSeconds, fee: networkFee,
+  secured: () => securityUI.secured(latest?.state, ownAccount()), limit: (charge, what) => securityUI.marketLimit(charge, what), frozen: (row, now) => securityUI.frozenRow(row, now),
+  sign: (kind, payload, label, options) => (securityUI.secured(latest?.state, ownAccount()) ? securityUI.marketAction(kind, payload, label, options) : sendSigned(kind, payload, label)),
+  // A refusal the gateway passed on is shown after the market's own sentence, as the gateway's words (actions.mjs, failureNotice).
+  gatewayWords: failureNotice, idle: () => !busy && !running && !$('review-dialog').open, trade: createTradeView,
+  showPanel: name => showPanel(name), copy: text => navigator.clipboard.writeText(text) });
+marketUI.start();
 const recoveryUI = createRecoveryUI({rememberGuardianTarget:name=>{guardianTargetName=name;},paidNames:()=>paidNamesNow(),sdk, network: () => network, session: () => session, state: () => latest?.state, ownAccount, verifiedState, sendSigned, refresh, review, notice, run, setBusy, capture: () => fence.capture(), fee: () => seconds(networkFee()) + ' seconds' });
 for (const m of ['create', 'unlock', 'link', 'recover']) $(`mode-${m}`).addEventListener('click', () => {
   if (busy) return; setMode(m);
@@ -1229,6 +1302,16 @@ for (const m of ['create', 'unlock', 'link', 'recover']) $(`mode-${m}`).addEvent
   if (m === 'link' || m === 'recover') { $('auth-heading').scrollIntoView?.({ block: 'start' }); $('username').focus?.(); }
 });
 $('review-ack').addEventListener('change', reviewGate);
+$('vault-login-method').addEventListener('click', () => { manualUnlock = !manualUnlock; renderVaultLogin(); });
+$('username').addEventListener('input', () => { manualUnlock = false; renderVaultLogin(); });
+if (vaultOrigin) {
+  installVaultFields({ doc: document, startManager, notice, context: id => {
+    const recovering = id === 'lost-phrase';
+    const name = recovering ? $('lost-name').value.trim().replace(/^@/, '') : session?.binding.name;
+    if (!network || !name || !/^[a-z0-9_]{2,15}$/.test(name) || (!recovering && !managedLogin(name))) return null;
+    return { networkId: network.networkId, name };
+  } });
+}
 // In a review a key that repeats because it is held down does nothing: it neither confirms nor ticks the box.
 $('review-dialog').addEventListener('keydown', event => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); });
 $('auth-form').addEventListener('submit', auth); $('send-form').addEventListener('submit', sendForm); $('bid-form').addEventListener('submit', bidForm); $('stake-form').addEventListener('submit', stakeForm); $('approve-device-form').addEventListener('submit', approveDevice);
@@ -1257,7 +1340,7 @@ for (const tab of document.querySelectorAll('[data-panel]')) tab.addEventListene
 for (const event of ['pointerdown', 'keydown']) document.addEventListener(event, scheduleIdleLock, { passive: true });
 window.addEventListener('storage', event => { if (event.key?.startsWith('timecurrency.pending.v1:') && session) renderPending(); privateStore.storageEvent(event); });
 // The page hides: the session goes, and with it the key of the private store; what was being written is written.
-window.addEventListener('pagehide', () => { fence.bump(); if (session) { forgetSecret(session.secret); session.privateKey = null; } session = null; privateStore.close(); lockAskerMade?.forgetAll(); });
+window.addEventListener('pagehide', () => { fence.bump(); closeVault(); clearVaultFields(); if (session) { forgetSecret(session.secret); session.privateKey = null; } session = null; privateStore.close(); lockAskerMade?.forgetAll(); });
 window.addEventListener('pageshow', event => { if (event.persisted) lock('This wallet was locked when the page closed. Unlock it again to sign.'); });
 start();
 

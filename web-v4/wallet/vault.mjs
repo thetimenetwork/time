@@ -81,7 +81,7 @@ function commonWord(low, name) {
 export function checkPassword(password, name = '') {
   if (typeof password !== 'string' || [...password].length < 15) throw new Error('Choose a password with at least 15 characters. A unique passphrase works well.');
   if ([...password].length > 1024) throw new Error('Use a password of at most 1,024 characters.');
-  if (password.includes('\0') || /[\ud800-\udfff]/u.test(password.replace(/[\u{10000}-\u{10ffff}]/gu, ''))) throw new Error('Use valid Unicode text without NUL characters.');
+  if (password.includes('\0') || /[\ud800-\udfff]/u.test(password.replace(/[\u{10000}-\u{10ffff}]/gu, ''))) throw new Error('The password contains a character the wallet cannot use. Try typing it again.');
   const low = password.toLowerCase();
   if (COMMON.has(low) || new Set([...low]).size < 5 || /^(.)\1+$/u.test(password) || /^(?:password|qwerty|123456|letmein|welcome)[\W\d]*$/i.test(password) || (name && low.replace(/[\W\d_]/g, '') === name.toLowerCase())) throw new Error('This password is too easy to guess. Choose a unique passphrase.');
   if (repeatedUnit(low)) throw new Error(EASY + 'it repeats the same part.' + UNRELATED);

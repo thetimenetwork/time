@@ -342,6 +342,13 @@ pub struct Meta {
     /// row has the encoding it always had.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "optional_decimal")]
     pub stopped_micros: Option<u64>,
+    /// All the seconds the market holds, in microseconds, on a network with
+    /// the market (`spec/market.md`, section 4): what sell orders offer,
+    /// the bonds of buy orders, and the seconds and deposits of fills. It is
+    /// one more term of the supply rule. On any other network the field is
+    /// absent, and the row has the encoding it always had.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "optional_decimal")]
+    pub market_micros: Option<u64>,
 }
 /// `Option<u64>` as a decimal string. `None` is written by leaving the
 /// field out, and read from its absence only.
@@ -414,6 +421,10 @@ impl Meta {
             "the stops exceed the chain's time"
         );
         ensure!(
+            self.market_micros.is_some() == self.config.market,
+            "the market's total belongs to a network with the market, and to no other"
+        );
+        ensure!(
             (self.height == 0 && self.history_pruned_through == 0
                 || self.height > 0 && self.history_pruned_through < self.height as u64)
                 && self.history_pruned_time >= self.genesis.genesis_time_micros
@@ -448,6 +459,7 @@ impl Meta {
             .checked_add(self.liquid_total)
             .and_then(|s| s.checked_add(self.pos_assets_total))
             .and_then(|s| s.checked_add(self.auction_reserve_total))
+            .and_then(|s| s.checked_add(self.market_micros.unwrap_or(0)))
             .ok_or_else(|| anyhow!("supply overflow"))?;
         ensure!(supply == elapsed, "supply differs from elapsed chain time");
         ensure!(
@@ -1179,6 +1191,8 @@ impl Engine {
             // A network whose waits survive a stop counts its stops from
             // the first block; any other has no such number.
             stopped_micros: config.waits_survive_stops.then_some(0),
+            // A network with the market starts with nothing in it.
+            market_micros: config.market.then_some(0),
             genesis: Arc::new(state.genesis),
             config: Arc::new(config),
             pos_assets_total: 0,
@@ -1298,6 +1312,7 @@ impl Engine {
             crate::auction::initialize(&mut stage)?;
             crate::registration_adapter::initialize(&mut stage)?;
             crate::service::initialize(&mut stage)?;
+            crate::market::initialize(&mut stage)?;
             stage.commit();
         }
         let mut prepared = overlay.finish(&self.store, 0)?;
@@ -2053,6 +2068,7 @@ impl Engine {
         let security_leaves = crate::security::audit(&snapshot, meta)?;
         let upgrade_leaves = upgrade::audit(&snapshot, meta)?;
         let service_leaves = crate::service::audit(&snapshot, meta)?;
+        let market_leaves = crate::market::audit(&snapshot, meta)?;
         let mut blocks = 0u64;
         let mut previous_time = meta.history_pruned_time;
         snapshot.for_each_prefix(b"block/", |key, raw| {
@@ -2134,6 +2150,7 @@ impl Engine {
             .and_then(|v| v.checked_add(security_leaves))
             .and_then(|v| v.checked_add(upgrade_leaves))
             .and_then(|v| v.checked_add(service_leaves))
+            .and_then(|v| v.checked_add(market_leaves))
             .and_then(|v| v.checked_add(blocks.checked_mul(2)?))
             .ok_or_else(|| anyhow!("audited namespace count overflow"))?;
         ensure!(
@@ -2338,6 +2355,8 @@ pub trait ExtensionHost {
     fn fee_credit(&mut self, amount: u64) -> Result<()>;
     fn set_auction_reserve(&mut self, total: u64) -> Result<()>;
     fn set_pos_assets(&mut self, total: u64) -> Result<()>;
+    /// Sets `Meta::market_micros`, on a network with the market.
+    fn set_market(&mut self, total: u64) -> Result<()>;
     /// How far past the current time an expiry must lie: nothing when a block
     /// is executed, `ADMISSION_MARGIN_MICROS` when the mempool decides
     /// admission.
@@ -2439,6 +2458,7 @@ impl ExtensionHost for ActionStage<'_> {
                 b"registration/",
                 b"security/",
                 crate::service::PREFIX,
+                crate::market::PREFIX,
             ]
             .iter()
             .any(|prefix| key.starts_with(prefix)),
@@ -2453,6 +2473,10 @@ impl ExtensionHost for ActionStage<'_> {
         ensure!(
             self.meta.config.service_records || !key.starts_with(crate::service::PREFIX),
             "service records belong to a network with service_records"
+        );
+        ensure!(
+            self.meta.config.market || !key.starts_with(crate::market::PREFIX),
+            "market rows belong to a network with the market"
         );
         ensure!(
             value.as_ref().is_none_or(|v| v.len() <= 1024 * 1024),
@@ -2531,6 +2555,11 @@ impl ExtensionHost for ActionStage<'_> {
     }
     fn set_pos_assets(&mut self, total: u64) -> Result<()> {
         self.meta.pos_assets_total = total;
+        Ok(())
+    }
+    fn set_market(&mut self, total: u64) -> Result<()> {
+        ensure!(self.meta.market_micros.is_some(), "this network has no market");
+        self.meta.market_micros = Some(total);
         Ok(())
     }
     fn expiry_margin(&self) -> u64 {
@@ -2978,7 +3007,10 @@ impl Overlay {
         ensure!(
             !safety_hold
                 || matches!(kind, 17 | 18 | 20 | 40 | upgrade::SIGNAL)
-                || crate::security::protective(kind),
+                || crate::security::protective(kind)
+                // A fill ends when its time to prove a payment has passed,
+                // and that time runs through a hold (`spec/market.md`, 5.5).
+                || (kind == crate::market::PROOF && self.meta.config.market),
             "critical validator hold permits only headers, equivocation evidence, existing-account self collateral repair, upgrade signals, or an account's protective actions"
         );
         // A registration that creates its account with a set of keys: an
@@ -3084,11 +3116,23 @@ impl Overlay {
                 self.load_upgrade()?;
             }
             let mut stage = ActionStage::new(self);
+            // What the action hands to others without taking it from the
+            // sender's balance (a market settle, what a release gives up, what
+            // new scripts for an order point elsewhere): counted against a
+            // secured sender's daily limit like what leaves the balance.
+            let mut handed = 0u64;
             match kind {
                 5 | 6 | 7 | 17 | 18 | 19 | 20 | 21 | 23 | 24 => {
                     crate::pos_adapter::apply(&mut stage, &action)?
                 }
-                40 | 41 => crate::bitcoin_adapter::apply(&mut stage, &action)?,
+                40 => {
+                    crate::bitcoin_adapter::apply(&mut stage, &action)?;
+                    crate::market::headers_applied(&mut stage)?;
+                }
+                41 => crate::bitcoin_adapter::apply(&mut stage, &action)?,
+                crate::market::ORDER..=crate::market::ADDRESSES => {
+                    handed = crate::market::apply(&mut stage, &action)?;
+                }
                 42 => crate::auction::apply(&mut stage, &action)?,
                 44 => crate::registration_adapter::apply(&mut stage, &action)?,
                 60..=63 => crate::treasury_adapter::apply(&mut stage, &action)?,
@@ -3111,7 +3155,7 @@ impl Overlay {
                 let balance = owner.balance;
                 stage.accounts.insert(owner.id, owner);
                 if let Some((mut security, before, now)) = secured {
-                    security.spend(before.saturating_sub(balance), now)?;
+                    security.spend(pos::add(before.saturating_sub(balance), handed)?, now)?;
                     stage.security_rows = true;
                     stage.put(
                         crate::security::key(action.from),

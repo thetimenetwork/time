@@ -10,7 +10,7 @@ pub const MAX_PAYLOAD: usize = 512 * 1024;
 pub fn extension_kind(kind: u8) -> bool {
     matches!(
         kind,
-        17 | 18 | 19 | 20 | 21 | 23 | 24 | 40 | 41 | 42 | 44 | 45 | 60 | 61 | 62 | 63 | 70..=77 | 80
+        17 | 18 | 19 | 20 | 21 | 23 | 24 | 40 | 41 | 42 | 44 | 45 | 50..=58 | 60 | 61 | 62 | 63 | 70..=77 | 80
     )
 }
 #[derive(Clone, Debug)]

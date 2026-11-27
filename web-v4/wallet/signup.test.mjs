@@ -24,7 +24,7 @@ await import(new URL('client-v4/time-sdk.js', root).href);
 const SDK = globalThis.TimeSDK;
 const F = await import(new URL('web-v4/wallet/security-flows.mjs', root).href);
 const S = await import(new URL('web-v4/wallet/signup.mjs', root).href);
-const { KEPT, PAPERS_ACTIVITY, PAPERS_IDLE, DROPPED } = await import(new URL('web-v4/wallet/signup-ui.mjs', root).href);
+const { createSignupUI, KEPT, PAPERS_ACTIVITY, PAPERS_IDLE, DROPPED } = await import(new URL('web-v4/wallet/signup-ui.mjs', root).href);
 const { openVault, openUnder, newDevice, validateVaultRecord, madeForm, vaultUnder, vaultDevice } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
 const { sealLegacy, sealsKept, provenSeals } = await import(new URL('web-v4/wallet/tests/legacy-vault.mjs', root).href);
 const { LOCK_WORDS, DEVICE_KEY_PLACE, deviceSecrets, saltOfRecord } = await import(new URL('web-v4/wallet/device-lock.mjs', root).href);
@@ -42,10 +42,12 @@ class El {
   constructor(id) { Object.assign(this, { id, value: '', hidden: false, textContent: '', disabled: false, checked: false, open: false, returnValue: '', dataset: {}, type: 'text', children: [], listeners: {}, className: '', files: [], required: false, classList: { add() {}, remove() {}, toggle() {} } }); }
   addEventListener(type, fn, options) { (this.listeners[type] ??= []).push({ fn, once: options?.once === true }); }
   querySelectorAll() { return [this.querySelector()]; } querySelector() { return this.button ??= new El(this.id + '-button'); }
-  replaceChildren(...c) { this.children = c; } append(...c) { this.children.push(...c); } remove() {} click() {}
+  replaceChildren(...c) { this.children = c; } append(...c) { this.children.push(...c); } after(el) { this.nextElementSibling = el; } remove() {} click() {}
   showModal() { this.open = true; } close() { this.open = false; }
   setAttribute(name, value) { (this.attributes ??= {})[name] = String(value); } getAttribute(name) { return this.attributes?.[name] ?? null; } removeAttribute(name) { delete this.attributes?.[name]; }
   focus() {} select() {} scrollIntoView() {}
+  getClientRects() { return this.hidden ? [] : [{}]; }
+  dispatchEvent(event) { return this.fire(event.type); }
   async fire(type) { const list = this.listeners[type] || []; this.listeners[type] = list.filter(item => !item.once); await Promise.all(list.map(item => item.fn({ preventDefault() {}, data: null }))); }
 }
 let dom = new Map();
@@ -123,6 +125,16 @@ async function judge(action, tx) {
   if (action.networkId !== NET) return 'wrong network';
   if (!await verify(action.publicKey, SDK.bytesToHex(tx.slice(-64)), tx.slice(0, -64))) return 'invalid action signature';
   const p = action.payload;
+  if (action.kind === SDK.KINDS.transfer) {
+    const from = chain.accounts.find(a => a.id === action.from), to = chain.accounts.find(a => a.id === p.to);
+    if (!from?.devices.some(d => d.public_key === action.publicKey && d.can_spend) || !to) return 'unauthorized transfer';
+    const total = BigInt(p.amount) + 1000n;
+    if (BigInt(action.nonce) !== BigInt(from.nonce) + 1n || BigInt(from.balance) < total) return 'invalid transfer';
+    return () => {
+      from.nonce = action.nonce; from.balance = String(BigInt(from.balance) - total);
+      to.balance = String(BigInt(to.balance) + BigInt(p.amount));
+    };
+  }
   if (action.kind === 44) {
     const from = chain.accounts.find(a => a.id === action.from);
     if (!from || !from.devices.some(d => d.public_key === action.publicKey && d.can_spend) || BigInt(action.nonce) !== BigInt(from.nonce) + 1n) return 'spending device required';
@@ -231,7 +243,7 @@ async function freshPage() {
   dom = new Map();
   for (const id of HIDDEN) $(id).hidden = true;
   await import(new URL(`web-v4/wallet/app.js?signup=${++pages}`, root).href);
-  await until(() => /^(Connected to the Time test network|Creating @|The new keys of @)/.test($('notice').textContent) || $('notice').className.includes('error'), 'the wallet to start');
+  await until(() => /^(Connected to the Time test network|Creating @|Open @|The new keys of @)/.test($('notice').textContent) || $('notice').className.includes('error'), 'the wallet to start');
 }
 const slots = name => F.vaultSlots(NET, name);
 /// What this browser keeps for a name on this network, by kind of place.
@@ -279,7 +291,7 @@ async function choose(way, prefix = 'auth') {
 /// with `switched` the other way first, then that one; with `chosen`, the test drew the form and chose already. Where the
 /// wallet makes the passwords, nothing is typed but the name, and the passwords are read from the dialog that shows them.
 /// Waits for the step of the recovery words, or for the wallet's answer.
-async function step1(name, { limit = null, device = false, decline = false, switched = false, chosen = false } = {}) {
+async function step1(name, { device = false, decline = false, switched = false, chosen = false } = {}) {
   if (!chosen) { await $('mode-create').fire('click'); if (!device) await formDrawn(); }
   if (device && !chosen) {
     await choiceDrawn();
@@ -290,7 +302,6 @@ async function step1(name, { limit = null, device = false, decline = false, swit
   const typed = device && !decline;
   $('username').value = name;
   if (typed) { $('password').value = $('password-confirm').value = LOGIN; $('signup-payment').value = $('signup-payment-confirm').value = PAYMENT; }
-  if (limit !== null) { $('signup-limit').value = limit; await $('signup-limit').fire('input'); }
   $('notice').textContent = ''; $('notice').className = 'notice';
   // The form's step waits for the person to close the dialog of the passwords: it is not awaited before that.
   const sent = $('auth-form').fire('submit');
@@ -353,16 +364,21 @@ const raw = name => { const s = slots(name); return [s.login, s.spend, s.nextLog
 
 await freshPage();
 
-test('the form: where this device cannot lock keys, a name and a daily limit of 600 seconds, and the wallet says it makes both passwords; then one step, five words on paper, and nothing to download or print', async () => {
+test('the form: manual signup asks for a name and explains how to keep both generated passwords and five recovery words', async () => {
   await formDrawn();
+  for (const id of ['password', 'password-label', 'password-confirm', 'confirm-label', 'password-note']) {
+    assert.ok(HIDDEN.includes(id), `${id} stays out of the initial screen while the network is checked`);
+  }
   // This stand-in page has no device that can lock keys (no WebAuthn): no password field is asked (the rule, vault.mjs RULE),
   // and no choice is shown: the wallet makes the passwords and says so.
   assert.deepEqual([$('password-label').textContent, $('confirm-label').textContent, $('password-note').hidden, $('signup-login-note').hidden, $('signup-protected').hidden], ['Login password', 'Login password again', true, true, false]);
   assert.deepEqual(['password-label', 'password', 'confirm-label', 'password-confirm', 'signup-chosen'].map(id => $(id).hidden), [true, true, true, true, true]);
   assert.deepEqual([$('auth-seal-note').hidden, $('auth-seal-note').textContent, $('auth-ways').hidden, $('auth-way-device').checked, $('auth-way-made').checked], [false, LOCK_WORDS.birthMade, true, false, false]);
-  assert.deepEqual([$('signup-limit').value, $('signup-limit-suggested').textContent, $('auth-submit').textContent], ['600', 'Suggested: 10 minutes of seconds a day (600).', 'Next: my recovery words']);
+  assert.equal(page.includes('id="signup-limit"'), false, 'the spending limit is a setting after signup');
+  assert.equal($('auth-submit').textContent, 'Next: my recovery words');
+  assert.equal($('signup-manual-note').hidden, false, 'this unpaired wallet shows why it uses manual setup');
   assert.equal($('auth-copy').textContent, 'Pick a name. The wallet makes your login password and your payment password and shows them to you, then five recovery words for you to write on paper. Your account is protected from its first moment.');
-  assert.deepEqual(['password', 'password-confirm', 'signup-payment', 'signup-payment-confirm', 'signup-limit'].map(id => $(id).required), [false, false, false, false, true]);
+  assert.deepEqual(['password', 'password-confirm', 'signup-payment', 'signup-payment-confirm'].map(id => $(id).required), [false, false, false, false]);
   for (const words of ['<span class="tag day">Every day</span> Opens this wallet and signs you in to websites. It cannot pay. Nobody can reset it.', '<span class="tag day">When you pay</span> Pays up to your daily limit. It must differ from your login password. Do not let the browser save it.']) assert.ok(page.includes(words), words);
   // The step, in this order: what the words are for, why paper, the words, how to keep them, two copies (an instruction:
   // web audit of November 2026, K-1), what the words can do in other hands and that only they stop it, and the button,
@@ -471,20 +487,20 @@ test('a sign-up through a busy network (busy.mjs): refused questions and submits
   assert.notEqual($('network-status').textContent, 'Cannot check the network · signing is off');
 });
 
-test('a limit the person typed is the account\'s, and the recovery words are never skipped: "Start over" and locking forget them, and nothing is kept', async () => {
+test('the default spending limit applies, and the recovery words are never skipped: "Start over" and locking forget them, and nothing is kept', async () => {
   reset(); await $('lock-button').fire('click');
-  let papers = await step1('finn_p', { limit: '45' });
+  let papers = await step1('finn_p');
   await $('signup-cancel').fire('click');
   assert.deepEqual([$('signup-phrase-shown').textContent, $('signup-sheet-step').hidden, $('auth-form').hidden, kept('finn_p').note, $('notice').textContent], ['', true, false, null, DROPPED]);
   assert.equal(DROPPED, 'Nothing was created. The recovery words that were shown will never work: destroy the paper if you wrote them down.');
-  papers = await step1('finn_p', { limit: '45' });
+  papers = await step1('finn_p');
   await $('lock-button').fire('click');
   assert.deepEqual([$('signup-phrase-shown').textContent, $('signup-sheet-step').hidden, kept('finn_p').note], ['', true, null]);
   await $('mode-create').fire('click');
-  papers = await step1('finn_p', { limit: '45' });
+  papers = await step1('finn_p');
   assert.equal($('signup-submit').hidden, false, 'the button is there from the start of a new step too');
   await step3(papers); await opened('finn_p');
-  assert.equal(chain.security[byName('finn_p').id].policy.daily_limit_micros, '45000000');
+  assert.equal(chain.security[byName('finn_p').id].policy.daily_limit_micros, '600000000');
   await $('lock-button').fire('click');
 });
 
@@ -1047,7 +1063,7 @@ test('on a network without the setting: one key, a reveal, and the card "Not pro
     await freshPage();
     // The form is the page's own: the script touched none of the protected fields (the stand-in page starts them empty,
     // and hidden as index.html has them).
-    assert.deepEqual([$('password-label').textContent, $('confirm-label').textContent, $('signup-protected').hidden, $('signup-login-note').hidden, $('password-note').hidden, $('signup-limit').value], ['', '', true, true, false, ''], 'nothing of the protected form was drawn');
+    assert.deepEqual([$('password-label').textContent, $('confirm-label').textContent, $('signup-protected').hidden, $('signup-login-note').hidden], ['', '', true, true], 'nothing of the protected form was drawn');
     await $('mode-create').fire('click');
     assert.deepEqual([$('auth-copy').textContent, $('auth-submit').textContent, $('signup-protected').hidden, $('password-label').textContent, $('auth-ways').hidden], ['Pick a name that others can send seconds to. The wallet makes your password and shows it to you.', 'Create my account', true, '', true]);
     // No password field is asked (the rule): the wallet makes it.
@@ -1229,4 +1245,185 @@ test('"Let the wallet make my passwords" and a backup file of a chosen password,
     assert.deepEqual(await provenFor('old_one', [restored.login], [LOGIN], { files: [await downloads.at(-1).blob.text()] }), []);
     await $('lock-button').fire('click');
   } finally { reset(); await freshPage(); }
+});
+
+test('managed signup opens in the submit gesture, stages encrypted keys, and registers only after Time Vault saves', async () => {
+  const oldPage = dom;
+  dom = new Map();
+  try {
+    const { parseSeconds } = await import('./guards.mjs');
+    const local = new Storage();
+    const events = [];
+    let result = 'saved', created = 0, saved = null, proven = stateFor({});
+    const ui = createSignupUI({
+      sdk: SDK, network: () => ({ networkId: NET }), state: () => proven,
+      verifiedState: async query => { events.push('read'); return stateFor(query); },
+      registrationSponsor: async () => ({}), capture: () => () => {}, argon2id: () => argon2id,
+      storage: local, locks: () => navigator.locks, fee: () => '1000', parseSeconds, setBusy() {}, notice() {},
+      typedPassword(shown) { $('password').hidden = $('password-confirm').hidden = !shown; },
+      showMade: () => assert.fail('managed secrets must stay out of the password dialog'),
+      managerAvailable: () => true,
+      startManager() {
+        events.push('open');
+        return {
+          async save(payload) {
+            events.push('save');
+            assert.equal(ui.staged(payload.name), true);
+            assert.equal(ui.managed(payload.name), true);
+            assert.equal(payload.networkId, NET);
+            assert.equal(madeForm(payload.secrets.signin), payload.secrets.signin);
+            assert.equal(madeForm(payload.secrets.spend), payload.secrets.spend);
+            assert.notEqual(payload.secrets.signin, payload.secrets.spend);
+            assert.equal(payload.secrets.recover.split(' ').length, 5);
+            const stored = [...local.m.values()].join('');
+            for (const secret of Object.values(payload.secrets)) assert.equal(stored.includes(secret), false);
+            const note = JSON.parse(local.getItem(slots(payload.name).nextNote));
+            assert.equal(note.policy.daily_limit_micros, '600000000');
+            if (result === 'cancel') throw Object.assign(new Error('Cancelled before save'), { unsaved: true });
+            if (result === 'ambiguous') throw new Error('Window closed');
+            saved = payload;
+          },
+          close() { events.push('close'); },
+        };
+      },
+      created: async ({ name, managed }) => { assert.equal(managed, true); assert.equal(saved.name, name); events.push('register'); created++; },
+    });
+    $('username').value = 'chosen_early';
+    ui.form(true);
+    assert.equal($('username').value, 'chosen_early', 'verification finishing preserves a name already typed');
+    ui.form(false);
+    $('username').value = 'old_account';
+    ui.form(true);
+    const suggestion = $('username').value;
+    assert.match(suggestion, /^time_[a-f0-9]{10}$/);
+    assert.equal($('signup-method').textContent, 'Set up manually');
+    assert.equal($('auth-submit').textContent, 'Create account');
+    assert.deepEqual(['auth-ways', 'auth-seal-note', 'signup-protected', 'password', 'password-confirm'].map(id => $(id).hidden), Array(5).fill(true));
+    const first = ui.begin({ name: suggestion });
+    assert.deepEqual(events.slice(0, 2), ['open', 'read']);
+    await first;
+    assert.deepEqual(events, ['open', 'read', 'save', 'register', 'close']);
+    assert.equal(ui.managed(suggestion), true);
+    const signin = JSON.parse(local.getItem(slots(suggestion).nextLogin));
+    assert.equal((await openVault(signin, saved.secrets.signin, argon2id, crypto, 'signin')).binding.publicKey, signin.binding.publicKey);
+    const identity = JSON.parse(local.getItem(slots(suggestion).login)).binding.publicKey;
+    local.removeItem(slots(suggestion).nextNote);
+    const rotated = { ...signin, binding: { ...signin.binding, publicKey: otherKey.publicKey } };
+    local.setItem(slots(suggestion).login, JSON.stringify(rotated));
+    assert.equal(ui.managed(suggestion), true, 'a cold start offers the paired manager after a role rotation');
+    proven = { ...proven, accounts: [{ name: suggestion, public_key: identity }] };
+    assert.equal(ui.managed(suggestion), true, 'the immutable identity matches after rotation');
+    proven = { ...proven, accounts: [{ name: suggestion, public_key: faucetKey.publicKey }] };
+    assert.equal(ui.managed(suggestion), false, 'another proven identity with this name is refused');
+    result = 'cancel';
+    await assert.rejects(ui.begin({ name: 'cancel_managed' }), /Cancelled before save/);
+    assert.equal(ui.staged('cancel_managed'), false);
+    assert.equal(ui.managed('cancel_managed'), false);
+    result = 'ambiguous';
+    await assert.rejects(ui.begin({ name: 'resume_managed' }), /Open my account and try opening @resume_managed with Time Vault/);
+    assert.equal(ui.staged('resume_managed'), true);
+    assert.equal(ui.managed('resume_managed'), true);
+    assert.equal(created, 1);
+    await $('signup-method').fire('click');
+    assert.equal($('signup-protected').hidden, false);
+    assert.equal($('signup-method').textContent, 'Use password manager');
+  } finally { dom = oldPage; }
+});
+
+test('paired wallet resumes a saved signup after a lost vault reply using only the sign-in credential', async () => {
+  const priorWindow = window, priorOrigin = location.origin, priorStorage = storage.m;
+  const listeners = new Set(), popups = [], requests = [], roles = [];
+  const vaultOrigin = 'https://vault.testnet.thetimenetwork.org';
+  let saved;
+  reset(); storage.m = new Map(); location.origin = 'https://wallet.testnet.thetimenetwork.org';
+  globalThis.window = {
+    ...priorWindow, crypto, location, setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener(type, fn) { if (type === 'message') listeners.add(fn); },
+    removeEventListener(type, fn) { if (type === 'message') listeners.delete(fn); },
+    open(url) {
+      assert.equal(url, vaultOrigin + '/');
+      const deliver = data => { for (const fn of listeners) fn({ origin: vaultOrigin, data, source: popup }); };
+      const popup = {
+        closed: false, close() { this.closed = true; },
+        postMessage(message, target) {
+          assert.equal(target, vaultOrigin);
+          const request = structuredClone(message);
+          requests.push(request.operation);
+          const reply = { v: 1, type: 'time:vault-result', id: request.id };
+          if (request.operation === 'save') {
+            saved = request;
+            queueMicrotask(() => deliver({ ...reply, ok: false, error: 'Save acknowledgment interrupted' }));
+          } else {
+            roles.push(request.role);
+            assert.deepEqual([request.name, request.networkId], [saved.name, NET]);
+            queueMicrotask(() => deliver({ ...reply, ok: true, value: saved.secrets[request.role] }));
+          }
+        },
+      };
+      popups.push(popup);
+      queueMicrotask(() => deliver({ v: 1, type: 'time:vault-ready' }));
+      return popup;
+    },
+  };
+  try {
+    await freshPage();
+    assert.equal($('auth-submit').textContent, 'Create account');
+    const name = $('username').value;
+    const asked = chain.asked;
+    const first = $('auth-form').fire('submit');
+    await $('auth-form').fire('submit');
+    await first;
+    assert.equal(popups.length, 1, 'repeated submit opens one window');
+    assert.deepEqual(requests, ['save']);
+    assert.equal(saved.name, name);
+    assert.equal(chain.asked, asked, 'no sponsorship was sent while the manager reply was missing');
+    assert.equal(byName(name), undefined);
+    assert.ok(kept(name).note);
+    assert.equal($('signup-phrase-shown').textContent, '');
+    assert.equal($('made-dialog').open, false);
+    await freshPage();
+    assert.equal($('username').value, name);
+    assert.equal($('password').hidden, true);
+    assert.match($('notice').textContent, /with Time Vault to finish/);
+    chain.drop = action => action.kind === 45;
+    await $('auth-form').fire('submit');
+    assert.match($('notice').textContent, /with Time Vault to finish/);
+    assert.doesNotMatch($('notice').textContent, /login password/);
+    assert.equal(byName(name), undefined);
+    chain.drop = () => false;
+    await $('auth-form').fire('submit');
+    await opened(name);
+    assert.equal(chain.asked, asked + 1);
+    assert.deepEqual(requests, ['save', 'get', 'get']);
+    assert.equal(kept(name).note, null);
+    assert.equal(chain.security[byName(name).id].policy.daily_limit_micros, '600000000');
+    assert.deepEqual(roles, ['signin', 'signin']);
+
+    const payer = byName(name), recipient = byName('bob'), before = chain.posted.length;
+    payer.balance = '5000000';
+    const recipientBefore = BigInt(recipient.balance);
+    $('recipient').value = 'bob'; $('amount').value = '1';
+    const payment = $('send-payment');
+    await payment.nextElementSibling.fire('click');
+    assert.deepEqual(roles, ['signin', 'signin', 'spend']);
+    assert.ok(payment.value && payment.value !== saved.secrets.spend, 'only a disposable token is in the field');
+    const cancelled = $('send-form').fire('submit');
+    await until(() => $('review-dialog').open || $('notice').className.includes('error'), 'the payment review');
+    assert.equal($('review-title').textContent, 'Send seconds', $('notice').textContent);
+    $('review-dialog').returnValue = 'cancel'; $('review-dialog').open = false; await $('review-dialog').fire('close');
+    await cancelled;
+    assert.equal(chain.posted.length, before);
+    assert.equal(payment.value, '');
+    await payment.nextElementSibling.fire('click');
+    const confirmed = $('send-form').fire('submit');
+    await confirmReview();
+    await confirmed;
+    assert.deepEqual(roles, ['signin', 'signin', 'spend', 'spend']);
+    const transfer = chain.posted.at(-1);
+    assert.equal(chain.posted.length, before + 1, $('notice').textContent);
+    assert.deepEqual([transfer.kind, transfer.payload.to, transfer.payload.amount, transfer.publicKey],
+      [SDK.KINDS.transfer, recipient.id, '1000000', kept(name).spend.binding.publicKey]);
+    assert.equal(BigInt(recipient.balance), recipientBefore + 1000000n);
+    assert.ok(popups.every(popup => popup.closed));
+  } finally { globalThis.window = priorWindow; location.origin = priorOrigin; storage.m = priorStorage; }
 });

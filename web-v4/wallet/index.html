@@ -40,28 +40,29 @@
         <div id="reset-note" role="status" hidden><p id="reset-text" class="warning"></p><div class="button-row"><button id="reset-forget" type="button" class="secondary">Remove the old account from this browser</button></div></div>
         <div class="segmented" role="group" aria-label="Create or open"><button id="mode-create" class="active" type="button">Create an account</button><button id="mode-unlock" type="button">Open my account</button></div>
         <h1 id="auth-heading">Create your account</h1>
-        <p id="auth-copy" class="subtle">Pick a name that others can send seconds to, and a password.</p>
+        <p id="auth-copy" class="subtle">Checking the network. You can choose a public name while you wait.</p>
         <form id="auth-form">
           <label for="username">Name</label><div class="input-prefix"><span aria-hidden="true">@</span><input id="username" autocomplete="username" placeholder="your_name" minlength="2" maxlength="15" required spellcheck="false" autocapitalize="none"></div>
           <p class="field-note" id="username-note">2 to 15 small letters, digits or _. Everyone on the network can see it.</p>
           <p class="field-note"id="auth-seal-note" hidden></p>
           <fieldset id="auth-ways" class="kinds" hidden><legend id="auth-ways-legend"></legend><label class="kind" for="auth-way-device"><input id="auth-way-device" name="auth-way" type="radio" value="device"><span><strong id="auth-way-device-title"></strong><span class="field-note" id="auth-way-device-note"></span></span></label><label class="kind" for="auth-way-made"><input id="auth-way-made" name="auth-way" type="radio" value="made"><span><strong id="auth-way-made-title"></strong><span class="field-note" id="auth-way-made-note"></span></span></label></fieldset>
-          <label id="password-label" for="password">Password</label><input id="password" type="password" autocomplete="new-password" minlength="15" maxlength="2048" placeholder="At least 15 characters" required>
-          <p class="field-note" id="password-note">Your password unlocks the key that this browser keeps for your account. It is never sent anywhere, and nobody can reset it.</p>
+          <label id="password-label" for="password" hidden>Password</label><input id="password" type="password" autocomplete="new-password" minlength="15" maxlength="2048" placeholder="At least 15 characters" hidden>
+          <p class="field-note" id="password-note" hidden>Your password unlocks the key that this browser keeps for your account. It is never sent anywhere, and nobody can reset it.</p>
           <p class="field-note" id="signup-login-note" hidden><span class="tag day">Every day</span> Opens this wallet and signs you in to websites. It cannot pay. Nobody can reset it.</p>
-          <label id="confirm-label" for="password-confirm">Password again</label><input id="password-confirm" type="password" autocomplete="new-password" minlength="15" maxlength="2048" required>
+          <label id="confirm-label" for="password-confirm" hidden>Password again</label><input id="password-confirm" type="password" autocomplete="new-password" minlength="15" maxlength="2048" hidden>
           <div id="signup-protected" hidden>
             <div id="signup-chosen">
             <label for="signup-payment">Payment password</label><input id="signup-payment" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="2048">
             <p class="field-note"><span class="tag day">When you pay</span> Pays up to your daily limit. It must differ from your login password. Do not let the browser save it.</p>
             <label for="signup-payment-confirm">Payment password again</label><input id="signup-payment-confirm" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="2048">
             </div>
-            <label for="signup-limit">Daily limit, in seconds</label><input id="signup-limit" inputmode="decimal" autocomplete="off">
-            <p class="field-note"><span id="signup-limit-suggested"></span> What your payment password alone can pay in a day, fees included. More waits, or needs a recovery paper.</p>
           </div>
           <button id="auth-submit" class="wide" type="submit" disabled>Create my account</button><p id="auth-progress" class="field-note" aria-live="polite"></p>
+          <button id="vault-login-method" type="button" class="link" hidden>Enter login password manually</button>
+          <button id="signup-method" class="secondary" type="button" hidden>Set up manually</button>
+          <p id="signup-manual-note" class="field-note" hidden>This wallet address uses manual setup. Keep your passwords and recovery words in a safe place.</p>
         </form>
-        <p id="signup-letgo-row" class="field-note" hidden>Forgot the login password you chose for this sign-up? <button id="signup-letgo" type="button" class="secondary">Let this sign-up go</button></p>
+        <p id="signup-letgo-row" class="field-note" hidden><span id="signup-letgo-intro">Trouble finishing this signup?</span> <button id="signup-letgo" type="button" class="secondary">Let this sign-up go</button></p>
         <div id="signup-sheet-step" hidden><h2>Write down your recovery words <span class="tag safe">Keep safe</span></h2><p>These five words bring your account back if you lose your passwords or this device. Take a pen and write them on paper.</p><p>Paper is the safest place for them: nothing online can reach it. That is why the wallet saves them nowhere and offers no file here.</p><p class="sheet" id="signup-phrase-shown"></p><p class="field-note">On paper only: not in a photo, a note or a message. Nobody can show them to you again.</p><p id="signup-tip">Write them twice and keep the two papers in different places. If one is lost, the other brings your account back. If one is taken, the other lets you stop whoever took it. The fridge door does not count.</p><p>Anyone who has these words can ask to take over your account. That waits your waiting period. You can stop it only with these words, so a paper that is your only copy must never be lost or taken. The Alerts at the top of Home tell you if it happens.</p><div class="button-row"><button id="signup-submit" type="button">I wrote them down. Create my account</button><button id="signup-cancel" type="button" class="secondary">Start over</button></div></div>
       </div>
       <div class="other-ways">
@@ -108,6 +109,7 @@
           <button type="button" class="action" id="faucet-button" hidden>Get test time</button>
         </div>
         <button type="button" class="holding" id="home-staked-row"><span class="holding-name">Staked<small>Lent to validators, not in your balance</small></span><span class="holding-value" id="home-staked">—</span></button>
+        <button type="button" class="holding" id="home-market-row" hidden><span class="holding-name">Market<small>Buy or sell seconds for bitcoin</small></span><span class="holding-value" id="home-market">Open</span></button>
         <p id="home-pending" class="warning" hidden>A signed action is waiting for its receipt. <button type="button" class="link" data-panel="activity">See it in Activity</button></p>
         <p id="home-backup" class="nudge" hidden><span id="home-backup-why"></span>Keep your account safe: <button type="button" class="link" data-panel="security">download your backup file</button>.</p>
         <section class="card protect" id="protect-card" aria-labelledby="protect-title" hidden>
@@ -130,6 +132,8 @@
               <h3 id="limit-title">Daily limit</h3>
               <progress id="limit-bar" class="bar" max="1000" value="0" aria-labelledby="limit-title" aria-describedby="limit-text"></progress>
               <p id="limit-text"></p>
+              <p id="limit-fee-note" class="field-note" hidden></p>
+              <div id="limit-pending" hidden></div>
               <div class="button-row"><button id="limit-open" type="button" class="secondary" aria-label="Change the daily limit">Change</button></div>
               <form id="limit-form" class="step" hidden><label for="limit-amount">New daily limit, in seconds</label><input id="limit-amount" inputmode="decimal" autocomplete="off" required><p id="limit-when" class="field-note" role="status"></p><label for="limit-payment">Payment password</label><input id="limit-payment" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="2048" required><label for="limit-secret">Recovery words, only to raise the limit at once</label><input id="limit-secret" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="512"><p class="field-note">Your recovery words. A printed recovery sheet works too. Do not let the browser save them.</p><div class="button-row"><button type="submit">Change daily limit</button><button id="limit-cancel" type="button" class="secondary">Not now</button></div></form>
             </div>
@@ -216,6 +220,7 @@
         <div class="card keys" id="keys-card">
           <h2>Your keys</h2>
           <p id="keys-lede" class="subtle">What you need every day, and what to keep safe.</p>
+          <a id="vault-manage" target="_blank" rel="noopener noreferrer" hidden>Open Time Vault</a>
           <div id="keys-cards" class="key-cards"></div>
           <p id="keys-note" class="subtle" hidden></p>
           <div class="button-row no-print"><button id="keys-print" type="button" class="secondary">Print this page</button></div>
@@ -284,6 +289,7 @@
           <div class="profile"><span id="more-initial" class="avatar avatar-large" aria-hidden="true"></span><div><h2>More</h2><p id="more-name" class="subtle"></p></div></div>
           <div class="more-list">
             <button type="button" data-panel="earn">Staking<small>Lend seconds to a validator and share its reward</small><span class="sign" aria-hidden="true"></span></button>
+            <button type="button" data-panel="market" id="tab-market" hidden>Market<small>Buy and sell seconds for bitcoin</small><span class="sign" aria-hidden="true"></span></button>
             <button type="button" data-panel="devices">Devices<small>The browsers and keys of this account</small><span class="sign" aria-hidden="true"></span></button>
             <button type="button" data-panel="recovery">Guardian recovery<small>People you trust to help you recover</small><span class="sign" aria-hidden="true"></span></button>
             <button type="button" data-panel="upgrade" id="tab-upgrade" hidden>Validator signal<small>For the owner of a validator</small><span class="sign" aria-hidden="true"></span></button>
@@ -358,6 +364,12 @@
       <section class="workspace-panel" id="panel-validator" hidden>
         <button type="button" class="back" data-panel="more">More</button>
         <div class="card"><h2>Validator operator</h2><p>A validator is a computer you run that signs blocks. Its key stays on that machine. Here your account registers it, adds to its bond or takes the bond out. The explorer's Validators page says how to set one up.</p><p id="validator-summary"></p><div id="validator-payment-wrap" hidden><label for="validator-payment">Payment password</label><input id="validator-payment" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="2048"><p class="field-note">Your account is protected, so its payment key registers the validator, adds to its bond, takes the bond out, retires it and withdraws, each with this password, for that one action. The bond and each fee count against your daily limit, and cannot wait or be paid with a recovery paper.</p></div><button type="button" id="validator-retire" class="secondary">Retire my empty validator</button><form id="validator-register-form"><label for="validator-enrollment">Registration text from the join script</label><textarea id="validator-enrollment" required placeholder="Paste the text the script printed"></textarea><button type="submit">Review registration</button></form><form id="self-bond-form"><label for="self-bond-amount">Add to my bond, in seconds</label><input id="self-bond-amount" inputmode="decimal" required><button type="submit">Review</button></form><form id="self-unbond-form"><label for="self-unbond-amount">Take out of my bond, in seconds</label><input id="self-unbond-amount" inputmode="decimal" required><button type="submit">Review</button></form><div id="validator-exits"></div></div>
+      </section>
+
+      <section class="workspace-panel" id="panel-market" hidden>
+        <button type="button" class="back" data-panel="more">More</button>
+        <div class="card market" id="market-card"><p class="eyebrow">Market</p><p id="market-test-note" class="nudge" hidden></p><button type="button" id="market-back" class="link" hidden>Back to the market</button><div id="market-view"></div>
+          <div id="market-payment-wrap" hidden><label for="market-payment">Payment password</label><input id="market-payment" type="password" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore data-protonpass-ignore maxlength="2048"><p class="field-note">Your account is protected, so its payment key signs each action of the market, with this password, for that one action. Do not let the browser save it.</p></div></div>
       </section>
     </section>
 

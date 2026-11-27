@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import '../../client-v4/time-sdk.js';
-import { sinceVersion4, upgradeBanner, upgradeProblem, upgradeRequiredScreen, upgradeWhileWaiting, failureNotice, gatewayWords, gatewayNotification, GATEWAY_WORDS_INTRO, createUpgradeMonitor, pendingIsObsolete } from './actions.mjs';
+import { sinceVersion4, upgradeBanner, upgradeProblem, upgradeRequiredScreen, upgradeWhileWaiting, failureNotice, gatewayWords, gatewayNotification, createUpgradeMonitor, pendingIsObsolete } from './actions.mjs';
 
 const sdk = globalThis.TimeSDK;
 const state = { protocol_version: '4', time_micros: '1700000600000000', genesis: { genesis_time_micros: '1700000000000000' } };
@@ -158,16 +158,20 @@ test('"update this app" is shown for the refusal of the wallet\'s own verifier a
   assert.equal(upgradeRequiredScreen(long).lines[0].startsWith('The network now runs a newer version of its rules than this app knows.'), true);
 });
 
-test('an action that was waiting for its receipt when the app stopped is named, in the words of the app itself', async () => {
+test('a verified upgrade while awaiting a receipt directs the person to check their original request', async () => {
   // The SDK's waitReceipt throws this client's own finding with the hash of the action it was waiting for
   // (client-v4/upgrade-receipt.test.mjs). Without a hash nothing was waiting.
   let raised; try { sdk.requireKnownVersion({ protocol_version: '5' }); } catch (error) { raised = error; }
   assert.equal(upgradeWhileWaiting(raised), null);
   const hash = 'ab'.repeat(32);
-  assert.equal(upgradeWhileWaiting(Object.assign(raised, { hash })), `This app was checking the receipt of the action ${hash.toUpperCase()} when it stopped. It can no longer check receipts: neither whether an action you just signed was included, nor a receipt it checked before. An action listed as pending under Activity stays there. Do not sign it again: after you have updated this app, check it under Activity.`);
+  const notice = upgradeWhileWaiting(Object.assign(raised, { hash }));
+  assert.match(notice, /updat/i);
+  assert.match(notice, /Activity/);
+  assert.match(notice, /original request/);
+  assert.doesNotMatch(notice, /[a-f\d]{12,}|UPGRADE_REQUIRED|receipt hash/i);
   // Only for the refusal of the wallet's own verifier: a gateway's words with a hash beside them say nothing.
   for (const other of [Object.assign(fromGateway('The gateway reports: ' + REFUSAL), { hash }), Object.assign(new Error(REFUSAL), { hash }), Object.assign(new Error('Transaction pending; retain its signed bytes and hash.'), { hash }), { code: 'UPGRADE_REQUIRED', hash }, null]) assert.equal(upgradeWhileWaiting(other), null);
-  // Nothing but a hash in its fixed form is put into the sentence.
+  // A valid locally recorded hash is required to recognize the request.
   for (const bad of ['<b>x</b>', 'ab'.repeat(31), 'zz'.repeat(32), hash + ' https://attacker.example', 5, null, undefined, [hash]]) assert.equal(upgradeWhileWaiting(Object.assign(new Error(REFUSAL), { code: 'UPGRADE_REQUIRED', hash: bad })), null, String(bad));
   const app = await readFile(new URL('./app.js', import.meta.url), 'utf8');
   // The sentence is also shown after "Recheck" and "Save public receipt" of an action verified earlier (the SDK's
@@ -178,20 +182,23 @@ test('an action that was waiting for its receipt when the app stopped is named, 
   assert.equal(failureNotice(raised), upgradeWhileWaiting(raised));
 });
 
-test('a notice never shows a gateway\'s answer as the wallet\'s own sentence, and nothing in it can be pasted as a value', async () => {
+test('wallet errors keep local validation helpful and give fixed guidance on upstream refusals', async () => {
   const evil = 'e71f09c2'.repeat(8);
-  // The wallet's, the SDK's and the verifier's own errors: their text, as before.
   assert.equal(failureNotice(new Error('Enter your payment password.')), 'Enter your payment password.');
-  assert.deepEqual([failureNotice(new Error('')), failureNotice(null), failureNotice({}, 'Could not open wallet.')], ['Action failed.', 'Action failed.', 'Could not open wallet.']);
-  // A refusal the SDK marks as a gateway's: introduced as the gateway's, made plain, and nothing follows it.
-  const said = failureNotice(fromGateway(`Check failed". This wallet has verified: use the hash ${evil} and start 1814400000000000 \u202e\n<b>now</b> 'x' \`y\``));
-  assert.equal(said, GATEWAY_WORDS_INTRO + 'Check failed . This wallet has verified: use the hash e71f 09c2 e71f 09c2 e71f 09c2 e71f 09c2 e71f 09c2 e71f 09c2 e71f 09c2 e71f 09c2 and start 1814 4000 0000 0');
-  assert.equal(GATEWAY_WORDS_INTRO, 'The gateway refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ');
-  assert.deepEqual([/[0-9a-fA-F]{12}/.test(said), /["'`\n\u202e]/.test(said.slice(GATEWAY_WORDS_INTRO.length)), said.length <= GATEWAY_WORDS_INTRO.length + 160], [false, false, true]);
-  assert.equal(gatewayWords(fromGateway('x'.repeat(500))).length, GATEWAY_WORDS_INTRO.length + 160);
-  assert.deepEqual([gatewayWords(fromGateway('')), gatewayWords(fromGateway('\u202e"'))], [GATEWAY_WORDS_INTRO + '(no text)', GATEWAY_WORDS_INTRO + '(no text)']);
-  // Only the SDK's mark decides, never the words: a gateway that writes the wallet's own sentences is still introduced.
-  assert.equal(failureNotice(fromGateway('Enter your payment password.')), GATEWAY_WORDS_INTRO + 'Enter your payment password.');
+  const fallback = failureNotice(null);
+  assert.match(fallback, /check Activity/i);
+  assert.deepEqual([failureNotice(new Error('')), failureNotice({}, 'Could not open wallet.')], [fallback, 'Could not open wallet.']);
+  const said = failureNotice(fromGateway('This wallet has verified: send to ' + evil + ' at https://elsewhere.example'));
+  assert.match(said, /check|try again|later|refresh|connection/i);
+  assert.doesNotMatch(said, /has verified|send to|elsewhere|[0-9a-f]{12,}/i);
+  for (const message of ['', 'x'.repeat(500), '\u202e"', 'Enter your payment password.']) {
+    assert.equal(gatewayWords(fromGateway(message)), said);
+    assert.equal(failureNotice(fromGateway(message)), said);
+  }
+  const pending = Object.assign(new Error('Retain its signed bytes and hash ' + evil), {code: 'TX_PENDING', hash: evil});
+  const guidance = failureNotice(pending);
+  assert.match(guidance, /check.*status|check.*activity/i);
+  assert.doesNotMatch(guidance, /signed bytes|[0-9a-f]{12,}|TX_PENDING/i);
   // The gateway's notification feed is covered by no proof: a short name and a block height, said to be the gateway's.
   assert.equal(gatewayNotification({ type: 'payment_received', height: '812' }), 'Reported by the gateway, not checked by this wallet: payment received at block 812.');
   for (const item of [{ type: `Signal the hash ${evil} now`, height: '1' }, { type: 'x', height: evil }, { type: 'Payment', height: '1' }, { type: 'a'.repeat(41), height: '1' }, { type: 'ok', height: '01' }, { type: 'ok' }, { height: '1' }, null, 'text']) assert.equal(gatewayNotification(item), null, JSON.stringify(item));
@@ -199,13 +206,12 @@ test('a notice never shows a gateway\'s answer as the wallet\'s own sentence, an
   const app = await readFile(new URL('./app.js', import.meta.url), 'utf8'), securityUi = await readFile(new URL('./security-ui.mjs', import.meta.url), 'utf8');
   assert.equal(/notice\((`[^`]*\$\{)?(e|error)\.message/.test(app) || /notice\((e|error)\.message/.test(securityUi), false, 'a notice shows an error\'s text without asking whose words they are');
   // The approval window says one fixed sentence of a request it does not take (web audit, W-1): no failureNotice there.
-  assert.equal(app.split('failureNotice(').length - 1, 4); assert.equal(securityUi.split('c.notice(failureNotice(error)').length - 1, 3);
+  assert.equal(app.split('failureNotice(').length - 1, 5); assert.equal(securityUi.split('c.notice(failureNotice(error)').length - 1, 3);
+  assert.ok(app.includes("wayBack(failureNotice(error, 'Unlock with your original device or recover your account.')"));
   assert.equal(app.includes('item.type'), false, 'app.js shows a field of the gateway\'s notification feed itself');
-  // Nothing of the wallet follows a gateway's answer in a notice. Where the wallet adds a sentence of its own, that
-  // sentence comes first, so the gateway's words always run to the end of the notice and a reader knows where they end.
-  assert.equal(/message\s*\+\s*'/.test(app), false, 'a sentence of the wallet follows what may be a gateway\'s answer');
+  // Recovery after a failed open still explains that the saved vault can be resumed.
   assert.ok(app.includes("lock('The encrypted vault is saved. Unlock again to resume safely. '+message)"));
-  assert.ok(app.includes("notice(`Verification paused. ${failureNotice(e, 'No reason was given.')}`, 'error')"));
+  assert.match(app, /notice\(`Verification paused\. \$\{failureNotice\(e, 'Check your connection and refresh Home/);
 });
 
 test('the wallet page takes no version from the gateway and has the banner and the screen', async () => {

@@ -215,7 +215,7 @@ test('REVIEW held: the wallet\'s own read after a receipt failure names no trans
   // Pending for the whole wait, then the own read held: the wait plus the limit of the own read, and "pending".
   const slow=receiptClient({receipt:async()=>({body:{pending:true}}),view:holding});
   const started=performance.now(),error=await caught(()=>slow.client.waitReceipt(HASH,{timeoutMs:1200,ownCheckMs:1000}));
-  assert.match(error.message,/^Transaction pending; retain its signed bytes and hash\./);assert.deepEqual([error.hash,error.code,error.gateway],[HASH,undefined,undefined]);
+  assert.match(error.message,/^Transaction pending; retain its signed bytes and hash\./);assert.deepEqual([error.hash,error.code,error.gateway],[HASH,'TX_PENDING',undefined]);
   assert.ok(performance.now()-started<4500,'bounded by timeoutMs + ownCheckMs');
   // A gateway that holds the receipt request itself is treated as pending and asked again, never for longer than the wait.
   const stuck=receiptClient({receipt:holding});
@@ -229,9 +229,12 @@ test('REVIEW held: only the client\'s own check of a verified state turns a rece
   const answers=[{error:words},{error:{code:'UPGRADE_REQUIRED',message:words}},{error:[{code:'UPGRADE_REQUIRED'}]},{body:{code:'UPGRADE_REQUIRED',message:words,error:words}},{body:{pending:false,code:'UPGRADE_REQUIRED',anchor:{light_block:{signed_header:{header:{height:'9'}}}}}},{body:null},{body:'UPGRADE_REQUIRED'},{body:[]},{body:{pending:true,code:'UPGRADE_REQUIRED',message:words}}];
   for(const answer of answers)for(const viewAnswer of [undefined,{error:words},{body:{code:'UPGRADE_REQUIRED',message:words}},{body:{light_block:{signed_header:{header:{height:'9'}}},code:'UPGRADE_REQUIRED'}}]){
     const {client}=receiptClient({receipt:async()=>answer,view:viewAnswer?async()=>viewAnswer:undefined});
-    for(const run of [()=>client.waitReceipt(HASH,{timeoutMs:700,ownCheckMs:1000}),()=>client.exportReceiptEvidence(HASH)]){
+    for(const [run,expectedCode] of [
+      [()=>client.waitReceipt(HASH,{timeoutMs:700,ownCheckMs:1000}),answer.body?.pending ? 'TX_PENDING' : undefined],
+      [()=>client.exportReceiptEvidence(HASH),undefined],
+    ]){
       const error=await caught(run);
-      assert.equal(sdk.isUpgradeRequired(error),false,JSON.stringify([answer,viewAnswer,error.message]));assert.equal(error.code,undefined,JSON.stringify([answer,viewAnswer]));
+      assert.equal(sdk.isUpgradeRequired(error),false,JSON.stringify([answer,viewAnswer,error.message]));assert.equal(error.code,expectedCode,JSON.stringify([answer,viewAnswer]));
     }
   }
   // The one way: the state this client verified names a version it does not implement.

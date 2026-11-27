@@ -522,3 +522,59 @@ test('a step of the card that proven state has overtaken is closed with what was
   assert.deepEqual([card().shown, card().status, card().freeze[0], card().pause[0], card().limit, card().waiting, steps(), $('freeze-secret').value, $('tab-home').textContent], [false, '', false, false, '', '', [], '', 'Home']);
   mine().frozen_until_elapsed_micros = '0';
 });
+
+test('an unfunded account sees the fee before unlocking; a signed limit survives reload and late receipts for both signing routes', async () => {
+  const account = row('carol_p'), retained = new Set(), checks = [];
+  let withhold = true;
+  const waiting = hash => Object.assign(new Error('Receipt timed out.'), { code: 'TX_PENDING', hash });
+  globalThis.TimeSDK = { ...SDK, createClient(options) {
+    const client = SDK.createClient(options);
+    return { ...client,
+      async submit(tx, options) {
+        const sent = await client.submit(tx, { ...options, wait: false });
+        retained.add(sent.hash);
+        throw waiting(sent.hash);
+      },
+      async waitReceipt(hash, options) {
+        checks.push(hash);
+        if (withhold) throw waiting(hash);
+        return client.waitReceipt(hash, options);
+      },
+    };
+  } };
+  try {
+    chain.security['14'] = freshRow(); account.balance = '0';
+    await freshPage(); await unlock('carol_p');
+    assert.equal($('limit-open').disabled, true);
+    assert.equal($('limit-fee-note').hidden, false);
+    assert.match($('limit-fee-note').textContent, /fee.*0\.001|0\.001.*fee/i);
+    assert.match($('limit-fee-note').textContent, /Receive/);
+    assert.ok($('limit-form').hidden);
+    account.balance = '9000000'; await refreshNow();
+    assert.equal($('limit-open').disabled, false);
+    const pendingCheck = () => $('limit-pending').children[0].children.find(button => button.textContent === 'Check status');
+    for (const [amount, paper, kind] of [['750', '', 77], ['900', SHEET, 73]]) {
+      const before = chain.posted.length;
+      withhold = true;
+      await $('limit-open').fire('click'); $('limit-amount').value = amount;
+      $('limit-payment').value = PAYMENT; $('limit-secret').value = paper;
+      const run = await reviewAfter(() => $('limit-form').fire('submit')); await confirm(); await run();
+      assert.equal(chain.posted.at(-1).kind, kind);
+      assert.match($('notice').textContent, /Check status/);
+      assert.ok(!$('notice').className.includes('error'));
+      assert.ok($('limit-form').hidden && !$('limit-pending').hidden);
+      const hash = [...retained].at(-1);
+      assert.ok(textOf($('limit-pending')).includes(hash));
+      await freshPage(); await unlock('carol_p');
+      assert.equal($('limit-open').disabled, true);
+      await pendingCheck().fire('click');
+      assert.match($('notice').textContent, /still pending/);
+      assert.ok(textOf($('limit-pending')).includes(hash));
+      withhold = false; await pendingCheck().fire('click');
+      assert.ok($('limit-pending').hidden);
+      assert.match($('notice').textContent, kind === 77 ? /verified.*current daily limit is 600 seconds.*750 seconds is scheduled/i : /verified.*current daily limit is 900 seconds/i);
+      assert.deepEqual(checks.slice(-2), [hash, hash]);
+      assert.equal(chain.posted.length, before + 1, 'each status check reads only the original hash');
+    }
+  } finally { globalThis.TimeSDK = SDK; }
+});

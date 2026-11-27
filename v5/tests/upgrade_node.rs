@@ -725,7 +725,7 @@ fn the_node_binary_ends_with_code_4_and_says_why() {
             if rules::REHEARSAL { " rehearsal=5" } else { "" }
         )
     );
-    assert_eq!(env!("CARGO_PKG_VERSION"), "0.9.0");
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.10.0");
     let dir = tempfile::tempdir().unwrap();
     // A chain that has signals and a scheduled plan: the release binary
     // audits it, and reports the plan.

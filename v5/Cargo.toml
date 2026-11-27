@@ -1,6 +1,6 @@
 [package]
 name = "timecurrency-v5"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 publish = false
 description = "Version-5 execution engine for the protocol-4 ledger: in-memory authenticated state, parallel signature checks, snapshot persistence"

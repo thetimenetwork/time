@@ -157,6 +157,41 @@ pub fn initialize(host: &mut impl ExtensionHost) -> Result<()> {
         HeaderChain::bootstrap_genesis(host.meta().config.bitcoin.clone())?,
     )
 }
+/// Whether the header chain is halted after a reorganization.
+pub fn halted(host: &impl ExtensionHost) -> Result<bool> {
+    Ok(get(host)?.meta.halted.is_some())
+}
+/// The best height of a header chain that is fresh at this block's time
+/// (`HeaderChain::ensure_fresh`), on a Bitcoin network the market is open
+/// to. A new fill of the market starts from it.
+pub fn fresh(host: &impl ExtensionHost) -> Result<(u32, BlockHash)> {
+    let chain = get(host)?;
+    ensure!(
+        chain.meta.config.network != bitcoin_bridge::BitcoinNetwork::Mainnet,
+        "the market is closed on Bitcoin mainnet in this version"
+    );
+    let now = u64::try_from(host.meta().time_micros)? / 1_000_000;
+    chain.ensure_fresh(&Reader(host), now)?;
+    Ok((chain.meta.best_height, chain.meta.best_tip))
+}
+/// An ordinary payment to `script`, proven against the header chain
+/// (`HeaderChain::verify_payment`). The caller keeps the outputs that paid.
+pub fn payment(
+    host: &impl ExtensionHost,
+    proof: &bitcoin_bridge::PaymentProof,
+    script: &[u8],
+    start_height: u32,
+    start_hash: &BlockHash,
+    confirmations: u32,
+) -> Result<bitcoin_bridge::AcceptedPayment> {
+    let chain = get(host)?;
+    // The market's own gate: it does not open with the auction's receipts.
+    ensure!(
+        chain.meta.config.network != bitcoin_bridge::BitcoinNetwork::Mainnet,
+        "the market is closed on Bitcoin mainnet in this version"
+    );
+    chain.verify_payment(&Reader(host), proof, script, start_height, start_hash, confirmations)
+}
 pub fn begin_block(_host: &mut impl ExtensionHost) -> Result<()> {
     Ok(())
 }

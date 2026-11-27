@@ -28,6 +28,8 @@ import { fetchCertifiedView, fetchLightBlock } from './certified-view.mjs';
 import { webhookAdapter, checkWebhookURL, withTimeout } from './security-watch-service.mjs';
 import { openIndex, createIndexer, paymentEvent, encodeCursor, decodeCursor, plainText, IndexerError, KIND_NAMES, MAX_ACTION_BYTES, HOUR_MICROS } from './indexer.mjs';
 import { touchesOfBytes } from './touches.mjs';
+import { frozen } from './account-security.mjs';
+import { createMarketFollower, orderView, fillView, takesFill, COMPUTED_INTERVALS } from './market-index.mjs';
 
 const SDK = globalThis.TimeSDK;
 const MAX_U64 = 18446744073709551615n;
@@ -105,13 +107,19 @@ function joinAddress(value, script) {
 }
 const JOIN_PEER = /^[0-9a-f]{40}@(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]):([1-9][0-9]{0,4})$/;
 const JOIN_KEYS = ['script_url', 'wallet_url', 'chain_id', 'min_self_bond_micros', 'files', 'peers'], JOIN_FILES = ['node_sha256', 'cometbft_sha256', 'genesis_sha256'];
+/// The keys join.json may also hold (testnet/join.mjs, explorerJoin): the pace, the public half of the network's release
+/// key, the SHA-256 of the script as the network hands it out, and where the source publishes the script (shown as text).
+const JOIN_OPTIONAL = ['pace', 'release_key', 'script_sha256', 'source_url'];
+const JOIN_SOURCE = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/blob\/[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._/-]{1,200}$/;
 /// Checks this network's facts for the explorer's "Run a validator" (the explorer_join setting) and returns a
 /// frozen copy of them, in a fixed order. `chainId` is the chain id of the trust manifest: the facts must be of
 /// the network this service answers for. Throws with a sentence on anything else, and never quotes a value.
 export function checkExplorerJoin(value, chainId) {
   const record = (item) => item !== null && typeof item === 'object' && !Array.isArray(item);
-  if (!record(value)) throw new Error('explorer_join is an object: script_url, wallet_url, chain_id, min_self_bond_micros, files, peers and, if wanted, pace');
-  if (Object.keys(value).some((key) => !JOIN_KEYS.includes(key) && key !== 'pace')) throw new Error('explorer_join takes script_url, wallet_url, chain_id, min_self_bond_micros, files, peers and pace, nothing else');
+  if (!record(value)) throw new Error('explorer_join is an object: script_url, wallet_url, chain_id, min_self_bond_micros, files, peers and, if wanted, pace, release_key, script_sha256 and source_url');
+  if (Object.keys(value).some((key) => !JOIN_KEYS.includes(key) && !JOIN_OPTIONAL.includes(key))) throw new Error('explorer_join takes script_url, wallet_url, chain_id, min_self_bond_micros, files, peers, pace, release_key, script_sha256 and source_url, nothing else');
+  for (const key of ['release_key', 'script_sha256']) if (value[key] !== undefined && (typeof value[key] !== 'string' || !/^[0-9a-f]{64}$/.test(value[key]))) throw new Error(`explorer_join.${key} is 64 of 0-9 and a-f`);
+  if (value.source_url !== undefined && (typeof value.source_url !== 'string' || !JOIN_SOURCE.test(value.source_url))) throw new Error('explorer_join.source_url is the https://github.com/ address of the script in the published source');
   if (JOIN_KEYS.some((key) => !Object.hasOwn(value, key))) throw new Error('explorer_join needs script_url, wallet_url, chain_id, min_self_bond_micros, files and peers');
   const { script_url: script, wallet_url: wallet, chain_id: chain, min_self_bond_micros: bond, files, peers, pace } = value;
   if (!joinAddress(script, true)) throw new Error('explorer_join.script_url is the https:// address of the join script: a plain host name in lower case, a port if needed, and the path /join/join.sh, nothing else');
@@ -124,7 +132,8 @@ export function checkExplorerJoin(value, chainId) {
     throw new Error('explorer_join.peers lists 1 to 8 entry nodes, none twice, each as node id (40 of 0-9 and a-f), "@", an IPv4 address and ":port"');
   if (pace !== undefined && (typeof pace !== 'string' || !/^(?:[1-9][0-9]{2}ms|[1-5]s)$/.test(pace))) throw new Error('explorer_join.pace is "100ms" to "999ms", or "1s" to "5s"');
   return Object.freeze({ script_url: script, wallet_url: wallet, chain_id: chain, min_self_bond_micros: bond,
-    files: Object.freeze(Object.fromEntries(JOIN_FILES.map((key) => [key, files[key]]))), peers: Object.freeze([...peers]), ...(pace === undefined ? {} : { pace }) });
+    files: Object.freeze(Object.fromEntries(JOIN_FILES.map((key) => [key, files[key]]))), peers: Object.freeze([...peers]), ...(pace === undefined ? {} : { pace }),
+    ...Object.fromEntries(['release_key', 'script_sha256', 'source_url'].filter((key) => value[key] !== undefined).map((key) => [key, value[key]])) });
 }
 /// How long a proof read for one of the explorer's routes answers further identical requests.
 export const STATE_SHARE_MS = 1000;
@@ -161,6 +170,22 @@ const PARAMETERS = {
     return match ? { height: Math.min(Number(match[1]), Number.MAX_SAFE_INTEGER), index: match[2] === undefined ? null : Number(match[2]) } : bad('invalid_position', 'after is the id of the last event received');
   },
   direction: (text) => (['in', 'out', 'both'].includes(text) ? text : bad('invalid_direction', 'direction is in, out or both')),
+  // ---- the market (spec/market.md)
+  side: (text) => (text === 'sell' || text === 'buy' ? text : bad('invalid_side', 'side is sell or buy')),
+  levels: (text) => (/^([1-9][0-9]?|1[0-9]{2}|200)$/.test(text) ? Number(text) : bad('invalid_levels', `levels is a whole number from 1 to ${MAX_PAGE}`)),
+  /// The id of an order or of a fill: ids are counted from 1.
+  orderid: (text) => (/^[1-9][0-9]{0,15}$/.test(text) && Number(text) <= Number.MAX_SAFE_INTEGER ? text : bad('invalid_order', 'An order is its number, from 1, without leading zeros')),
+  fillid: (text) => (/^[1-9][0-9]{0,15}$/.test(text) && Number(text) <= Number.MAX_SAFE_INTEGER ? text : bad('invalid_fill', 'A fill is its number, from 1, without leading zeros')),
+  /// A receiving script: one of the five standard forms, in lower-case hexadecimal (spec/market.md, 5.1).
+  script: (text) => { try { SDK.marketScriptForm(text); return text; } catch { return bad('invalid_script', 'A receiving script is one of the five standard forms (p2pkh, p2sh, p2wpkh, p2wsh, p2tr), in lower-case hexadecimal'); } },
+  /// A place in the book: "<price>.<order>", the next_cursor of an earlier page of the same side.
+  bookcursor: (text) => {
+    const match = /^([1-9][0-9]{0,15})\.([1-9][0-9]{0,15})$/.exec(text);
+    return match && Number(match[1]) <= Number.MAX_SAFE_INTEGER && Number(match[2]) <= Number.MAX_SAFE_INTEGER ? { price: Number(match[1]), id: Number(match[2]), text } : bad('invalid_cursor', 'cursor is a next_cursor value of an earlier answer');
+  },
+  interval: (text) => (text === 'hour' || Object.hasOwn(COMPUTED_INTERVALS, text) ? text : bad('invalid_interval', `interval is hour (the candle the chain keeps) or one of ${Object.keys(COMPUTED_INTERVALS).join(', ')} (computed by this index)`)),
+  /// A moment in microseconds since 1970, as `time_micros` everywhere. One above what a number holds exactly is read as the largest.
+  micros: (text) => (/^(0|[1-9][0-9]{0,15})$/.test(text) ? Math.min(Number(text), Number.MAX_SAFE_INTEGER) : bad('invalid_time', 'A time is a whole number of microseconds since 1970, without leading zeros')),
 };
 /// An account in a path: its number, or its name (2 to 15 of a-z, 0-9 and _). Digits alone are
 /// a number, as in the SDK; a leading @ makes any accepted text a name.
@@ -328,8 +353,8 @@ export function createStateReader({ rpc, trust, verifier, storage }) {
     if (pathname === '/api/network') return answer({ networkId: trust.network_id, chainId: trust.chain_id, protocolVersion: '4' });
     if (pathname === '/api/light-block') return answer(await fetchLightBlock({ rpc, height: searchParams.get('height') || undefined }));
     if (pathname === '/api/view-proof') {
-      const proof = await fetchCertifiedView({ rpc, selection: JSON.parse(searchParams.get('query')) });
       const held = call.getStore();
+      const proof = await fetchCertifiedView({ rpc, selection: JSON.parse(searchParams.get('query')), ...(held?.at === undefined ? {} : { at: held.at }) });
       if (held) held.proof = proof; // the last one fetched is the one the client verified
       return answer(proof);
     }
@@ -337,9 +362,15 @@ export function createStateReader({ rpc, trust, verifier, storage }) {
   };
   // The address is never contacted: every request of this client goes through `fetcher`.
   const client = SDK.createClient({ gateway: 'http://127.0.0.1/', trust, verifier, checkpointStorage: storage, fetcher });
-  return async (selection) => {
-    const held = {};
+  // `at`: the height of the state to read, as a decimal string; left out, the newest. The SDK's client and its light
+  // client only move forward, so a reader that asks at heights of its own is one made for that alone, with a
+  // checkpoint store of its own, and asks at heights that do not fall (the market's index does: market-index.mjs).
+  // It asks one read at a time: the client shares the answer between identical requests under way, and the height
+  // is not part of what it compares.
+  return async (selection, { at } = {}) => {
+    const held = at === undefined ? {} : { at: String(at) };
     const result = await call.run(held, () => client.getVerifiedState(selection));
+    if (held.at !== undefined && String(result?.state?.height) !== held.at) throw new Error('The state proven is not the state of the height asked');
     return { ...result, proof: held.proof };
   };
 }
@@ -507,11 +538,12 @@ const blockView = (row) => ({
 ///   between reads, and GET /v1/stats shows how many hold time and the `top` largest; only the accounts of `named`
 ///   (ids: the network's own) are shown with their names (holderFigures);
 /// - for tests: `readState`, `webhookFetcher`, `webhookTiming` { retryMs, attemptDelayMs }, `now`, `log`, `pollMs`, `autoStart`, `requestTimeoutMs`
-///   (15000: how long a request may take to arrive in full).
+///   (15000: how long a request may take to arrive in full), `readMarketState` (the reader of a state at a given
+///   height, for the market's index) and `marketTiming` { batchesPerStep, auditMs, pauseMs } (its pace).
 export async function createApiService({
   trust, rpc, verifier, dataFile, startHeight = 1, host = '127.0.0.1', port = 8930, hosts = [], corsOrigins = [], rateLimit = {}, trustedProxies = [],
   webhooks = [], webhookTiming = {}, maxLagSeconds = 120, maxStreams = 100, maxStreamsPerClient = 5, maxStreamSeconds = 900, reservedStreamClients = [], unfilteredStreamPercent = UNFILTERED_STREAM_PERCENT,
-  maxProofReadsPerClient = PROOF_READS_PER_CLIENT, maxTouchStreams = 2000, maxTouchStreamsPerClient = 16, stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, census: censusOptions = null, readState, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true, requestTimeoutMs = 15000,
+  maxProofReadsPerClient = PROOF_READS_PER_CLIENT, maxTouchStreams = 2000, maxTouchStreamsPerClient = 16, stateTimeoutMs = 15000, stateRefreshMs = 3600000, explorer = false, explorerJoin = null, census: censusOptions = null, readState, readMarketState, marketTiming = {}, webhookFetcher, now = Date.now, log = () => {}, pollMs = 500, autoStart = true, requestTimeoutMs = 15000,
 }) {
   if (censusOptions !== null) {
     const { everyMs, maxAccounts, named = [], top = 20, pauseMs = 100, ...rest } = censusOptions;
@@ -541,13 +573,24 @@ export async function createApiService({
   const streams = new Set();
   let explorerFiles;
   try { explorerFiles = explorer ? loadExplorerFiles() : null; } catch (error) { store.close(); throw error; }
-  let server, indexer, dispatcher, feeMicros = null, noAuction = null, feeAsked = 0, heartbeat = null, stateRefresh = null, censusTimer = null, closing = null;
+  let server, indexer, dispatcher, market, feeMicros = null, noAuction = null, feeAsked = 0, heartbeat = null, stateRefresh = null, censusTimer = null, closing = null;
+  // Whether the network has the market (a setting of its genesis): what a proof said, kept with the index; null until one was read.
+  let hasMarket = store.market.enabled();
   const startedAt = now();
 
   try {
     dispatcher = createWebhookDispatcher({ store, webhooks, fetcher: webhookFetcher, log, ...(webhookTiming.retryMs ? { baseMs: webhookTiming.retryMs } : {}), attemptDelayMs: webhookTiming.attemptDelayMs });
-    indexer = createIndexer({ rpc, trust, store, verifier, now, log, pollMs, webhookTargets: dispatcher.targetsOf, onBlock: (event) => { publish(event); touch(event); dispatcher.kick(); } });
+    indexer = createIndexer({ rpc, trust, store, verifier, now, log, pollMs, webhookTargets: dispatcher.targetsOf, onBlock: (event) => { publish(event); touch(event); dispatcher.kick(); market?.wake(); } });
     readState ??= createStateReader({ rpc, trust, verifier, storage: store.checkpointStorage('state') });
+    // The market's index reads the state at heights of its own (the height of the block it has come to), so it has a
+    // reader of its own, with a light client and a checkpoint of its own that move with it (market-index.mjs).
+    readMarketState ??= createStateReader({ rpc, trust, verifier, storage: store.checkpointStorage('market') });
+    market = createMarketFollower({ store, enabled: () => hasMarket, now, log, pollMs, ...marketTiming,
+      read: (selection, height) => stateGate.run(null, async () => {
+        const result = await withTimeout(readMarketState(selection, { at: String(height) }), stateTimeoutMs, undefined, 'node');
+        if (result?.verified !== true || result.state?.network_id !== store.networkId) throw new Error('The state was not verified');
+        return result;
+      }) });
   } catch (error) { store.close(); throw error; }
 
   // ---- what every answer from the index carries
@@ -600,7 +643,12 @@ export async function createApiService({
         if (result?.verified !== true || result.state?.network_id !== store.networkId) throw new Error('The state was not verified');
         try { feeMicros = SDK.networkFee(result.state); } catch { /* a state without the setting row: leave the fee unknown */ }
         // Whether the network has a bitcoin auction is a setting of its genesis too.
-        if (result.state.config && typeof result.state.config === 'object') noAuction = result.state.config.all_new_time_to_validators === true;
+        if (result.state.config && typeof result.state.config === 'object') {
+          noAuction = result.state.config.all_new_time_to_validators === true;
+          // So is the market. The index of the market is told, and keeps it: it then follows the blocks, or leaves them alone.
+          const found = result.state.config.market === true;
+          if (hasMarket !== found) { hasMarket = found; store.market.setEnabled(found); market?.wake(); }
+        }
         return result;
       });
     } catch (error) {
@@ -942,7 +990,10 @@ export async function createApiService({
       if (s.consecutive_failures >= 5) reasons.push('indexer_failing');
       return { status: reasons.length ? 503 : 200, body: { ok: reasons.length === 0, reasons, indexed_height: s.indexed_height === null ? null : String(s.indexed_height), seconds_behind: s.seconds_behind,
         blocks_behind_reported: s.blocks_behind_reported, headers_to_verify: s.headers_to_verify, consecutive_failures: s.consecutive_failures, last_error: s.last_error, fault: s.fault,
-        streams: streams.size, touch_streams: touchStreams.size, webhooks: dispatcher.status() } };
+        streams: streams.size, touch_streams: touchStreams.size, webhooks: dispatcher.status(),
+        // Where the index of the market stands, on a network that has it: an operator's alarm reads `consistent` and
+        // `tape_reconciled` here. It does not change `ok`: the rest of the service answers as before.
+        market: hasMarket === true ? market.status() : null } };
     },
     'GET /v1/stats': async ({ client }) => {
       // Three parts, each saying what it is. `chain`: the state's own counters, read with a proof (null, with the
@@ -1063,8 +1114,17 @@ export async function createApiService({
       // The Merkle proof that these bytes are transaction `index` of the block, read from the
       // tree stored with the block. The bytes themselves are in the answer once, as `action.raw`.
       const proof = store.inclusionProof(row.height, row.idx, row.tx_count);
+      // An order (kind 50), a take (52) or a sale to a buy order (53) makes a row whose id is not in the action: the
+      // chain gives the next one. The index of the market counts them, and says here which one this action made, so
+      // that a program need not search the account's list for it. `made` is null until the index has followed the
+      // block (it follows a block when the next one has come). It is the index's word: ask the row by this id with
+      // its proof before acting on it.
+      const makes = row.kind === 50 || row.kind === 52 || row.kind === 53;
+      const made = makes && hasMarket === true ? store.market.madeBy(row.height, row.idx) ?? null : null;
       return { status: 200, body: fromIndex({
-        action: { ...actionView(row), public_key: decoded?.publicKey ?? null, auth_epoch: decoded?.authEpoch ?? null, payload: decoded?.payload ?? null, raw: raw.toString('base64'), repeated: row.repeated },
+        ...(makes ? { market: { source: 'index', proven: false, made } } : {}),
+        // A market action that pays the fee more than once: the action says how often, so here the fee is known.
+        action: { ...actionView(row), ...(row.fee_rule === 'market_fee' && decoded && feeMicros !== null ? { fee_micros: SDK.marketActionFee(decoded.kind, decoded.payload, feeMicros) } : {}), public_key: decoded?.publicKey ?? null, auth_epoch: decoded?.authEpoch ?? null, payload: decoded?.payload ?? null, raw: raw.toString('base64'), repeated: row.repeated },
         verify: {
           how: 'Verify the header of this block with your own light client (updateTo(height)). Put the proof in the form of the node\'s own lookup: tx = { hash, height, index, tx: action.raw, proof: { root_hash, data: action.raw, proof: { total, index: String(index), leaf_hash, aunts } } }. Then verifyFastReceipt({ tx, headers: [that header] }, { ...trust, checkpoint }) with the installed verifier. Or ask a wallet gateway through the SDK: client.waitReceipt(hash). Decode the proven bytes yourself with TimeSDK.decodeAction.',
           hash: row.hash, height: String(row.height), block_hash: row.block_hash.toUpperCase(), index: row.idx, total: String(row.tx_count),
@@ -1168,7 +1228,9 @@ export async function createApiService({
       // passed on only when a proof of the network's configuration says the network takes it.
       if ([40, 41, 42, 60, 61, 62].includes(action.kind)) {
         if (noAuction === null && action.kind === 40) await verifiedState({}, client);
-        if (noAuction === true) bad('not_on_this_network', 'This network has no bitcoin auction and refuses this kind of action');
+        // A network with the market follows the Bitcoin header chain without an auction: it takes kind 40, and only that
+        // one of these kinds (the engine's `bitcoin_kind_allowed`). The relay of headers must pass here.
+        if (noAuction === true && !(action.kind === 40 && hasMarket === true)) bad('not_on_this_network', 'This network has no bitcoin auction and refuses this kind of action');
         if (noAuction === null && action.kind === 40) throw new ApiError(503, 'state_unavailable', 'The configuration of the network could not be read with a proof; an unsigned relay is not passed on without it', { retryAfter: 5 });
       }
       if (!(await signatureValid(raw, action))) bad('invalid_signature', 'The signature is not one of the key the action names');
@@ -1224,7 +1286,166 @@ export async function createApiService({
       response.on('close', () => forgetTouch(stream));
       return { taken: true };
     },
+    // ---- the market of seconds against bitcoin (spec/market.md), on a network whose genesis has the setting
+    'GET /v1/market': async ({ client }) => {
+      const selection = { include_market: true, include_bitcoin: true };
+      const result = await sharedState(selection, client), state = result.state, proven = fromState(result, selection);
+      if (!SDK.marketSetting(state)) throw noMarket(proven);
+      const summary = SDK.marketSummary(state), rules = SDK.marketRules(state);
+      return { status: 200, body: { ...proven, market: true, rules, summary,
+        // What was recorded, not what a second is worth: no rule reads it, and two accounts of one person can write it (spec/market.md, section 9).
+        last_recorded_price: summary.last_price ?? null,
+        held_micros: SDK.marketHeldMicros(state), heights: SDK.marketHeights(state),
+        clock: { genesis_time_micros: String(state.genesis.genesis_time_micros), now_elapsed_micros: SDK.securityNow(state), hour: SDK.marketHour(state) },
+        bitcoin: bitcoinChain(state), market_index: market.status() } };
+    },
+    'GET /v1/market/orders': async ({ query, client }) => {
+      await requireBook(client);
+      if (!query.side) bad('invalid_side', 'side is sell or buy: the book is listed one side at a time');
+      const limit = query.limit ?? DEFAULT_PAGE;
+      const rows = store.market.book(query.side, query.cursor ?? null, limit + 1);
+      const listed = page(rows, limit, query.cursor?.text ?? null, (row) => `${row.price}.${row.id}`);
+      return { status: 200, body: fromMarket({ side: query.side, ...listed, items: listed.items.map(orderView), verify: { how: PROVE_ROWS } }) };
+    },
+    'GET /v1/market/depth': async ({ query, client }) => {
+      await requireBook(client);
+      const levels = query.levels ?? 20, sell = store.market.depth('sell', levels), buy = store.market.depth('buy', levels);
+      return { status: 200, body: fromMarket({ levels, sell: sell.levels, buy: buy.levels, truncated: sell.truncated || buy.truncated,
+        last_recorded_price: store.market.state().summary?.last_price ?? null, verify: { how: PROVE_ROWS } }) };
+    },
+    'GET /v1/market/orders/{orderid}': async ({ params, client }) => {
+      const id = params.orderid;
+      // The owner's keys and freeze decide whether the order still takes a fill (spec/market.md, 6.10). They are read in
+      // the same proof as the order when the index knows the owner, and in a second proof of both when it does not.
+      const read = async (owner) => {
+        const selection = { market_orders: [id], ...(owner ? { ids: [owner], include_security: true } : {}) };
+        const result = await sharedState(selection, client);
+        if (!SDK.marketSetting(result.state)) throw noMarket(fromState(result, selection));
+        return { result, selection, order: SDK.marketOrder(result.state, id) };
+      };
+      const known = store.market.order(Number(id))?.owner ?? null;
+      let found = await read(known);
+      if (found.order && found.order.owner !== known) found = await read(found.order.owner);
+      const proven = fromState(found.result, found.selection), order = found.order;
+      if (!order) throw new ApiError(404, 'order_not_found', 'No such order in the verified state: it was never made, or it is gone (cancelled, or all of it sold and paid)', { body: { ...proven, order: null } });
+      return { status: 200, body: { ...proven, order, sats: SDK.marketSats(order.amount_micros, order.price), takes_fill: takesFill(order), owner_stands: ownerStands(found.result.state, order) } };
+    },
+    'GET /v1/market/fills/{fillid}': async ({ params, client }) => {
+      const id = params.fillid;
+      // The fill's order says what a payment of a part must be at least (`min_sats`): it is read in the same proof when
+      // the index knows which order it is, and in a second proof of both when it does not.
+      const read = async (order) => {
+        const selection = { market_fills: [id], include_market: true, include_bitcoin: true, ...(order ? { market_orders: [order] } : {}) };
+        const result = await sharedState(selection, client);
+        if (!SDK.marketSetting(result.state)) throw noMarket(fromState(result, selection));
+        return { result, selection, fill: SDK.marketFill(result.state, id), order };
+      };
+      const held = store.market.fill(Number(id));
+      let found = await read(held ? String(held.order_id) : null);
+      if (found.fill && found.fill.order !== found.order) found = await read(found.fill.order);
+      const { result, selection, fill } = found, state = result.state, proven = fromState(result, selection);
+      // How the fill ended and what was paid to it are the index's word, said apart from what is proven.
+      const indexed = fromMarket({ ended: store.market.ended(Number(id)), payments: store.market.tradesOfFill(Number(id), MAX_PAGE) });
+      if (!fill) throw new ApiError(404, 'fill_not_found', 'No such fill in the verified state: it was never made, or it has ended (paid in full, expired, released or settled). A payment to its address now is for nothing', { body: { ...proven, fill: null, indexed } });
+      let expiry = null;
+      try { expiry = SDK.marketExpiry(state, fill); } catch { expiry = null; }
+      return { status: 200, body: { ...proven, fill, order: SDK.marketOrder(state, fill.order), last_height: SDK.marketFillLastHeight(fill), earliest_end_micros: SDK.marketFillEarliestEnd(state, fill), now_elapsed_micros: SDK.securityNow(state), expiry, bitcoin: bitcoinChain(state), indexed } };
+    },
+    'GET /v1/market/scripts/{script}': async ({ params, client }) => {
+      const selection = { market_scripts: [params.script] };
+      const result = await sharedState(selection, client), proven = fromState(result, selection);
+      if (!SDK.marketSetting(result.state)) throw noMarket(proven);
+      return { status: 200, body: { ...proven, script: params.script, form: SDK.marketScriptForm(params.script), ...SDK.marketScript(result.state, params.script) } };
+    },
+    'GET /v1/accounts/{id}/market': async ({ params, query, client }) => {
+      await requireBook(client);
+      const limit = query.limit ?? DEFAULT_PAGE;
+      cursorWithinIndex(query.cursor?.height);
+      const open = store.market.fillsOf(params.id, MAX_PAGE + 1);
+      const rows = store.market.endedOf(params.id, query.cursor ?? startOf('desc'), limit + 1);
+      const listed = page(rows, limit, query.cursor?.text ?? null, (row) => encodeCursor(row.height, row.idx));
+      return { status: 200, body: fromMarket({ account: params.id,
+        orders: store.market.ordersOf(params.id, SDK.MARKET_LIMITS.orders + 1).map((row) => ({ ...orderView(row), roles: ['owner'] })),
+        // The chain's own list (market/account/<id>) has the fills the account pays. The index also knows those whose
+        // seconds it holds as the seller (`owner`) and those whose seconds go to it when another account pays (`to`).
+        fills: open.slice(0, MAX_PAGE).map((entry) => ({ ...fillView(entry.row), roles: entry.roles })), fills_truncated: open.length > MAX_PAGE,
+        ended: { ...listed, items: listed.items.map((row) => ({ ...JSON.parse(row.body), roles: row.roles })) }, verify: { how: PROVE_ROWS } }) };
+    },
+    'GET /v1/market/trades': async ({ query, client }) => {
+      await requireBook(client);
+      const order = query.order ?? 'desc', limit = query.limit ?? DEFAULT_PAGE;
+      cursorWithinIndex(query.cursor?.height);
+      const rows = store.market.trades(order, query.cursor ?? startOf(order), limit + 1);
+      const listed = page(rows, limit, query.cursor?.text ?? null, (row) => encodeCursor(row.height, row.idx));
+      return { status: 200, body: fromMarket({ order, ...listed, items: listed.items.map((row) => JSON.parse(row.body)),
+        verify: { how: 'Each entry is one accepted proof of payment (kind 54): GET /v1/actions/{hash} gives the action and what verifies it. The numbers are the index\'s reading of the rule; market_index.tape_reconciled says whether their sums are the proven summary\'s.' } }) };
+    },
+    'GET /v1/market/candles': async ({ query, client }) => {
+      await requireBook(client);
+      if (!query.interval) bad('invalid_interval', PARAMETERS_HELP.interval);
+      const limit = query.limit ?? DEFAULT_PAGE, from = query.from ?? 0, to = query.to ?? Number.MAX_SAFE_INTEGER, chain = query.interval === 'hour', st = store.market.state();
+      if (from > to) bad('invalid_time', 'from is not after to');
+      // The chain's candle begins with the chain; a computed one on a whole multiple of its length since 1970.
+      const zero = chain ? Number(st.genesis_time_micros) : 0, width = chain ? Number(st.hour_micros) : COMPUTED_INTERVALS[query.interval] * 1e6;
+      const first = Math.max(0, Math.ceil((from - zero) / width)), last = Math.floor((to - zero) / width);
+      const rows = last < first ? [] : chain ? store.market.candles(first, last, limit + 1) : store.market.buckets(COMPUTED_INTERVALS[query.interval], first, last, limit + 1);
+      const items = rows.slice(0, limit).map((row) => {
+        const number = chain ? row.hour : row.bucket, start = zero + number * width, held = chain ? JSON.parse(row.row) : row;
+        return { number: String(number), start_time_micros: String(start), start_time: new Date(start / 1000).toISOString(),
+          // Records of proven payments at the prices of their fills: not what a second is worth (spec/market.md, section 9).
+          recorded_prices: { open: held.open, high: held.high, low: held.low, close: held.close },
+          sats: held.sats, seconds_micros: chain ? held.seconds_micros : held.micros, trades: String(held.trades),
+          ...(chain ? { source: 'state_row', proven_at_height: String(row.proven_at), matches_tape: row.matches === null ? null : row.matches === 1 } : { source: 'computed' }) };
+      });
+      return { status: 200, body: fromMarket({ interval: query.interval, interval_micros: String(width), begins: chain ? 'with the chain' : 'on whole multiples of the interval since 1970 (UTC)',
+        has_more: rows.length > limit, next_to: items.length ? String(Number(items.at(-1).start_time_micros) - 1) : null, items,
+        verify: { how: chain ? 'A candle of the chain is a row of the state: TimeSDK.marketCandle(state, number) on a state read with market_candles proves it.' : 'Computed by this index from its list of trades: nothing proves it. The chain keeps one candle an hour (interval=hour).' } }) };
+    },
   };
+  // ---- the market: what its answers share
+  const PROVE_ROWS = 'A list is this index\'s word. Before acting on a row (showing an address to pay, taking an order), read it with its proof: GET /v1/market/orders/{id}, GET /v1/market/fills/{id}, GET /v1/market/scripts/{script}, or the SDK (marketOrder, marketFill, marketScript on a verified state).';
+  const PARAMETERS_HELP = { interval: `interval is hour (the candle the chain keeps) or one of ${Object.keys(COMPUTED_INTERVALS).join(', ')} (computed by this index)` };
+  /// What every list of the market carries: that it is the index's word, the height it is as of, and whether the
+  /// index agrees with the proven summary.
+  const fromMarket = (body) => ({ source: 'index', proven: false, ...body, market_index: market.status(), index: indexNote() });
+  const noMarket = (proven) => new ApiError(404, 'no_market', 'This network has no market: its genesis does not have the setting', proven ? { body: proven } : {});
+  /// For a list: the network has the market (a proof said so, now or before), and the book was proven whole once.
+  async function requireBook(client) {
+    if (hasMarket === null) await verifiedState({}, client);
+    if (hasMarket !== true) throw noMarket();
+    const status = market.status();
+    if (!status.ready) throw new ApiError(503, 'market_index_not_ready', 'The index of the market has not proven the book yet. It reads every order and fill once, when the block index has come close to the newest block. An order, a fill or a script by its id is answered meanwhile, each with its proof', { retryAfter: 5, body: { market_index: status, index: indexNote() } });
+  }
+  /// The Bitcoin header chain as the state proves it: its best block and whether it is halted. Whether it is fresh
+  /// (spec/market.md, 5.3: a new fill needs that) depends on the time of its best header, which is not in the proven
+  /// row. It is said when that header is among the newest ones relayed in indexed blocks: a header whose hash is the
+  /// proven `best_tip` is that header, whoever served it. Otherwise `fresh` is null: not known here.
+  function bitcoinChain(state) {
+    const meta = state.bitcoin?.meta;
+    if (!meta || typeof meta !== 'object') return null;
+    const halted = meta.halted !== null && meta.halted !== undefined;
+    let time = null;
+    for (const header of store.market.recentHeaders(4)) {
+      if (typeof header !== 'string' || !/^[0-9a-f]{160}$/.test(header)) continue;
+      const bytes = Buffer.from(header, 'hex'), hash = createHash('sha256').update(createHash('sha256').update(bytes).digest()).digest().reverse().toString('hex');
+      if (hash === meta.best_tip) { time = bytes.readUInt32LE(68); break; }
+    }
+    const at = Math.floor(Number(state.time_micros) / 1e6);
+    const fresh = halted ? false : time === null ? null : at <= time + meta.config.max_tip_age_secs && time <= at + meta.config.max_future_secs;
+    return { network: meta.config?.network ?? null, best_height: String(meta.best_height), best_tip: meta.best_tip, halted, halt: meta.halted ?? null,
+      fresh, best_header_time: time === null ? null : String(time), max_tip_age_secs: meta.config?.max_tip_age_secs ?? null };
+  }
+  /// Whether the owner of a proven order stands at this state (spec/market.md, 6.10): the order's key is still a
+  /// spending key of the owner, and the owner is not frozen. Null when the proof does not carry the owner.
+  function ownerStands(state, order) {
+    const account = (state.accounts ?? []).find((item) => String(item.id) === order.owner);
+    if (!account || !Array.isArray(account.devices)) return { stands: null, key_can_spend: null, frozen: null };
+    const key = account.devices.some((device) => device?.can_spend === true && device.public_key === order.key);
+    const security = (state.security ?? []).find((row) => String(row.account) === order.owner) ?? null;
+    let stopped = false;
+    try { stopped = security ? frozen(security, SDK.securityNow(state)) : false; } catch { return { stands: null, key_can_spend: key, frozen: null }; }
+    return { stands: key && !stopped, key_can_spend: key, frozen: stopped };
+  }
   /// The route table: method, path template, what each query parameter must be, and the cost in
   /// rate-limit tokens. The OpenAPI description is checked against it.
   const routes = ROUTES.map((route) => ({ ...route, handler: ROUTE_HANDLERS[`${route.method} ${route.path}`], pattern: new RegExp(`^${route.path.replace(/[.]/g, '\\.').replace(/\{[a-z]+\}/g, '([^/]+)')}$`), names: [...route.path.matchAll(/\{([a-z]+)\}/g)].map((m) => m[1]) }));
@@ -1429,6 +1650,7 @@ export async function createApiService({
   const close = () => closing ??= (async () => {
     clearInterval(heartbeat); clearInterval(stateRefresh); clearTimeout(censusTimer);
     await indexer.stop();
+    await market?.stop();
     await dispatcher.stop();
     for (const stream of streams) stream.response.end();
     for (const stream of touchStreams) stream.response.end();
@@ -1447,7 +1669,7 @@ export async function createApiService({
   heartbeat = setInterval(tend, 15000);
   heartbeat.unref?.();
   if (autoStart) {
-    indexer.start(); dispatcher.kick(); learnFee();
+    indexer.start(); market.start(); dispatcher.kick(); learnFee();
     // The state reader has a light client of its own, which moves only when a state is read. It is
     // read on a timer, so that a week without account requests does not let its checkpoint expire.
     stateRefresh = setInterval(() => { verifiedState({}).catch(() => {}); }, stateRefreshMs);
@@ -1462,7 +1684,7 @@ export async function createApiService({
   const address = server.address();
   return {
     url: `http://${address.family === 'IPv6' ? `[${address.address}]` : address.address}:${address.port}`,
-    indexer, store, webhooks: dispatcher, close, tendStreams: tend, takeCensus,
+    indexer, store, market, webhooks: dispatcher, close, tendStreams: tend, takeCensus,
   };
 }
 
@@ -1488,4 +1710,14 @@ export const ROUTES = Object.freeze([
   { method: 'POST', path: '/v1/transactions', query: {}, cost: 10 },
   { method: 'GET', path: '/v1/stream', query: { account: 'account', direction: 'direction', after: 'position' }, cost: 10 },
   { method: 'GET', path: '/v1/touches', query: { account: 'account' }, cost: 10 },
+  // The market (spec/market.md). Lists come from the index and take 1; a row with its proof takes 5, like its neighbours.
+  { method: 'GET', path: '/v1/market', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/market/orders', query: { side: 'side', limit: 'limit', cursor: 'bookcursor' }, cost: 1 },
+  { method: 'GET', path: '/v1/market/depth', query: { levels: 'levels' }, cost: 1 },
+  { method: 'GET', path: '/v1/market/orders/{orderid}', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/market/fills/{fillid}', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/market/scripts/{script}', query: {}, cost: 5, proof: true },
+  { method: 'GET', path: '/v1/market/trades', query: { limit: 'limit', cursor: 'cursor', order: 'order' }, cost: 1 },
+  { method: 'GET', path: '/v1/market/candles', query: { interval: 'interval', from: 'micros', to: 'micros', limit: 'limit' }, cost: 1 },
+  { method: 'GET', path: '/v1/accounts/{id}/market', query: { limit: 'limit', cursor: 'cursor' }, cost: 1 },
 ].map(Object.freeze));

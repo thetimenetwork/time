@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Time network API",
-    "version": "1.4.0",
-    "description": "Look up blocks, actions and accounts of a Time network, detect deposits, submit signed actions and follow new blocks and payments.\n\nAmounts are decimal strings of microseconds. Heights, nonces and account numbers are decimal strings too.\n\nAnswers marked `\"source\": \"index\", \"proven\": false` come from this server's index: a convenience, not a proof. Each carries what is needed to verify it with the SDK and your own trust anchor. Account state is marked `\"source\": \"state_proof\"` and carries the proof this server checked.\n\nUnknown or repeated query parameters are refused with 400, so a misspelled filter never returns an unfiltered list. The address of a request is a plain path with an optional query: a fragment, another host, dot segments or backslashes are refused with 400.\n\nA page of another site may read the API only through CORS, from an origin the operator allows: a browser that loads an address under /v1/ for another site as an image, script, style sheet, object, frame or prefetch is refused with 403 `cross_site_refused`. Programs, and people who follow a link, are not affected. A request that carries a body ends its connection with its answer.\n\nAnswers that do not depend on the route (an unknown route, another method, a refused origin) are listed under `x-any-request`."
+    "version": "1.5.0",
+    "description": "Look up blocks, actions and accounts of a Time network, detect deposits, submit signed actions and follow new blocks and payments.\n\nAmounts are decimal strings of microseconds. Heights, nonces and account numbers are decimal strings too.\n\nAnswers marked `\"source\": \"index\", \"proven\": false` come from this server's index: a convenience, not a proof. Each carries what is needed to verify it with the SDK and your own trust anchor. Account state is marked `\"source\": \"state_proof\"` and carries the proof this server checked.\n\nUnknown or repeated query parameters are refused with 400, so a misspelled filter never returns an unfiltered list. The address of a request is a plain path with an optional query: a fragment, another host, dot segments or backslashes are refused with 400.\n\nA page of another site may read the API only through CORS, from an origin the operator allows: a browser that loads an address under /v1/ for another site as an image, script, style sheet, object, frame or prefetch is refused with 403 `cross_site_refused`. Programs, and people who follow a link, are not affected. A request that carries a body ends its connection with its answer.\n\nAnswers that do not depend on the route (an unknown route, another method, a refused origin) are listed under `x-any-request`.\n\nOn a network whose genesis has the `market` setting, the routes under `/v1/market` and `/v1/accounts/{id}/market` serve the market of seconds against bitcoin: the book of open orders, the open fills, the trades and the candles. Validators are the only authority. The lists are this server's index of rows the state proved (`market_index.as_of_height` says of which height, `market_index.consistent` whether the rows held number what the proven summary counts); a single order, fill or receiving script comes with its proof, and a wallet reads the row that way before it shows an address to pay. Prices of trades and candles are records of proven payments at the prices of their fills. They are not what a second is worth: no rule of the chain reads them, and two accounts of one person can trade with each other at any price. On any other network these routes answer 404 `no_market`."
   },
   "servers": [
     {
@@ -617,6 +617,44 @@
                       "properties": {
                         "action": {
                           "$ref": "#/components/schemas/ActionDetail"
+                        },
+                        "market": {
+                          "type": "object",
+                          "description": "Only for an order (kind 50), a take (kind 52) and a sale to a buy order (kind 53): the row the action made. Its id is not in the action; the chain gives the next one, and the index of the market counts them. It is the index's word: ask the row by this id with its proof (GET /v1/market/orders/{orderid}, GET /v1/market/fills/{fillid}) before acting on it.",
+                          "required": [
+                            "source",
+                            "proven",
+                            "made"
+                          ],
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "index"
+                              ]
+                            },
+                            "proven": {
+                              "type": "boolean",
+                              "enum": [
+                                false
+                              ]
+                            },
+                            "made": {
+                              "type": [
+                                "object",
+                                "null"
+                              ],
+                              "description": "{\"order\": id} or {\"fill\": id}. null while the index of the market has not followed the action's block (it follows a block when the next one has come), and on a network without the market.",
+                              "properties": {
+                                "order": {
+                                  "type": "string"
+                                },
+                                "fill": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
                         },
                         "verify": {
                           "$ref": "#/components/schemas/ActionProof"
@@ -1278,6 +1316,1083 @@
           }
         }
       }
+    },
+    "/v1/market": {
+      "get": {
+        "operationId": "getMarket",
+        "summary": "The market: its rules, its proven summary and the state of its index",
+        "description": "Whether the network has the market, the numbers of its profile, the summary row and the clock of heights with their proof, the Bitcoin header chain as the state proves it, and where this server's index of the market stands. On a network without the market: 404 `no_market`, with the proof of the state that shows it. One client has at most two such reads under way at once (429 `too_many_reads`). Costs 5 from the rate-limit budget.",
+        "responses": {
+          "200": {
+            "description": "The market",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Market"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "`no_market`: this network has no market; the proof of the state shows its configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "checked_by": {
+                          "type": "string"
+                        },
+                        "state_height": {
+                          "type": "string"
+                        },
+                        "state_time_micros": {
+                          "type": "string"
+                        },
+                        "indexed_height": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "proof": {
+                          "$ref": "#/components/schemas/StateProof"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/market/orders": {
+      "get": {
+        "operationId": "listMarketOrders",
+        "summary": "The book of one side, best price first",
+        "description": "Open orders that offer something: `side=sell` by rising price, `side=buy` by falling price, orders at one price by id. `side` is required. An order that is closed or has nothing on offer is not listed here; its owner finds it under GET /v1/accounts/{id}/market. Read an order with its proof (GET /v1/market/orders/{orderid}) before taking it. From the index: `market_index.as_of_height` is the height it is as of, and `market_index.consistent` says whether the rows held number what the proven summary counts. Costs 1.",
+        "parameters": [
+          {
+            "name": "side",
+            "in": "query",
+            "description": "Required: the side of the book",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sell",
+                "buy"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "A `next_cursor` of an earlier page of the same side (\"<price>.<order>\")",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,15}\\.[1-9][0-9]{0,15}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the book",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromMarketIndex"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MarketOrderItem"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "side": {
+                          "type": "string",
+                          "enum": [
+                            "sell",
+                            "buy"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoMarket"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/MarketNotReady"
+          }
+        }
+      }
+    },
+    "/v1/market/depth": {
+      "get": {
+        "operationId": "getMarketDepth",
+        "summary": "Both sides of the book, added up by price",
+        "description": "For each of the first `levels` prices of each side: what is on offer, what of it an order can give to a new fill as far as its row says (`takeable_micros`), what all of it costs, and how many orders stand there. At most 5,000 orders of a side are read; `truncated` says when that was not enough. From the index: `market_index.as_of_height` is the height it is as of, and `market_index.consistent` says whether the rows held number what the proven summary counts. Costs 1.",
+        "parameters": [
+          {
+            "name": "levels",
+            "in": "query",
+            "description": "Prices of each side, 1 to 200 (default 20)",
+            "schema": {
+              "type": "string",
+              "pattern": "^([1-9][0-9]?|1[0-9]{2}|200)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The depth",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromMarketIndex"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "levels": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "last_recorded_price": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "The price of the fill of the newest proven payment, from the summary the index last proved. Not what a second is worth"
+                        },
+                        "sell": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "price": {
+                                "type": "string"
+                              },
+                              "amount_micros": {
+                                "type": "string"
+                              },
+                              "takeable_micros": {
+                                "type": "string"
+                              },
+                              "sats": {
+                                "type": "string"
+                              },
+                              "orders": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "buy": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "price": {
+                                "type": "string"
+                              },
+                              "amount_micros": {
+                                "type": "string"
+                              },
+                              "takeable_micros": {
+                                "type": "string"
+                              },
+                              "sats": {
+                                "type": "string"
+                              },
+                              "orders": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoMarket"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/MarketNotReady"
+          }
+        }
+      }
+    },
+    "/v1/market/orders/{orderid}": {
+      "get": {
+        "operationId": "getMarketOrder",
+        "summary": "One order with its proof, or the proof that there is none",
+        "description": "The order row of the current state, read with a proof against validator signatures and passed on with that proof, and whether its owner still stands at that state (the order's key is a spending key of the owner and the owner is not frozen: spec/market.md, 6.10), judged on the owner's account read in the same proof. An order that does not exist (never made, cancelled, or all of it sold and paid) is 404 `order_not_found` with the proof of its absence. One client has at most two such reads under way at once (429 `too_many_reads`). Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/orderid"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MarketProven"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "order",
+                        "owner_stands"
+                      ],
+                      "properties": {
+                        "order": {
+                          "$ref": "#/components/schemas/MarketOrderRow"
+                        },
+                        "sats": {
+                          "type": "string",
+                          "description": "What all that is on offer costs"
+                        },
+                        "takes_fill": {
+                          "type": "boolean",
+                          "description": "As in the list: what the row itself allows"
+                        },
+                        "owner_stands": {
+                          "type": "object",
+                          "description": "From the same proof. `stands` null: the proof does not carry the owner",
+                          "properties": {
+                            "stands": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
+                            "key_can_spend": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
+                            "frozen": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "`order_not_found`: the proof shows that the state holds no such order; or `no_market`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "checked_by": {
+                          "type": "string"
+                        },
+                        "state_height": {
+                          "type": "string"
+                        },
+                        "state_time_micros": {
+                          "type": "string"
+                        },
+                        "indexed_height": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "proof": {
+                          "$ref": "#/components/schemas/StateProof"
+                        },
+                        "order": {
+                          "type": "null"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/market/fills/{fillid}": {
+      "get": {
+        "operationId": "getMarketFill",
+        "summary": "One fill with its proof, or the proof that there is none",
+        "description": "The fill row of the current state with its proof, its order from the same proof, the last Bitcoin height that still counts for it, and whether it can be ended without payment now (`expiry`, the engine's four conditions judged on the proven rows: `TimeSDK.marketExpiry`). `indexed` is the index's word, apart from what is proven: the payments counted for the fill so far and, once it has ended, how. A fill that does not exist (never made, or ended) is 404 `fill_not_found` with the proof of its absence: a payment to its address then is for nothing. One client has at most two such reads under way at once (429 `too_many_reads`). Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/fillid"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The fill",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MarketProven"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "fill",
+                        "last_height",
+                        "indexed"
+                      ],
+                      "properties": {
+                        "fill": {
+                          "$ref": "#/components/schemas/MarketFillRow"
+                        },
+                        "order": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/MarketOrderRow"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "last_height": {
+                          "type": "string",
+                          "description": "start_height + pay_blocks + confirmations − 1"
+                        },
+                        "earliest_end_micros": {
+                          "type": "string",
+                          "description": "The earliest moment it can end without payment whatever the chain learns of Bitcoin, on the clock of the waits"
+                        },
+                        "now_elapsed_micros": {
+                          "type": "string",
+                          "description": "The clock of the waits at this state"
+                        },
+                        "expiry": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "description": "`possible`, `reason` (null, or the first condition that fails: halted, height, grace, time), `lastHeight`, `knownMicros`, `earliestEndMicros`, `notBeforeMicros`"
+                        },
+                        "bitcoin": {
+                          "$ref": "#/components/schemas/MarketBitcoin"
+                        },
+                        "indexed": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/FromMarketIndex"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "ended": {
+                                  "anyOf": [
+                                    {
+                                      "$ref": "#/components/schemas/MarketEndedFill"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "payments": {
+                                  "type": "array",
+                                  "items": {
+                                    "$ref": "#/components/schemas/MarketTrade"
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "`fill_not_found`: the proof shows that the state holds no such fill, and `indexed.ended` says how it ended if the index saw it; or `no_market`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "checked_by": {
+                          "type": "string"
+                        },
+                        "state_height": {
+                          "type": "string"
+                        },
+                        "state_time_micros": {
+                          "type": "string"
+                        },
+                        "indexed_height": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "proof": {
+                          "$ref": "#/components/schemas/StateProof"
+                        },
+                        "fill": {
+                          "type": "null"
+                        },
+                        "indexed": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/market/scripts/{script}": {
+      "get": {
+        "operationId": "getMarketScript",
+        "summary": "What a receiving script serves, with its proof",
+        "description": "The row of a receiving script in the current state, or the proof that it has none: `free` (no row), `listed` (an order lists it; that order's row says whether a fill uses it), `in_use` (it is the script of an open fill against a buy order) or `used` (a fill that used it has ended: a payment to it now is for nothing, and no order can list it again). One client has at most two such reads under way at once (429 `too_many_reads`). Costs 5 from the rate-limit budget.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/script"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/MarketProven"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "script",
+                        "form",
+                        "status"
+                      ],
+                      "properties": {
+                        "script": {
+                          "type": "string"
+                        },
+                        "form": {
+                          "type": "string",
+                          "enum": [
+                            "p2pkh",
+                            "p2sh",
+                            "p2tr",
+                            "p2wpkh",
+                            "p2wsh"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "free",
+                            "listed",
+                            "in_use",
+                            "used"
+                          ]
+                        },
+                        "order": {
+                          "type": "string",
+                          "description": "`listed`: the order"
+                        },
+                        "fill": {
+                          "type": "string",
+                          "description": "`in_use`: the fill"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "description": "`no_market`: this network has no market",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "checked_by": {
+                          "type": "string"
+                        },
+                        "state_height": {
+                          "type": "string"
+                        },
+                        "state_time_micros": {
+                          "type": "string"
+                        },
+                        "indexed_height": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "proof": {
+                          "$ref": "#/components/schemas/StateProof"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/v1/market/trades": {
+      "get": {
+        "operationId": "listMarketTrades",
+        "summary": "The recorded trades",
+        "description": "One entry for every accepted proof of payment (kind 54), newest first by default: the fill, its price, the satoshis counted and the seconds bought. The numbers are the rule of the chain applied to the fill's row before the payment (`basis` says whether that row was proven or worked out); `market_index.tape_reconciled` says whether the list adds up to the proven summary, and it is false whenever the list disagrees with the chain. A price here is the price two parties agreed for one fill. It is not what a second is worth. From the index: `market_index.as_of_height` is the height it is as of, and `market_index.consistent` says whether the rows held number what the proven summary counts. Costs 1.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of trades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromMarketIndex"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `cursor` to continue. When a page is empty it repeats the cursor that was given"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MarketTrade"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "order": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoMarket"
+          },
+          "409": {
+            "$ref": "#/components/responses/CursorBelowStart"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/MarketNotReady"
+          }
+        }
+      }
+    },
+    "/v1/market/candles": {
+      "get": {
+        "operationId": "listMarketCandles",
+        "summary": "Candles of recorded trades",
+        "description": "`interval=hour` gives the candles the chain keeps, stored as the state proved them: one for each of its hours with a proven payment (an hour of the chain is 3,600 seconds on a production network and 60 on a laboratory one; `interval_micros` says which), counted from the start of the chain. The other intervals are computed by this index from its list of trades and say so (`source: computed`); their buckets begin on whole multiples of the interval since 1970 (UTC). Newest first; only intervals with a trade are listed; `from` and `to` bound the start of an interval; `next_to` goes back in as `to` for the page before. `interval` is required. A candle is a record of proven payments at the prices of their fills, not what a second is worth: no rule reads it, and it costs little to write. From the index: `market_index.as_of_height` is the height it is as of, and `market_index.consistent` says whether the rows held number what the proven summary counts. Costs 1.",
+        "parameters": [
+          {
+            "name": "interval",
+            "in": "query",
+            "description": "Required: `hour` (the chain's candle) or a computed interval",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hour",
+                "1m",
+                "5m",
+                "15m",
+                "1d"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Intervals that start at or after this moment, in microseconds since 1970",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,15})$"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Intervals that start at or before this moment, in microseconds since 1970",
+            "schema": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,15})$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candles, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromMarketIndex"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "interval": {
+                          "type": "string"
+                        },
+                        "interval_micros": {
+                          "type": "string"
+                        },
+                        "begins": {
+                          "type": "string",
+                          "description": "Where the intervals begin"
+                        },
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_to": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Pass it back as `to` for the candles before these"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MarketCandle"
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoMarket"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/MarketNotReady"
+          }
+        }
+      }
+    },
+    "/v1/accounts/{id}/market": {
+      "get": {
+        "operationId": "getAccountMarket",
+        "summary": "An account's orders and fills in the market",
+        "description": "The open orders the account owns; the open fills in which it has a part, each with its `roles` (`payer`: it promised the bitcoin; `owner`: its seconds are in the fill; `to`: the seconds go to it); and the fills that ended, newest first, with how each ended as far as the actions say. The chain's own list of an account (`market/account/<id>`, proven by `TimeSDK.marketAccount`) holds the orders it owns and the fills it pays: it misses the seller of a fill against a buy order and the account a fill's seconds go to when another account pays. The index knows both from the rows. At most 200 open fills are listed, newest first (`fills_truncated`); `limit` and `cursor` page the ended ones. From the index: `market_index.as_of_height` is the height it is as of, and `market_index.consistent` says whether the rows held number what the proven summary counts. Costs 1.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account's market",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/FromMarketIndex"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "account": {
+                          "type": "string"
+                        },
+                        "orders": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MarketOrderItem"
+                          }
+                        },
+                        "fills": {
+                          "type": "array",
+                          "items": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/MarketFillRow"
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "last_height": {
+                                    "type": "string"
+                                  },
+                                  "proven_at_height": {
+                                    "type": "string"
+                                  },
+                                  "roles": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "payer",
+                                        "owner",
+                                        "to"
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "fills_truncated": {
+                          "type": "boolean"
+                        },
+                        "ended": {
+                          "type": "object",
+                          "properties": {
+                            "has_more": {
+                              "type": "boolean"
+                            },
+                            "next_cursor": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "items": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/MarketEndedFill"
+                              }
+                            }
+                          }
+                        },
+                        "verify": {
+                          "type": "object",
+                          "properties": {
+                            "how": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoMarket"
+          },
+          "409": {
+            "$ref": "#/components/responses/CursorBelowStart"
+          },
+          "414": {
+            "$ref": "#/components/responses/Error414"
+          },
+          "421": {
+            "$ref": "#/components/responses/Error421"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/MarketNotReady"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1337,6 +2452,36 @@
             "asc",
             "desc"
           ]
+        }
+      },
+      "orderid": {
+        "name": "orderid",
+        "in": "path",
+        "required": true,
+        "description": "The number of an order, from 1",
+        "schema": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,15}$"
+        }
+      },
+      "fillid": {
+        "name": "fillid",
+        "in": "path",
+        "required": true,
+        "description": "The number of a fill, from 1",
+        "schema": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,15}$"
+        }
+      },
+      "script": {
+        "name": "script",
+        "in": "path",
+        "required": true,
+        "description": "A receiving script in lower-case hexadecimal: one of the five standard forms (p2pkh, p2sh, p2wpkh, p2wsh, p2tr)",
+        "schema": {
+          "type": "string",
+          "pattern": "^(76a914[0-9a-f]{40}88ac|a914[0-9a-f]{40}87|0014[0-9a-f]{40}|0020[0-9a-f]{64}|5120[0-9a-f]{64})$"
         }
       }
     },
@@ -1467,6 +2612,41 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/NotInIndex"
+            }
+          }
+        }
+      },
+      "NoMarket": {
+        "description": "`no_market`: this network has no market. From a route that reads the state, the answer carries the proof of the state that shows it",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "MarketNotReady": {
+        "description": "`market_index_not_ready`: the index has not proven the book yet (`market_index` says where it stands); or the state could not be read. See Retry-After",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Error"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "market_index": {
+                      "$ref": "#/components/schemas/MarketIndexNote"
+                    },
+                    "index": {
+                      "$ref": "#/components/schemas/IndexNote"
+                    }
+                  }
+                }
+              ]
             }
           }
         }
@@ -1641,7 +2821,7 @@
           "string",
           "null"
         ],
-        "description": "The name the service's SDK gives the kind (`TimeSDK.KINDS`); null for a kind it does not name, which is stored opaque. 45, `register_protected`, is a registration that creates its account with its keys in their roles and a daily limit (on a network whose genesis has `protected_registration`); like a reveal (2) it has no sender and pays nothing.",
+        "description": "The name the service's SDK gives the kind (`TimeSDK.KINDS`); null for a kind it does not name, which is stored opaque. 45, `register_protected`, is a registration that creates its account with its keys in their roles and a daily limit (on a network whose genesis has `protected_registration`); like a reveal (2) it has no sender and pays nothing. 50 to 58 (`market_order` … `market_scripts`) are the actions of the market, on a network that has it.",
         "enum": [
           "commit",
           "reveal",
@@ -1682,6 +2862,15 @@
           "cancel_waiting",
           "daily_limit",
           "upgrade_signal",
+          "market_order",
+          "market_cancel",
+          "market_take",
+          "market_sell",
+          "market_proof",
+          "market_expire",
+          "market_release",
+          "market_settle",
+          "market_scripts",
           null
         ]
       },
@@ -1766,8 +2955,10 @@
               "network_fee",
               "none",
               "at_most_network_fee",
+              "market_fee",
               "unknown"
-            ]
+            ],
+            "description": "`market_fee`: the network's fee, paid more than once: by a sell order (kind 50) and by new scripts (58) once more for each script listed, by a proof of payment (54) once more for every 256 bytes of its payload. A list gives no amount for it; GET /v1/actions/{hash} does"
           },
           "fee_micros": {
             "type": [
@@ -2157,6 +3348,17 @@
           },
           "webhooks": {
             "type": "object"
+          },
+          "market": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketIndexNote"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the index of the market stands, on a network that has the market; null on any other, and until a proof has said which it is. It does not change `ok`: watch `consistent` and `tape_reconciled`"
           }
         }
       },
@@ -3099,6 +4301,894 @@
                 }
               }
             }
+          }
+        }
+      },
+      "MarketIndexNote": {
+        "type": "object",
+        "description": "Where the index of the market stands. The lists are this index's word; this says how far to rely on them.",
+        "required": [
+          "as_of_height",
+          "ready",
+          "consistent",
+          "pending_rows",
+          "tape_reconciled",
+          "tape_complete"
+        ],
+        "properties": {
+          "as_of_height": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The orders and fills listed are as the state proved them at this height, or unchanged since their proof. A state is proven by the header of the next block, so when the newest indexed block holds an action of the market this is one below `index.indexed_height` until the next block comes. Null until the book has been proven once"
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The whole book has been proven once. Until then the lists answer 503 `market_index_not_ready`"
+          },
+          "consistent": {
+            "type": "boolean",
+            "description": "The rows held number what the proven summary counts (`orders`, `fills`) at `as_of_height`. False while every row is being read again after a difference: rely on the single rows with their proofs meanwhile"
+          },
+          "pending_rows": {
+            "type": "integer",
+            "description": "Rows that the blocks followed so far touched and that are not read again yet: above 0 while a pass is under way, or while reads of the state fail"
+          },
+          "reading_every_row": {
+            "type": "boolean",
+            "description": "A reading of every order and fill is under way (the first one, or a repair)"
+          },
+          "tape_reconciled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The list of trades adds up to the proven summary (`trades`, `sats`, `seconds_micros`), its last price is the summary's, every entry has its numbers, no proven fill row has contradicted it and no candle of the chain differs from it. False: the list disagrees with the chain, and the operator's log says where. Null before the first comparison"
+          },
+          "tape_from_height": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first block whose trades the list holds"
+          },
+          "tape_complete": {
+            "type": "boolean",
+            "description": "The list of trades begins with the chain. False for an index that started later (`index.start_height` above 1): earlier trades are in the chain's candles only"
+          },
+          "tape_trades": {
+            "type": "string",
+            "description": "How many trades the list holds"
+          },
+          "tape_unvalued": {
+            "type": "integer",
+            "description": "Entries of the list without numbers: the index did not know the fill or its price when the payment came"
+          },
+          "tape_faults": {
+            "type": "integer",
+            "description": "How often a proven row contradicted the list: a fill whose row was not what the list had counted from, or that ended, or did not end, against what the list says. Above 0, `tape_reconciled` stays false"
+          },
+          "unread_actions": {
+            "type": "integer",
+            "description": "Actions of kinds 50 to 58 that the SDK of this service could not read; after each, every row was read again"
+          },
+          "waiting_for_indexer": {
+            "type": "boolean",
+            "description": "The block index is further behind the chain than the node keeps states: rows are read when it has come within reach"
+          },
+          "last_error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "`state_not_held` or `read_failed`"
+              },
+              "at": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "FromMarketIndex": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FromIndex"
+          },
+          {
+            "type": "object",
+            "required": [
+              "market_index"
+            ],
+            "properties": {
+              "market_index": {
+                "$ref": "#/components/schemas/MarketIndexNote"
+              }
+            }
+          }
+        ]
+      },
+      "MarketMoment": {
+        "type": "object",
+        "description": "A block: its height and its time",
+        "properties": {
+          "height": {
+            "type": "string"
+          },
+          "time_micros": {
+            "type": "string"
+          }
+        }
+      },
+      "MarketOrderRow": {
+        "type": "object",
+        "description": "An order as the state holds it (spec/market.md, 4.1). A sell order has `scripts`; a buy order has `fills` and `forms`.",
+        "required": [
+          "id",
+          "side",
+          "owner",
+          "price",
+          "amount_micros",
+          "open"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "sell",
+              "buy"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "description": "The account that made the order"
+          },
+          "price": {
+            "type": "string",
+            "description": "Millionths of a satoshi for one second, 1 to 10^15"
+          },
+          "amount_micros": {
+            "type": "string",
+            "description": "What is still on offer, in microseconds, not counting what open fills hold"
+          },
+          "bond_micros": {
+            "type": "string",
+            "description": "A buy order: its owner's deposit for what is still on offer"
+          },
+          "confirmations": {
+            "type": "string",
+            "description": "A sell order: the confirmations its owner asks of every payment. A buy order: the most its owner waits for"
+          },
+          "pay_blocks": {
+            "type": "string",
+            "description": "The time to pay, in Bitcoin blocks"
+          },
+          "deposit_ppm": {
+            "type": "string",
+            "description": "A sell order: the deposit a taker locks, in millionths of the amount taken. A buy order: what gave its bond"
+          },
+          "min_deposit_micros": {
+            "type": "string",
+            "description": "A sell order: the least deposit of a fill"
+          },
+          "min_sats": {
+            "type": "string",
+            "description": "The smallest trade, in satoshis; also the least a payment of a part may be"
+          },
+          "open": {
+            "type": "boolean",
+            "description": "False once the owner cancelled while fills were open: nothing is on offer, and the order goes with its last fill"
+          },
+          "key": {
+            "type": "string",
+            "description": "The public key that signed the order or last gave it scripts. The order takes a fill only while it is a spending key of the owner"
+          },
+          "created": {
+            "$ref": "#/components/schemas/MarketMoment"
+          },
+          "scripts": {
+            "type": "array",
+            "description": "A sell order: its receiving scripts. `fill` while a fill uses the script, `used` once that fill has ended; neither: free",
+            "items": {
+              "type": "object",
+              "required": [
+                "script"
+              ],
+              "properties": {
+                "script": {
+                  "type": "string"
+                },
+                "fill": {
+                  "type": "string"
+                },
+                "used": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "fills": {
+            "type": "string",
+            "description": "A buy order: how many fills are open"
+          },
+          "forms": {
+            "type": "array",
+            "description": "A buy order: the forms of receiving script its owner can pay to",
+            "items": {
+              "type": "string",
+              "enum": [
+                "p2pkh",
+                "p2sh",
+                "p2tr",
+                "p2wpkh",
+                "p2wsh"
+              ]
+            }
+          }
+        }
+      },
+      "MarketFillRow": {
+        "type": "object",
+        "description": "A fill as the state holds it (spec/market.md, 4.2): one trade in progress. It shrinks as it is paid: read it again, with its proof, before every payment.",
+        "required": [
+          "id",
+          "order",
+          "side",
+          "owner",
+          "payer",
+          "to",
+          "price",
+          "amount_micros",
+          "sats",
+          "script"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "order": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "sell",
+              "buy"
+            ],
+            "description": "The side of the order it came from"
+          },
+          "owner": {
+            "type": "string",
+            "description": "The account whose seconds the fill holds (the seller)"
+          },
+          "payer": {
+            "type": "string",
+            "description": "The account that promised the bitcoin and locked the deposit"
+          },
+          "to": {
+            "type": "string",
+            "description": "The account the seconds go to"
+          },
+          "price": {
+            "type": "string"
+          },
+          "amount_micros": {
+            "type": "string",
+            "description": "The seconds the fill still holds"
+          },
+          "sats": {
+            "type": "string",
+            "description": "What is still to pay, in satoshis. Never compute it; read it"
+          },
+          "deposit_micros": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string",
+            "description": "Where the bitcoin must arrive. It serves this fill and nothing else, ever"
+          },
+          "confirmations": {
+            "type": "string"
+          },
+          "pay_blocks": {
+            "type": "string"
+          },
+          "start_height": {
+            "type": "string",
+            "description": "The best Bitcoin height the chain knew when the fill was made"
+          },
+          "start_hash": {
+            "type": "string"
+          },
+          "opened_micros": {
+            "type": "string",
+            "description": "When the fill was made, on the clock of the waits"
+          },
+          "created": {
+            "$ref": "#/components/schemas/MarketMoment"
+          }
+        }
+      },
+      "MarketOrderItem": {
+        "type": "object",
+        "description": "An order in a list: fields of its proven row, and what is counted from them",
+        "required": [
+          "id",
+          "side",
+          "owner",
+          "price",
+          "amount_micros",
+          "sats",
+          "min_sats",
+          "takes_fill",
+          "proven_at_height"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "sell",
+              "buy"
+            ]
+          },
+          "owner": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "amount_micros": {
+            "type": "string",
+            "description": "What is left on offer"
+          },
+          "sats": {
+            "type": "string",
+            "description": "What all that is left costs: ceil(amount_micros × price / 10^12)"
+          },
+          "min_sats": {
+            "type": "string",
+            "description": "Its smallest trade"
+          },
+          "confirmations": {
+            "type": "string"
+          },
+          "pay_blocks": {
+            "type": "string",
+            "description": "The time to pay, in Bitcoin blocks"
+          },
+          "deposit_ppm": {
+            "type": "string"
+          },
+          "min_deposit_micros": {
+            "type": "string"
+          },
+          "bond_micros": {
+            "type": "string"
+          },
+          "open": {
+            "type": "boolean"
+          },
+          "takes_fill": {
+            "type": "boolean",
+            "description": "The row itself allows a new fill: it is open, offers something, and has a free receiving script (sell) or a free place among its fills (buy). Not judged: whether its owner still stands (read the order with its proof for that) and whether the Bitcoin header chain is fresh"
+          },
+          "open_fills": {
+            "type": "integer"
+          },
+          "free_scripts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "A sell order: receiving scripts that have not served. An order without one takes no fill until its owner gives it new scripts"
+          },
+          "forms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "A buy order: the forms of script its owner can pay to"
+          },
+          "key": {
+            "type": "string"
+          },
+          "created": {
+            "$ref": "#/components/schemas/MarketMoment"
+          },
+          "proven_at_height": {
+            "type": "string",
+            "description": "The height of the state that proved this row"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "MarketEvent": {
+        "type": "object",
+        "description": "What an action of the market did, as the index read it from the action",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"<height>.<index>\" of the action"
+          },
+          "source": {
+            "type": "string"
+          },
+          "proven": {
+            "type": "boolean"
+          },
+          "hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The hash of the action: GET /v1/actions/{hash}"
+          },
+          "height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "MarketTrade": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MarketEvent"
+          },
+          {
+            "type": "object",
+            "description": "One accepted proof of payment (kind 54): a recorded trade",
+            "required": [
+              "fill",
+              "price",
+              "sats",
+              "seconds_micros"
+            ],
+            "properties": {
+              "fill": {
+                "type": "string"
+              },
+              "order": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "side": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The side of the order: `sell` when a taker bought from a sell order, `buy` when a seller sold to a buy order"
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The seller"
+              },
+              "payer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The account the seconds went to"
+              },
+              "price": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The price of the fill. A record of this trade, not what a second is worth"
+              },
+              "sats": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The satoshis counted: what was paid, at most what was still to pay"
+              },
+              "seconds_micros": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The seconds this payment bought"
+              },
+              "paid_sats": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The value of the Bitcoin output"
+              },
+              "full": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "The payment paid all that was still to pay, and the fill ended"
+              },
+              "bitcoin_txid": {
+                "type": "string"
+              },
+              "vout": {
+                "type": "string"
+              },
+              "bitcoin_block_hash": {
+                "type": "string"
+              },
+              "basis": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "proven_row",
+                  "derived_row",
+                  null
+                ],
+                "description": "What the numbers were counted from: the fill's row as the state proved it before the payment, or that row worked out from the actions since (a second payment before the next proof, or blocks whose state the node no longer held). Null: the fill was not known, and the entry has no numbers"
+              }
+            }
+          }
+        ]
+      },
+      "MarketEndedFill": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MarketEvent"
+          },
+          {
+            "type": "object",
+            "description": "A fill that has ended, and how, as far as the actions say",
+            "properties": {
+              "fill": {
+                "type": "string"
+              },
+              "order": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "side": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "payer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "price": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "how": {
+                "type": "string",
+                "enum": [
+                  "paid",
+                  "expired",
+                  "released",
+                  "settled",
+                  "unknown"
+                ],
+                "description": "`paid`: a proof paid it in full. `expired` (kind 55), `released` by the account its seconds would go to (56), `settled` by the seller (57). `unknown`: the state proved it gone and no indexed action ended it"
+              },
+              "unpaid_micros": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The seconds it still held when it ended"
+              },
+              "unpaid_sats": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "What was still to pay"
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "payer",
+                    "owner",
+                    "to"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "MarketBitcoin": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "The Bitcoin header chain the chain follows, from the proven row",
+        "properties": {
+          "network": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "best_height": {
+            "type": "string"
+          },
+          "best_tip": {
+            "type": "string"
+          },
+          "halted": {
+            "type": "boolean"
+          },
+          "halt": {
+            "type": [
+              "object",
+              "string",
+              "null"
+            ]
+          },
+          "fresh": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a new fill can be made by the freshness rule. The time of the best header is not in the proven row: it is taken from the headers relayed in indexed blocks when the header whose hash is `best_tip` is among the newest of them. Null: not known here"
+          },
+          "best_header_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_tip_age_secs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "MarketProven": {
+        "type": "object",
+        "required": [
+          "source",
+          "proof",
+          "state_height"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_proof"
+            ]
+          },
+          "checked_by": {
+            "type": "string"
+          },
+          "state_height": {
+            "type": "string",
+            "description": "The height of the proven state"
+          },
+          "state_time_micros": {
+            "type": "string"
+          },
+          "indexed_height": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof": {
+            "$ref": "#/components/schemas/StateProof"
+          }
+        }
+      },
+      "Market": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MarketProven"
+          },
+          {
+            "type": "object",
+            "required": [
+              "market",
+              "rules",
+              "summary",
+              "market_index"
+            ],
+            "properties": {
+              "market": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "rules": {
+                "type": "object",
+                "description": "The numbers of the network's profile and the shared limits (spec/market.md, 2.1), as `TimeSDK.marketRules` gives them: `profile`, `kMin`, `nMin`, `blockMicros`, `graceMicros`, `bondMinPpm`, `minSats`, `hourMicros`, `priceMax`, `satsMax`, `kMax`, `nMax`, `spareBlocks`, `orders`, `payerFills`, `scripts`, `buyFills`"
+              },
+              "summary": {
+                "type": "object",
+                "description": "The row `market/meta`: `orders` and `fills` count the rows that exist, `next_order` and `next_fill` are the next ids, `trades`, `sats` and `seconds_micros` add up every proven payment, `last_price` is written once one exists"
+              },
+              "last_recorded_price": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`summary.last_price`: the price of the fill of the newest proven payment. What was recorded, not what a second is worth"
+              },
+              "held_micros": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "All the seconds the market holds"
+              },
+              "heights": {
+                "type": "object",
+                "description": "The clock of heights: when the chain learnt of Bitcoin heights"
+              },
+              "clock": {
+                "type": "object",
+                "properties": {
+                  "genesis_time_micros": {
+                    "type": "string"
+                  },
+                  "now_elapsed_micros": {
+                    "type": "string",
+                    "description": "The clock of the waits at this state"
+                  },
+                  "hour": {
+                    "type": "string",
+                    "description": "The number of the chain's candle this state lies in"
+                  }
+                }
+              },
+              "bitcoin": {
+                "$ref": "#/components/schemas/MarketBitcoin"
+              },
+              "market_index": {
+                "$ref": "#/components/schemas/MarketIndexNote"
+              }
+            }
+          }
+        ]
+      },
+      "MarketCandle": {
+        "type": "object",
+        "required": [
+          "number",
+          "start_time_micros",
+          "recorded_prices",
+          "sats",
+          "seconds_micros",
+          "trades",
+          "source"
+        ],
+        "properties": {
+          "number": {
+            "type": "string",
+            "description": "The interval's number: for `hour` the chain's own (its key in the state)"
+          },
+          "start_time_micros": {
+            "type": "string"
+          },
+          "start_time": {
+            "type": "string"
+          },
+          "recorded_prices": {
+            "type": "object",
+            "description": "Prices of the fills whose payments were proven in the interval. Records, not a valuation",
+            "properties": {
+              "open": {
+                "type": "string"
+              },
+              "high": {
+                "type": "string"
+              },
+              "low": {
+                "type": "string"
+              },
+              "close": {
+                "type": "string"
+              }
+            }
+          },
+          "sats": {
+            "type": "string"
+          },
+          "seconds_micros": {
+            "type": "string"
+          },
+          "trades": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "state_row",
+              "computed"
+            ],
+            "description": "`state_row`: the candle the chain keeps, stored as proven. `computed`: added up by this index from its list of trades"
+          },
+          "proven_at_height": {
+            "type": "string"
+          },
+          "matches_tape": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Only `state_row`: whether this index's list of trades gives the same candle. Null when the list does not begin with the chain's first trade"
           }
         }
       }

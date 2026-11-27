@@ -8,6 +8,7 @@ import { deviceSupport } from './device-key.mjs';
 import { lockOf, turnOn, turnOff, remakePasswords, birthLockable, LOCK_WORDS } from './device-lock.mjs';
 import { vaultSlots, sealsOf } from './security-flows.mjs';
 import { BACKUP_MADE_ONLY } from './vault-backup.mjs';
+import { clearWalletField, takeWalletField } from './manager-fields.mjs';
 
 const $ = id => document.getElementById(id);
 const assert = (value, message) => { if (!value) throw new Error(message); };
@@ -97,14 +98,19 @@ export function createLockUI(c) {
   // `drawn` counts the drawings: the browser's answer to an earlier one, which may come after the lock was turned on or
   // off, draws nothing.
   let asking = null, shownFor = null, drawn = 0;
-  const take = id => { const el = $(id), value = el.value; el.value = ''; return value; };
-  const scrub = () => { for (const id of LOCK_FIELDS) $(id).value = ''; };
+  const take = id => takeWalletField($(id));
+  const scrub = () => { for (const id of LOCK_FIELDS) clearWalletField($(id)); };
   /// What the browser says it can do (it asks the person nothing), asked again at each drawing: a device can be set up
   /// while the page is open. One question at a time.
   const supportOf = () => (asking ??= deviceSupport(c.env()).catch(() => ({ outcome: 8, prf: 'unknown' })).finally(() => { asking = null; }));
   function show({ card, on = false, offerOn = false, note = '', chosen = false }) {
+    const managed = card && c.managed?.(shownFor);
+    $('lock-title').textContent = managed ? 'Extra device check for wallet keys' : 'Lock my keys to this device';
     $('lock-card').hidden = !card;
     $('lock-state').textContent = card ? (on ? LOCK_STATE.on : chosen ? LOCK_STATE.offChosen : LOCK_STATE.off) : '';
+    if (managed) $('lock-state').textContent = on
+      ? 'Time Vault and the wallet each ask for a device check.'
+      : 'Time Vault already checks your device. You can also require a second device check in the wallet itself.';
     $('lock-facts').replaceChildren(...(card && !on ? LOCK_WORDS.facts.map(text => { const item = document.createElement('li'); item.textContent = text; return item; }) : []));
     $('lock-on-form').hidden = !(card && !on && offerOn); $('lock-off-form').hidden = !(card && on);
     $('lock-off-facts').textContent = card && on ? LOCK_WORDS.offFacts : '';

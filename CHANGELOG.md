@@ -9,6 +9,67 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 27 November 2026, fourth publication of the day: the script a validator from outside runs, and what it trusts
+
+The public test network's own validators were moved to a layout in which nothing outside can reach them: no public address, a subnet of their own with no route out, connected to each other and to two sentries only, each signing through a signer machine of its own that nothing can connect to. That layout lives in the deployment, which is not published. What is published is the script a validator from outside runs, and the explorer's page that tells how.
+
+### The join script (`testnet/join.sh`, published from today)
+
+- **Published with the source, byte for byte.** For the public test network the script the network hands out is this file. A newcomer compares `sha256sum join.sh` with the file here, from a computer other than the one the script came from: the page and the script come from the same place, and nothing else can vouch for the first copy.
+- **It trusts the network's release key, and nothing it is handed.** The script carries two values: where it downloads from, and the public half of the network's release key. Everything else (the chain, the hashes of the node program, CometBFT and the genesis, the sentries, the pace) is in the network's description, `network.txt`, which the release key signs (`network.sig`). The script checks that signature with OpenSSL before it downloads anything it installs, and each file by the hash the signed description names. **Rule change**: the script no longer carries the network's values.
+- **It keeps what it was installed with.** An installed validator keeps the release key, refuses a description another key signed, or one older than the description it took (`SEQUENCE`), or one that has expired (`EXPIRES`, a day after the network's end). It keeps a copy of itself at `/opt/time-validator/join.sh`: run that copy to follow the network, not a new download. The copy replaces itself only with the script the signed description names by its SHA-256 (`SCRIPT_SHA256`). `--trust-new-release-key` is the one way to accept another key.
+- **Two users.** CometBFT runs as `time-validator` and alone can read the validator key. The node program, which reads every action anyone sends to the network, runs as `time-node`, with no network of its own (`PrivateNetwork=yes`) and no way to the key; the two speak through a socket file of a group only they are in. Both services carry systemd's hardening: no privileges or capabilities, a read-only system, the system calls of an ordinary service, no writable and executable memory. **Stored format**: the node program's data moves to `/var/lib/time-validator/app`; a machine installed before (on a chain that the reset ended) is told to `--uninstall --purge` and run the script again.
+- **The key's seed never reaches a disk.** The registration text is signed in a work folder in memory (`/dev/shm`), readable by root alone, and the key file made for OpenSSL is removed as soon as it has signed.
+
+### The explorer's "Run a validator" (`web-v4/explorer`, `client-v4/api.mjs`)
+
+- The page shows the script's SHA-256, the release key, and, only where the script handed out is the published file, the address of that file. The commands are four lines: download, `sha256sum join.sh`, read, run. The page says that a first copy is checked against the published one from another computer, and that an installed validator runs its kept copy.
+- **Rule change**: `explorer_join` takes three optional keys, `release_key`, `script_sha256` and `source_url`, each held to its form.
+
+### Tests
+
+- The script's own shell code, run with bash and OpenSSL 3: a description the release key signed is taken, and one signed by another key, changed after it was signed, older than the one kept, expired, or not in its form is refused; the kept copy takes another script only by the hash the description names; the registration text verifies as the chain's rule signs it, and the key file is gone after it (`testnet/join.test.mjs`, withheld with the deployment; the published file is what they test). The explorer's page and the API's setting with the new keys (`web-v4/explorer/views.test.mjs`, `serve.test.mjs`).
+- On AWS, a trial network of this layout: a fresh machine ran the script from the public address, joined as a validator and signed blocks; the explorer's page and the access of every machine's role were checked.
+
+## 27 November 2026, fourth publication of the day: a market of seconds against bitcoin
+
+**Read first.** The market is an optional setting of a network's genesis (`market`). No network has it: the public test network runs without it. Bitcoin mainnet is closed in this version, and the two Bitcoin networks that are open (regtest, testnet3) protect nothing. The rules are a draft (`spec/market.md`): five independent reviews were answered, and the answers to the fifth were read by nobody else. No outside party has audited any of it.
+
+### The rules and the engine
+
+- **Rule change: the node program is `time-node-v5 0.10.0`.** It knows the genesis setting `market`; a 0.9.0 node refuses a genesis that names it. On a network without the setting nothing was changed on purpose, and the two programs have not been run together on one network (`deploy/README.md`, "One engine version per network").
+- **Rule change: a new optional genesis setting, `market`** (`spec/market.md`; `v5/src/market.rs`, `v5/src/genesis.rs`). An order book of seconds against bitcoin, kept by the chain. A seller's order locks seconds and lists Bitcoin receiving scripts; a buyer takes it, pays the bitcoin as an ordinary Bitcoin payment to the seller's script, and the chain hands over the seconds when it is shown a proof of that payment in the Bitcoin header chain it follows. Nobody holds bitcoin for anybody. Nine new kinds of action, 50 to 58: order, cancel, take, sell into a buy order, proof of payment, expire, release, settle, new receiving scripts. There is no pool, no market order, no stop order, no oracle and no leverage.
+- A network with the market needs `waits_survive_stops` and the header chain's usual numbers, and takes the relay of Bitcoin headers (kind 40) also when it has no bitcoin auction.
+- **The proof of a payment** (`bitcoin-bridge/src/payment.rs`): the payment and the block's first transaction, both without witness data, and one Merkle proof for the two. A payment of a part buys its part and leaves the purchase open.
+- What the rules do not protect is section 10 of `spec/market.md`; what must be decided before Bitcoin mainnet is opened is section 11.
+
+### Proofs for wallets
+
+- The node proves the market's rows (`v5/src/app.rs`: `include_market`, `market_orders`, `market_fills`, `market_accounts`, `market_scripts`, `market_candles`), the verifier checks them (`verifier-v4/src/market.rs`), and the SDK reads them (`client-v4/time-sdk.js`, `marketOrder`, `marketFill` and the others). **The compiled verifier is a new build** (`web-v4/shared/verifier/`): a wallet page and its verifier are updated together.
+
+### Programs
+
+- **The SDK builds the nine actions** (`marketSellOrder` to `marketNewScripts`, `marketActionFee`) and a codec turns Bitcoin addresses into receiving scripts and back (`web-v4/shared/bitcoin-address.mjs`).
+- **A Python client**, `clients/python` (`timemarket`): the same actions, signing, the proof of a payment from a Bitcoin node's answers, the API's routes, and four example scripts that do a dry run unless told to act. `spec/market-vectors.json` holds every kind of action as the engine signed and accepted it, for a client in any language.
+- **The API serves the market** (`client-v4/market-index.mjs`, `deploy/api/README.md`, "The market"): the book, the depth, recorded trades, candles, one account's orders and purchases, and single rows with their proof. Lists are an index and say so. **Stored format:** the index gains tables in the API's own store; an existing store is extended in place.
+- **Two services anyone can run**: a relay of Bitcoin headers (`deploy/market-relay`) and a prover of payments (`deploy/market-prover`, with a one-shot tool for a person with their own Bitcoin node). Neither is paid; the prover pays the fees of the proofs it sends.
+- **The trading guide**: `docs/trading.md`.
+
+### The wallet
+
+- **A market under More**, on a network whose proven state has it (`web-v4/wallet/market*.mjs`; `web-v4/wallet/README.md`): my Bitcoin addresses, buy seconds with bitcoin, sell seconds for bitcoin, my purchases and orders, and a view for traders with the book, recorded trades, a chart and every order form. The wallet holds no Bitcoin key and sends no bitcoin. An address or an amount to pay is read from proven state, never from a list.
+- **Rule change: on a protected account the payment key also signs eight actions of the market**, each named (`web-v4/wallet/security-flows.mjs`, `MARKET_KINDS`), each with the payment password, each counted against the daily limit as the chain counts it.
+- **Stop orders are kept by the wallet, not by the chain.** A stop order is watched only while the wallet is open, always has a limit price, and when it fires the wallet prepares the order for the person to review and sign. **Stored format:** the list of Bitcoin addresses, the notes of purchases and the stop orders are kept in the browser's storage for the account.
+
+### Tools and tests
+
+- **A trial of the market on a real network** (`campaign/README.md`, "The market trial"): a network with the market, Bitcoin Core in regtest on a host of its own, and a cast that trades, pays, proves and reads proven state, first by itself and then with the relay and the prover doing the work.
+
+### What has run, and what has not
+
+- Run: the engine's tests on Windows and Linux; the trial on networks of four and of seven validators.
+- Not run: anything on a public network; a real browser with a real wallet; a phone; the wallet's market at every screen size and in the dark theme; the Python tests in the repository's list of checks (they are run by hand).
+
 ## 27 November 2026, third publication of the day: the network in figures, and every app on the main page
 
 ### The main page (`web-v4/site`)

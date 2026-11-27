@@ -183,6 +183,7 @@ fn genesis(service_records: bool) -> Genesis {
         protected_registration: false,
         protected_accounts: Vec::new(),
         service_records,
+        market: false,
     }
 }
 fn timestamp(micros: i64) -> Option<Timestamp> {

@@ -29,6 +29,7 @@ import { createHash } from 'node:crypto';
 import './time-sdk.js';
 import { createLightClient } from './light-client.mjs';
 import { fetchLightBlock } from './certified-view.mjs';
+import { createMarketStore } from './market-index.mjs';
 
 const SDK = globalThis.TimeSDK;
 const MAX_U64 = 18446744073709551615n;
@@ -176,7 +177,11 @@ const ENVELOPE_DOMAIN = Buffer.from('TCDEVNET-ACTION-V1\0');
 
 /// What an action costs, as far as its bytes tell (README of the version-5 engine, "The amount
 /// of the fee"): the network's fee, nothing, or the fee but no more than the account has left.
+/// Three kinds of the market pay the fee more than once (spec/market.md, section 6): a sell order (50) and new
+/// scripts (58) once more for each script they list, a proof of payment (54) once more for every 256 bytes of its
+/// payload. How often is in the action itself (`TimeSDK.marketActionFee`), so the rule has a name of its own.
 function feeRule(kind, payload) {
+  if (kind === 54 || kind === 58 || (kind === 50 && payload?.side === 'sell')) return 'market_fee';
   // 45 is a registration that carries a set of keys (`register_protected`): like a reveal it pays nothing, the
   // sponsor paid for its commitment.
   if ([40, 41, 42, 14, 15, 45].includes(kind) || (kind === 12 && payload?.accept === false)) return 'none';
@@ -669,6 +674,9 @@ export function openIndex({ filename, networkId, chainId, startHeight = 1 }) {
     },
     close() { if (!closed) { closed = true; db.close(); } },
   };
+  // The book, the fills, the trades and the candles of a network with the market (market-index.mjs): tables of
+  // their own in this file, filled from proven rows by the market's follower. They stay empty on any other network.
+  store.market = createMarketStore(db, transaction, { networkId, startHeight });
   return store;
 }
 

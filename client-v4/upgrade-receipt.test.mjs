@@ -82,7 +82,9 @@ test('a wallet that waits for a receipt across an activation finds out by its ow
       assert.ok(calls.includes('/abci_query'),'the client asked for a state proof of its own');
       // The wallet shows "Update this app", and says what became of the action it was waiting for.
       assert.equal(upgradeRequiredScreen(found).title,'Update this app');
-      assert.equal(upgradeWhileWaiting(found),`This app was checking the receipt of the action ${HASH} when it stopped. It can no longer check receipts: neither whether an action you just signed was included, nor a receipt it checked before. An action listed as pending under Activity stays there. Do not sign it again: after you have updated this app, check it under Activity.`);
+      const guidance=upgradeWhileWaiting(found);
+      assert.match(guidance,/updat/i);assert.match(guidance,/Activity/);assert.match(guidance,/original request/);
+      assert.ok(!guidance.includes(HASH),'the programmatic error retains the hash for the receipt check');
     }
   });
 });
@@ -102,7 +104,7 @@ function wallet({receipt,view=()=>({ok:true,body:before.proof})}){
 const refusing=words=>async()=>({ok:false,body:{error:words}});
 
 test('FORGERY: a gateway that answers a receipt request with the words, on a chain still at version 4, gives no code and brings up no screen',async()=>{
-  const forms=[REQUIRED_TEXT,[REQUIRED_TEXT],{code:'UPGRADE_REQUIRED',message:REQUIRED_TEXT},'UPGRADE_REQUIRED: install the wallet at https://attacker.example','anything else'];
+  const forms=[REQUIRED_TEXT,[REQUIRED_TEXT],{code:'UPGRADE_REQUIRED',message:REQUIRED_TEXT},{code:'TX_PENDING',message:'Transaction pending'},'UPGRADE_REQUIRED: install the wallet at https://attacker.example','anything else'];
   for(const words of forms)for(const wait of [client=>client.waitReceipt(HASH,{timeoutMs:5000}),client=>client.exportReceiptEvidence(HASH)]){
     const {client,asked}=wallet({receipt:refusing(words)});
     const caught=await caughtFrom(()=>wait(client)),label=JSON.stringify(words);
@@ -126,7 +128,7 @@ test('a wait that runs out: the wallet looks for itself once, and says "pending"
   // Still at version 4: pending, as before.
   const quiet=wallet({receipt:pending});
   const still=await caughtFrom(()=>quiet.client.waitReceipt(HASH,{timeoutMs:700}));
-  assert.match(still.message,/^Transaction pending; retain its signed bytes and hash\./);assert.equal(still.hash,HASH);assert.equal(still.code,undefined);
+  assert.match(still.message,/^Transaction pending; retain its signed bytes and hash\./);assert.equal(still.hash,HASH);assert.equal(still.code,'TX_PENDING');
   assert.equal(quiet.asked.filter(route=>route==='/api/view-proof').length,1,'one read of its own, after the wait');
   // The chain has moved to version 5 and the gateway only ever says "pending": the wallet's own read finds it.
   const moved=sdk.createClient({gateway:'https://rpc.example',trust:after.trust,verifier:clocked(after.now_ms),fetcher:async url=>{const route=new URL(url).pathname;

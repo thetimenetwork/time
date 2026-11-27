@@ -1,0 +1,26 @@
+{
+  "rpc_url": "http://127.0.0.1:26657/",
+  "trust": {
+    "app_version": "4",
+    "network_id": "REPLACE_WITH_THE_NETWORK_ID_OF_THE_INDEPENDENTLY_VERIFIED_MANIFEST",
+    "chain_id": "time-devnet-v4-REPLACE",
+    "nodes_report_upgrades": true,
+    "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
+  },
+  "bitcoin_nodes": [
+    { "name": "own", "url": "http://127.0.0.1:18332/", "cookie_file": "/var/lib/bitcoind/testnet3/.cookie" },
+    { "name": "second", "url": "https://bitcoin-2.example/", "user": "time-relay", "password_file": "/etc/time-market-relay/second.rpc" }
+  ],
+  "data_directory": "/var/lib/time-market-relay",
+  "poll_seconds": 10,
+  "max_actions_per_round": 4,
+  "deep_reorg": "stop",
+  "max_header_age_seconds": 3600,
+  "max_behind_seconds": 300,
+  "max_disagree_seconds": 1800,
+  "bitcoin_timeout_seconds": 15,
+  "time_timeout_seconds": 30,
+  "host": "127.0.0.1",
+  "port": 8950,
+  "hosts": []
+}

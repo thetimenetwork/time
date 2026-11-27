@@ -36,7 +36,7 @@ const all = fields(page);
 export const PAYMENT_FIELDS = ['approval-payment', 'signup-payment', 'signup-payment-confirm', 'unfreeze-payment', 'limit-payment', 'pause-payment', 'resume-payment',
   'inbox-payment', 'send-payment', 'secure-payment', 'secure-payment-confirm', 'replace-login-payment', 'rr-payment', 'replace-spend-payment', 'replace-spend-new',
   'replace-spend-confirm', 'stake-payment', 'add-login-payment', 'signal-payment', 'validator-payment', 'removed-payment', 'lost-payment', 'lost-payment-confirm', 'lost-finish-payment',
-  'lock-payment', 'lock-off-payment', 'remake-payment', 'move-payment', 'move-payment-confirm', 'move-old-payment'];
+  'lock-payment', 'lock-off-payment', 'remake-payment', 'move-payment', 'move-payment-confirm', 'move-old-payment', 'market-payment'];
 /// The recovery words (or a printed recovery sheet). The freeze takes the payment password or the words in one field.
 export const RECOVERY_FIELDS = ['freeze-secret', 'unfreeze-secret', 'limit-secret', 'resume-secret', 'inbox-secret', 'send-recovery-secret', 'rr-secret', 'replace-spend-secret',
   'lost-phrase', 'lost-sheet', 'move-old-secret'];
@@ -97,7 +97,7 @@ test('W-6: each field of recovery words says not to let the browser save them', 
 });
 
 test('W-6: no script of the wallet makes a password field or changes what a field tells the browser, but the login password\'s word', async () => {
-  for (const file of ['app.js', 'security-ui.mjs', 'security-flows.mjs', 'signup-ui.mjs', 'recovery.mjs', 'alerts-ui.mjs', 'pos-ui.mjs', 'upgrade-signal-ui.mjs', 'papers.mjs', 'protection.mjs', 'device-lock-ui.mjs', 'made-dialog.mjs', 'move-ui.mjs']) {
+  for (const file of ['app.js', 'security-ui.mjs', 'security-flows.mjs', 'signup-ui.mjs', 'recovery.mjs', 'alerts-ui.mjs', 'pos-ui.mjs', 'upgrade-signal-ui.mjs', 'papers.mjs', 'protection.mjs', 'device-lock-ui.mjs', 'made-dialog.mjs', 'move-ui.mjs', 'market-ui.mjs', 'market.mjs', 'market-api.mjs']) {
     const code = await readFile(new URL(`web-v4/wallet/${file}`, root), 'utf8');
     assert.equal(/\.type\s*=\s*['"]password['"]|setAttribute\(\s*['"](?:type|autocomplete)['"]/.test(code), false, file);
     const changes = [...code.matchAll(/\$\('([a-z0-9-]+)'\)\.autocomplete\s*=/g)].map(m => m[1]);

@@ -21,10 +21,12 @@
 // Every text goes in by textContent. No secret is kept in a field after its step: the passwords and the recovery words
 // are read once and their fields emptied however the step ends.
 import { createDeviceMove, lastingStorage, moveSlots, MOVE_WORDS, moveWindowEnd } from './device-move.mjs';
+import { failureNotice } from './actions.mjs';
 import { newKeysByRule } from './device-lock.mjs';
 import { wayChoice } from './device-lock-ui.mjs';
 import { vaultSlots, checkPasswords, waitsOf, elapsedOf, dateOf, STAGED_PREFIX } from './security-flows.mjs';
 import { openVault, validateName } from './vault.mjs';
+import { clearWalletField, takeWalletField } from './manager-fields.mjs';
 import * as security from '/sdk/account-security.mjs';
 
 const $ = id => document.getElementById(id);
@@ -80,8 +82,8 @@ export function createMoveUI(c) {
   const dm = createDeviceMove({ security, locks: null });
   const net = () => c.network().networkId;
   const locks = () => c.locks();
-  const take = id => { const el = $(id), value = el.value; el.value = ''; return value; };
-  const scrub = () => { for (const id of MOVE_FIELDS) $(id).value = ''; };
+  const take = id => takeWalletField($(id));
+  const scrub = () => { for (const id of MOVE_FIELDS) clearWalletField($(id)); };
   const when = (state, micros) => dateOf(state, micros).toLocaleString();
   // The new device: the name whose request is shown, the login key this page holds to open the account when the move
   // lands (null after a reload: the login password opens it then), and the timer that reads the network meanwhile.
@@ -393,12 +395,12 @@ export function createMoveUI(c) {
         const status = await dm.oldDeviceStatus({ storage: c.storage, networkId: net(), name, state, locks: locks() });
         if (status.stage === 'forgotten') c.notice(MOVE_PAGE_WORDS.done(name));
         else if (status.stage === 'mixed') c.notice(MOVE_PAGE_WORDS.mixedKeep, 'error');
-      } catch (error) { c.notice(error.message, 'error'); }
+      } catch (error) { c.notice(failureNotice(error, 'The wallet could not check this device move. Reopen the wallet to check its status.'), 'error'); }
     }
     const waiting = movesHere();
     if (!waiting.length) return;
     shownName = waiting[0]; showPanel(); $('move-form').hidden = true; $('move-step').hidden = false;
-    try { await look(); } catch (error) { c.notice(error.message, 'error'); }
+    try { await look(); } catch (error) { c.notice(failureNotice(error, 'The wallet could not check this device move. Reopen the wallet to check its status.'), 'error'); }
   }
   /// Called when the wallet locks: the old device's step ends; the new device's request stays kept and shown, but the
   /// login key this page held goes (the login password opens the account once the move landed).

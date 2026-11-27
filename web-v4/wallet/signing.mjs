@@ -15,7 +15,7 @@
 // - While a guardian recovery freezes the account, only its cancellation or its completion.
 // - One signed action at a time: the pending record is written before the bytes leave, and it
 //   is cleared by a verified receipt only.
-import { withSigningLock } from './guards.mjs';
+import { retireReservation, withSigningLock } from './guards.mjs';
 import { accountActionHeader, recoveryFrozen, emergencyCancelSlot, nonceCancelSlot, authorityReservationObsolete, emergencyReservationObsolete } from './actions.mjs';
 import { recoveryCaseReady } from './recovery.mjs';
 import { assertSpendKeySigns, accountSecured } from './security-flows.mjs';
@@ -69,10 +69,10 @@ export function createSendSigned(c) {
       let tx;
       if (existingCancel) {
         tx = fromB64(existingCancel.tx, 512*1024+512); const action = sdk.decodeAction(tx);
-        assert(action.kind === sdk.KINDS[kind] && action.networkId === args.networkId && action.from === args.from && action.nonce === args.nonce && action.authEpoch === args.authEpoch && action.publicKey === args.publicKey, 'Previous cancellation must be reconciled before changing it.');
+        assert(action.kind === sdk.KINDS[kind] && action.networkId === args.networkId && action.from === args.from && action.nonce === args.nonce && action.authEpoch === args.authEpoch && action.publicKey === args.publicKey, 'An earlier cancellation is still waiting for confirmation. Check its status before making another change.');
       } else tx = await sdk.signAction(args, key);
       check(); const hash = await sdk.transactionHash(tx); check();
-      if (existingCancel) assert(hash === existingCancel.hash.toUpperCase(), 'Emergency cancellation bytes are damaged.');
+      if (existingCancel) assert(hash === existingCancel.hash.toUpperCase(), 'This browser could not read the saved cancellation. Check your account’s status before trying again.');
       else pending.put(network.networkId, storageOwner, { hash, tx: b64(tx), nonce: args.nonce, authEpoch: args.authEpoch, kind, label, at: Date.now() });
       // The mark of the order is written before the bytes leave (it is encrypted, so it is waited for).
       if (kind === 'merchant_payment') { await paymentMarkers.reserve(network.networkId, owner, payload.reference, hash, merchantOrigin); check(); }
@@ -85,7 +85,7 @@ export function createSendSigned(c) {
           const fresh = await c.verifiedState(); check(); const current = c.ownAccount(fresh);
           if (current && BigInt(fresh.auction_epoch) > BigInt(payload.epoch) && BigInt(current.nonce) < BigInt(args.nonce)) {
             pending.clear(network.networkId, storageOwner, hash);
-            throw new Error('The short test-bid epoch closed before inclusion. This signed bid cannot execute in a future epoch. Review a fresh bid to try again.');
+            throw new Error('This bidding round ended before your bid was included. Review a new bid for the next round.');
           }
           throw error;
         }
@@ -97,13 +97,13 @@ export function createSendSigned(c) {
         catch (error) { if (cancel && error?.busy === true && error.code === 'BUSY') error.sameButton = true; throw error; }
       }
       check();
-      assert(receipt?.verified === true, 'Transaction proof unavailable; action remains pending.');
+      assert(receipt?.verified === true, 'Your request is waiting for confirmation. Open Activity and choose Check pending receipt.');
       // The receipt is recorded (its write waited for) before the pending action is cleared: a page that closes in
       // between keeps the pending action, and its receipt is checked and recorded again at the next opening.
       try { await c.record(receipt, label); } finally { pending.clear(network.networkId, storageOwner, hash); c.cleared?.(); }
       if (cancel && old) {
         const after = await c.verifiedState(); check(); const current = c.ownAccount(after);
-        if (current && authorityReservationObsolete(current, old)) pending.clear(network.networkId, owner, old.hash);
+        if (current && authorityReservationObsolete(current, old)) retireReservation(pending, network.networkId, current.id, owner, old);
       }
       return receipt;
     });

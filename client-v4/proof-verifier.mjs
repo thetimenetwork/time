@@ -148,6 +148,20 @@ const OWN_SENTENCES=new Set([
   'upgrade signal lacks its owner','upgrade signal names an owner that is not an account','upgrade signals are not one per owner in ascending order',
   'validator count outside supported bounds','value exceeds compact proof limit','voting power exceeds Comet limit','voting power overflow',
   'withdrawn upgrade signal','wrong independently pinned chain or application version',
+  // The rows of the market (verifier-v4/src/market.rs, and the check of their bytes in view.rs).
+  'a closed order offers nothing and has a fill', 'a fill against a buy order gives its seconds to its payer',
+  'a market index lists at most 64 ids, ascending, each once', 'a network with the market holds its summary and its clock of heights',
+  'a receiving script is one of the five standard forms, in lowercase hexadecimal', 'a receiving script must be a string',
+  'a script serves an order or a fill, not both', 'an order is open or it is not', 'an order lists a receiving script twice',
+  'an order names a form of receiving script that does not exist', 'buy order shape', 'candle bounds', 'candle hour', 'clock of heights',
+  'empty market index', 'entry of the clock of heights', 'fill bounds', 'fill creation', 'fill id', 'fill key mismatch', 'invalid clock of heights',
+  'invalid market index', 'invalid order forms', 'invalid order scripts', 'market account id', 'market index', 'market index id',
+  'market rows belong to a network with the market', 'market summary', 'market summary counts more rows than it gave ids',
+  'market summary has a last price exactly when it has a trade', 'market total', 'noncanonical market row', 'order bounds', 'order creation',
+  'order has missing or unknown fields', 'order id', 'order key mismatch', 'order script', 'order script that has served', 'script row',
+  'sell order shape', 'the clock of heights does not rise in height and time', 'the clock of heights holds one to 256 entries', 'the key of an order',
+  'the market\'s total belongs to a network with the market, and to no other', 'the satoshis of a fill are none, or more than the price of its seconds',
+  'the side of the market is sell or buy', 'the starting block of a fill', 'unsupported market setting',
 ]);
 /// The verifier's sentences that end with a library's words: what is kept of them is the verifier's part.
 const OWN_PREFIXES=['invalid validator','header/quorum/hash verification failed','trusted validator update failed'].map((words)=>`INVALID_LIGHT_BLOCK: ${words}`)

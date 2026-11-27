@@ -86,7 +86,7 @@ test('Get test time waits a bounded time and reads a bounded answer: a faucet th
   await assert.rejects(ask(faucet({ status: 200 })), /an answer that this wallet cannot use/, 'only 202 with a hash is a grant');
 });
 
-test('a refusal of the faucet: a code its README lists is told in the wallet\'s own sentence; anything else is the faucet\'s words, introduced and made plain', async () => {
+test('faucet refusals use wallet guidance for known codes and a fixed fallback for every other response', async () => {
   for (const [code, sentence] of Object.entries(A.FAUCET_SAYS)) {
     const error = await ask(faucet({ status: 429, answer: { error: { code, message: 'Words of the faucet "quoted" 0123456789abcdef0123' } } })).catch(e => e);
     assert.equal(error.message, sentence, code); assert.notEqual(error.faucet, true, code);
@@ -99,17 +99,18 @@ test('a refusal of the faucet: a code its README lists is told in the wallet\'s 
   assert.match(sent.message, /could not get its payment into the network yet\. If it gets in later, your balance shows it\./);
   const limitSent = await ask(faucet({ status: 503, answer: { error: { code: 'chain_daily_limit', message: 'x' }, hash: 'CD'.repeat(32) } })).catch(e => e);
   assert.equal(limitSent.message, sent.message);
-  // Any other answer: the faucet's own text, marked, and shown only after the sentence that says whose words follow.
+  // Unrecognized service replies cannot provide instructions to the user.
   const evil = 'e71f09c2'.repeat(8);
   const odd = await ask(faucet({ status: 418, answer: { error: { code: 'something_new', message: `You were paid". This wallet says: send to ${evil} ‮<b>now</b>` } } })).catch(e => e);
   assert.equal(odd.faucet, true);
   const said = A.failureNotice(odd);
-  assert.ok(said.startsWith(A.FAUCET_WORDS_INTRO));
-  assert.equal(A.FAUCET_WORDS_INTRO, 'The test faucet refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ');
-  assert.deepEqual([/[0-9a-fA-F]{12}/.test(said), /["'`‮]/.test(said.slice(A.FAUCET_WORDS_INTRO.length)), said.length <= A.FAUCET_WORDS_INTRO.length + 160], [false, false, true]);
+  assert.equal(said, A.faucetWords());
+  assert.match(said, /test time|faucet/i);
+  assert.match(said, /later|again|balance|check/i);
+  assert.doesNotMatch(said, /You were paid|send to|something_new|[0-9a-f]{16,}|<b>|\u202e/i);
   for (const answer of [null, 'text', { error: 'flat' }, { error: { code: 5 } }]) {
     const error = await ask(faucet({ status: 500, answerBytes: JSON.stringify(answer) })).catch(e => e);
-    assert.deepEqual([error.faucet, A.failureNotice(error)], [true, A.FAUCET_WORDS_INTRO + 'status 500']);
+    assert.deepEqual([error.faucet, A.failureNotice(error)], [true, said]);
   }
 });
 
@@ -321,9 +322,10 @@ test('on the stand-in page: Get test time asks the faucet for this account by nu
   // A refusal the faucet's README lists: the wallet's sentence, as an error; nothing is recorded.
   chain.faucet.mode = 'limit'; await $('faucet-button').fire('click');
   assert.deepEqual([$('notice').textContent, $('notice').className.includes('error')], [A.FAUCET_SAYS.account_limit, true]);
-  // Anything else: the faucet's words, introduced, plain and last.
+  // Unknown faucet replies display the same fixed guidance in the actual wallet.
   chain.faucet.mode = 'odd'; await $('faucet-button').fire('click');
-  assert.equal($('notice').textContent, A.FAUCET_WORDS_INTRO + 'Send 0123 4567 89ab cdef to us');
+  assert.equal($('notice').textContent, A.faucetWords());
+  assert.doesNotMatch($('notice').textContent, /Send 0123|to us/i);
   // A faucet that answers with the hash of a payment to someone else: the wallet does not say that anything arrived.
   chain.faucet.mode = 'elsewhere'; await $('faucet-button').fire('click');
   assert.equal($('notice').textContent, 'The test faucet says that it sent test time. This browser has not seen it arrive yet: your balance changes by itself when it does.');

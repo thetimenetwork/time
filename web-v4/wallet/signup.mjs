@@ -81,16 +81,18 @@ export const noteKey = (note, role) => note.keys.find(k => k.role === role)?.pub
 // `account_limit`, marked by app.js, registrationSponsor, as `serviceCode`). Each sentence says what happened and what to
 // do. A refusal without a sentence here is shown as before (app.js, failureNotice).
 const papersVoid = name => `The recovery words you wrote down for @${name} will never work: destroy the paper.`;
-export function signupWords(error, name) {
+export function signupWords(error, name, managed = false) {
+  const open = managed ? `open @${name} with Time Vault` : 'open your account with your login password';
+  const openNamed = managed ? open : 'open your account with its name and your login password';
   switch (error?.code) {
     case 'PROTECTED_REGISTRATION_UNAVAILABLE': return 'This network does not take accounts that are protected from the start, so nothing was sent. Reload this page: the wallet then makes your account the way this network takes it.';
     case 'NAME_TAKEN': return `Someone else took the name @${name} before your account was made. Nothing of yours is on the network. ${papersVoid(name)} Create your account with another name.`;
-    case 'SPONSOR_MISMATCH': return 'The registration service named a payment that is not for your account, so this browser did not use it, and nothing was registered. Try again later: open your account with its name and your login password, and this browser goes on. Your recovery words stay valid.';
-    case 'COMMITMENT_MISMATCH': return 'The network holds a registration of this sign-up\'s key with other details than this browser keeps, so nothing was signed. That should not happen: this browser\'s data may have been changed. Wait an hour, then open your account with your login password to try again.';
+    case 'SPONSOR_MISMATCH': return `The registration service named a payment that is not for your account, so this browser did not use it, and nothing was registered. Try again later: ${openNamed}, and this browser goes on. Your recovery words stay valid.`;
+    case 'COMMITMENT_MISMATCH': return `The network holds a registration of this sign-up's key with other details than this browser keeps, so nothing was signed. That should not happen: this browser's data may have been changed. Wait an hour, then ${open} to try again.`;
     case 'REGISTRATION_MISMATCH': return `The account @${name} was made by this sign-up, but its keys or its limits are no longer the ones this browser made. If you changed them on another device, use that one. If you did not, someone has your recovery words: recover the account with them at once.`;
     default: break;
   }
-  if (error?.registrationService === true && error.serviceCode === 'account_limit') return 'The registration service says that it paid for this sign-up in the last 24 hours, and that this payment ran out before your account was made. It pays again 24 hours after the first time: then open your account with your login password, and this browser goes on. Your recovery words stay valid.';
+  if (error?.registrationService === true && error.serviceCode === 'account_limit') return `The registration service says that it paid for this sign-up in the last 24 hours, and that this payment ran out before your account was made. It pays again 24 hours after the first time: then ${open}, and this browser goes on. Your recovery words stay valid.`;
   return null;
 }
 /// What is added when the network refused the name as too close to one that exists (app.js, nameRefusal): the recovery
@@ -158,7 +160,9 @@ export function letGoState({ state, note, consentExpires = null, firstNothing = 
   return until < now ? { offer: true } : { offer: false, why: 'consent', until, kept: false };
 }
 /// Why a kept sign-up is not let go now, and what to do instead. `when(elapsed)`: a time of the chain as a date.
-export function letGoWords(decided, name, when) {
+export function letGoWords(decided, name, when, managed = false) {
+  if (managed && decided.why === 'account') return `The network holds @${name}. Open the account with Time Vault, or use your paper recovery words under "Other ways in".`;
+  if (managed && decided.why === 'commitment') return `The network is holding @${name} for this signup until ${when(decided.until)}. Open it with Time Vault to finish, or come back after that time to let it go.`;
   if (decided.why === 'account') return `The network holds the account @${name} that this sign-up made, so this browser keeps what opens it. Open it with the login password you chose for it; if you forgot that, recover the account with your recovery words, under "Other ways in".`;
   if (decided.why === 'taken') return `The name @${name} belongs to another account on the network, so this sign-up can never finish, and this browser keeps it as it is. If that account is yours, open it with its login password, or recover it with your recovery words; if not, create your account with another name.`;
   if (decided.why === 'commitment') return `A registration of @${name} from this sign-up waits on the network until ${when(decided.until)}, so this browser keeps the sign-up. If you remember your login password, open your account with it before then; if not, come back after that time to let it go.`;
@@ -172,4 +176,4 @@ export const letGoReview = name => [
 ];
 export const letGoneWords = name => `This browser let the sign-up of @${name} go. Destroy the paper of its recovery words.`;
 export const LET_GO_CHANGED = 'The sign-up kept in this browser was changed after it was made, so this browser cannot tell which keys are this sign-up\'s, and does not let it go. Create your account with another name.';
-export const keptPaymentKey = name => `This browser keeps a payment key of an account @${name}, so it does not let a sign-up of that name go. Open that account with its login password.`;
+export const keptPaymentKey = (name, managed = false) => `This browser keeps a payment key of an account @${name}, so it does not let a sign-up of that name go. Open that account with ${managed ? 'Time Vault' : 'its login password'}.`;

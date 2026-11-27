@@ -21,6 +21,12 @@ software written by others under their own licences:
   (MIT). Its licence is in web-v4/wallet/vendor/LICENSE.hash-wasm.
 - web-v4/shared/verifier/timecurrency_verifier_v4_bg.wasm is compiled from
   verifier-v4/ and contains the Rust crates locked in verifier-v4/Cargo.lock.
+- spec/bitcoin-address-vectors.json holds test vectors from Bitcoin Core (MIT)
+  and from BIP173 and BIP350 (BSD-2-Clause). Their licences are in
+  spec/LICENSE.bitcoin-test-vectors. They are test data: no build includes them.
+- The Python client in clients/python needs one Ed25519 library that its user
+  installs (cryptography, Apache-2.0 or BSD-3-Clause; or PyNaCl, Apache-2.0).
+  Neither is in this repository.
 - The node binaries are built from the Rust crates locked in the Cargo.lock
   files, and the consensus binary from CometBFT 0.38.26 (Apache-2.0) and the Go
   modules in consensus/go.mod.

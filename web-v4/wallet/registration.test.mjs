@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { failureNotice, REGISTRATION_WORDS_INTRO, sponsorReceiptBinds } from './actions.mjs';
+import { failureNotice, sponsorReceiptBinds } from './actions.mjs';
 import { askWhenFree, isBusyError, BUSY_REGISTRATION } from './busy.mjs';
 import '../../client-v4/time-sdk.js';
 
@@ -115,7 +115,10 @@ test('a registration answered "busy" is not sent again by itself: the service ma
   const own = service({ status: 503, answer: { error: { code: 'chain_daily_limit', message: 'The daily limit of the faucet account on the chain is used up' }, hash: 'CD'.repeat(32) } });
   const sponsor = await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, own.fetch)();
   const error = await sponsor.ask(body).then(() => assert.fail('taken'), e => e);
-  assert.deepEqual([error.registrationService, error.serviceCode, failureNotice(error), own.calls.filter(c => c.method === 'POST').length], [true, 'chain_daily_limit', `${REGISTRATION_WORDS_INTRO}The daily limit of the faucet account on the chain is used up`, 1]);
+  assert.deepEqual([error.registrationService, error.serviceCode, own.calls.filter(c => c.method === 'POST').length], [true, 'chain_daily_limit', 1]);
+  assert.match(failureNotice(error), /signup service|registration|sponsor/i);
+  assert.match(failureNotice(error), /later|tomorrow|24 hours|refill/i);
+  assert.doesNotMatch(failureNotice(error), /chain_daily_limit|daily limit of the faucet account on the chain|[a-f\d]{16,}/i);
 });
 
 // That such a wallet makes no key and stores no vault is the business of `auth` in app.js, which asks the same
@@ -127,32 +130,37 @@ test('a service that names neither a sponsor nor a registration service: the wal
   assert.equal(calls.length, 0);
 });
 
-test('what the registration service answers to the request: a refusal in its words, the same commitment already waiting, or no answer', async () => {
+test('registration handles known limits, pending commitments, malformed replies and connection failures', async () => {
   const sponsorOf = async (options) => { const s = service(options); return { sponsor: await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, s.fetch)(), s }; };
   // A limit of a day: Retry-After in hours, longer than any busy wait (busy.mjs), so the answer is read as the service's.
   let made = await sponsorOf({ status: 429, retryAfter: '50000', answer: { error: { code: 'address_limit', message: 'This address has had its registrations of 24 hours' } } });
-  // A refusal is the service's own text. It is marked, and the notice shows it after the wallet's sentence that
-  // says whose words follow (actions.mjs, failureNotice), never as a sentence of the wallet.
+  // The service can identify a known condition. Its prose never becomes wallet guidance.
   const refused = (sponsor) => sponsor.ask(body).then(() => assert.fail('the request was taken'), (error) => error);
   let refusal = await refused(made.sponsor);
   assert.equal(refusal.registrationService, true);
-  assert.equal(failureNotice(refusal), `${REGISTRATION_WORDS_INTRO}This address has had its registrations of 24 hours`);
+  assert.match(failureNotice(refusal), /later|tomorrow|24 hours/i);
+  assert.doesNotMatch(failureNotice(refusal), /address_limit|has had its registrations/i);
   // The registration of this key with this commitment waits on the chain: the wallet goes on from proven state.
   made = await sponsorOf({ status: 409, answer: { error: { code: 'already_committed', message: 'A registration of this key is waiting' }, same_commitment: true } });
   assert.deepEqual(await made.sponsor.ask(body), { alreadyCommitted: true });
   // Another commitment for this key: that is not this registration, and is a refusal.
   made = await sponsorOf({ status: 409, answer: { error: { code: 'already_committed', message: 'A registration of this key is waiting' }, same_commitment: false } });
-  assert.equal(failureNotice(await refused(made.sponsor)), `${REGISTRATION_WORDS_INTRO}A registration of this key is waiting`);
+  const otherCommitment = failureNotice(await refused(made.sponsor));
+  assert.match(otherCommitment, /earlier request|waiting|pending/i);
+  assert.match(otherCommitment, /reopen|open|unlock|resume|later|try again|check|continue/i);
+  assert.doesNotMatch(otherCommitment, /already_committed|registration of this key/i);
   // An answer that says "accepted" without a hash is no acceptance.
   made = await sponsorOf({ status: 202, answer: { status: 'submitted' } });
-  assert.equal(failureNotice(await refused(made.sponsor)), `${REGISTRATION_WORDS_INTRO}status 202`);
+  const unknown = failureNotice(await refused(made.sponsor));
+  assert.match(unknown, /later|again|unlock|reopen|check/i);
+  assert.doesNotMatch(unknown, /202|status 202|submitted/i);
   made = await sponsorOf({ status: 202, answer: { hash: 'not a hash' } });
   assert.equal((await refused(made.sponsor)).registrationService, true);
-  // A long message of the service is cut, in what is thrown and in what is shown.
+  // Length and content of an upstream diagnostic never affect the guidance.
   made = await sponsorOf({ status: 400, answer: { error: { code: 'x', message: 'm'.repeat(5000) } } });
   refusal = await refused(made.sponsor);
   assert.equal(refusal.message.length, 200);
-  assert.equal(failureNotice(refusal).length, REGISTRATION_WORDS_INTRO.length + 160);
+  assert.equal(failureNotice(refusal), unknown);
   // The service went away between the two requests: these are the wallet's own words, and say how to go on.
   const s = service(); const sponsor = await make({ networkId: NETWORK, registrationService: ORIGIN }, never, check, async (url, options) => { if (String(url).endsWith('/registrations')) throw new TypeError('fetch failed'); return s.fetch(url, options); })();
   refusal = await refused(sponsor);

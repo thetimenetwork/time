@@ -469,23 +469,24 @@ test('creating an account: a name the chain refuses as too close to another is t
   await create('e_rin');
   assert.deepEqual([$('notice').textContent, $('notice').className.includes('error'), $('auth-heading').textContent], ['That name is too close to @erin, which already exists. Choose another.', true, 'Create your account']);
   // The gateway's word alone does not make the wallet say so. A name that does not look like the new one (zed_9, bob),
-  // a look-alike that proven state does not hold (dav3, dave: no account dave), or any other refusal: shown as before,
-  // the gateway's words marked as such, after how to go on.
+  // a look-alike that proven state does not hold (dav3, dave), or any other refusal cannot decide the name.
   assert.deepEqual([N.resembles('zed_9', 'bob'), N.resembles('dav3', 'dave'), row('dave')], [null, 'loose', undefined]);
   for (const [name, refusal] of [['zed_9', 'too close to an existing name: bob'], ['dav3', 'too close to an existing name: dave'], ['ole_7', 'stale authority or incorrect nonce']]) {
     chain.refusal = action => (action.kind === SDK.KINDS.reveal ? refusal : null);
     await create(name);
-    assert.equal($('notice').textContent, 'The encrypted vault is saved. Unlock again to resume safely. ' + A.GATEWAY_WORDS_INTRO + refusal, name);
+    assert.equal($('notice').textContent, 'The encrypted vault is saved. Unlock again to resume safely. ' + A.gatewayWords({ message: refusal }), name);
+    assert.ok(!$('notice').textContent.includes(refusal), 'an unverified refusal cannot direct the user');
     assert.equal($('auth-heading').textContent, 'Open your account', name);
   }
   chain.refusal = () => null;
 });
 
-test('the same words in the refusal of a payment stay the gateway\'s words: the wallet does not point at another name in its own voice', async () => {
+test('a payment refusal cannot point to a different name in the notice', async () => {
   await freshPage(); await unlock('dana');
   chain.refusal = action => (action.kind === SDK.KINDS.transfer ? 'too close to an existing name: b0b' : null);
   await pay('carol', '0.1');
-  assert.equal($('notice').textContent, A.GATEWAY_WORDS_INTRO + 'too close to an existing name: b0b');
+  assert.equal($('notice').textContent, A.gatewayWords({ message: 'too close to an existing name: b0b' }));
+  assert.doesNotMatch($('notice').textContent, /b0b|too close/);
   assert.equal($('notice').className.includes('error'), true);
   chain.refusal = () => null;
 });

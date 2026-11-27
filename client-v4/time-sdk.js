@@ -3,10 +3,13 @@
   'use strict';
   const utf8 = new TextEncoder();
   const MAX_U64 = (1n << 64n) - 1n;
-  const KINDS = Object.freeze({ commit: 1, reveal: 2, transfer: 3, bid: 4, delegate: 5, undelegate: 6, withdraw: 7, add_device: 8, revoke_device: 9, merchant_payment: 10, set_recovery: 11, consent_recovery: 12, approve_recovery: 13, cancel_recovery: 14, finalize_recovery: 15, cancel_pending: 16, register_validator:17, self_bond:18, self_unbond:19, double_vote:20, withdraw_stake:21, retire_validator:24, bitcoin_headers:40, bitcoin_bid:41, claim_auction:42, sponsor_registration:44, register_protected:45, treasury_propose:60, treasury_activate:61, treasury_control:62, secure_account:70, signin_keys:71, freeze_account:72, root_operation:73, finalize_replacement:74, waiting_payment:75, cancel_waiting:76, daily_limit:77, upgrade_signal:80 });
+  const KINDS = Object.freeze({ commit: 1, reveal: 2, transfer: 3, bid: 4, delegate: 5, undelegate: 6, withdraw: 7, add_device: 8, revoke_device: 9, merchant_payment: 10, set_recovery: 11, consent_recovery: 12, approve_recovery: 13, cancel_recovery: 14, finalize_recovery: 15, cancel_pending: 16, register_validator:17, self_bond:18, self_unbond:19, double_vote:20, withdraw_stake:21, retire_validator:24, bitcoin_headers:40, bitcoin_bid:41, claim_auction:42, sponsor_registration:44, register_protected:45, treasury_propose:60, treasury_activate:61, treasury_control:62, secure_account:70, signin_keys:71, freeze_account:72, root_operation:73, finalize_replacement:74, waiting_payment:75, cancel_waiting:76, daily_limit:77, upgrade_signal:80,
+    // The market of seconds against bitcoin (spec/market.md, section 6): the names an index and an explorer give the kinds.
+    // MARKET_KINDS, further down, names the same numbers for the builders of market actions.
+    market_order:50, market_cancel:51, market_take:52, market_sell:53, market_proof:54, market_expire:55, market_release:56, market_settle:57, market_scripts:58 });
   const FIELDS = { 1: ['commitment', 'expires_elapsed_micros'], 2: ['name', 'salt'], 3: ['to', 'amount'], 4: ['epoch', 'weight'], 5: ['operator', 'amount', 'min_shares'], 6: ['operator', 'shares', 'min_amount'], 7: ['entry'], 8: ['public_key', 'can_manage', 'can_spend', 'proof'], 9: ['public_key'], 10: ['to', 'amount', 'reference'], 11: ['guardians', 'threshold', 'delay_seconds'], 12: ['target', 'policy_version', 'accept'], 13: ['target', 'policy_version', 'recovery_id', 'new_public_key', 'expires_elapsed_micros', 'proof'], 14: [], 15: ['recovery_id'], 16: [] };
   const DECIMALS = new Set(['to', 'amount', 'epoch', 'weight', 'operator', 'shares', 'entry', 'expires_elapsed_micros', 'min_shares', 'min_amount', 'threshold', 'delay_seconds', 'target', 'policy_version']);
-  function invariant(value, message) { if (!value) throw new Error(message); }
+  function invariant(value, message) { if (!value) throw Object.assign(new Error(message), { sdkDiagnostic: true }); }
   function decimal(value) { invariant(typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= MAX_U64, 'Expected a canonical u64 decimal string'); return value; }
   // Protocol versions.
   // - The first version of a network is the one in its genesis and in the trust manifest ('4'). It
@@ -435,6 +438,268 @@
     invariant(written === undefined || written === true, 'Unsupported setting for registrations that carry a set of keys');
     return written === true;
   }
+  // ---- The market of seconds against bitcoin (spec/market.md; the engine's rules are in v5/src/market.rs).
+  // A network whose genesis says `market` keeps orders and fills under `market/`. A wallet shows a person a fill, the
+  // address it names and the satoshis to pay from PROVEN rows, never from a server's word: a selection names the rows
+  // (`include_market` for the summary and the clock of heights; `market_orders`, `market_fills`, `market_accounts`,
+  // `market_scripts`, `market_candles` for one row each, at most MARKET_SELECTION of each), the verifier checks each
+  // row's proof and its form, and the verified state carries them as `state.market`:
+  //   {summary, heights, orders:{id:row|null}, fills:{id:row|null}, accounts:{id:row|null}, scripts:{script:row|null},
+  //    candles:{hour:row|null}}
+  // `summary` and `heights` are there only when `include_market` was asked; null is a row proven absent. The readers
+  // below give a row exactly as proven, as a plain object with decimal strings, after checking its form once more; a
+  // row that was not asked for is an error, never "no such row".
+  // - A fill is not the same row from its making to its end: a payment of a part lowers its `amount_micros`, `sats` and
+  //   `deposit_micros` (spec/market.md, 6.5). Read it again, proven, before every payment. Its `sats` is what is still
+  //   to pay: the price of its seconds when it was made, less what was paid since. Never compute it; read it.
+  // - A candle and `last_price` say what was recorded, not what a second is worth (section 9): no rule reads them.
+  //
+  // Whether a network has the market, read from a verified state of it. The setting is part of the network's genesis
+  // and comes with every verified state; a network without the market leaves the field out.
+  function marketSetting(state) {
+    invariant(state && typeof state === 'object', 'A verified state is required to read the market');
+    invariant(state.config && typeof state.config === 'object' && !Array.isArray(state.config), 'A verified state carries the network configuration the market is read from');
+    const written = state.config.market;
+    invariant(written === undefined || written === true, 'Unsupported setting for the market');
+    return written === true;
+  }
+  // The most rows of each kind one selection names (the node's bounds, v5/src/app.rs).
+  const MARKET_SELECTION = Object.freeze({ market_orders: 16, market_fills: 16, market_accounts: 8, market_scripts: 16, market_candles: 32 });
+  // The numbers of each profile (spec/market.md, 2.1; `market::Params::of`): the fewest confirmations, the shortest
+  // time to pay in Bitcoin blocks, what a Bitcoin block is taken to last, the grace on the clock of the waits, the
+  // least deposit of a buy order in millionths, the smallest trade in satoshis, and the length of a candle.
+  const MARKET_RULES = Object.freeze({
+    production: Object.freeze({ kMin: '3', nMin: '3', blockMicros: '600000000', graceMicros: '1800000000', bondMinPpm: '30000', minSats: '1000', hourMicros: '3600000000' }),
+    laboratory: Object.freeze({ kMin: '1', nMin: '1', blockMicros: '1000000', graceMicros: '20000000', bondMinPpm: '0', minSats: '1', hourMicros: '60000000' }),
+  });
+  // The numbers both profiles share: the highest price (millionths of a satoshi for one second), the most satoshis,
+  // the most confirmations, the longest time to pay, the blocks added to the time a fill is given, and how many
+  // orders, fills and receiving scripts there can be.
+  const MARKET_LIMITS = Object.freeze({ priceMax: '1000000000000000', satsMax: '2100000000000000', kMax: '100', nMax: '144', spareBlocks: '16', orders: 64, payerFills: 64, scripts: 16, buyFills: 16, heightEntries: 256 });
+  const MARKET_PRICE_SCALE = 1000000000000n;
+  // The numbers of a network with the market, read from a verified state: those of its profile and the shared ones.
+  function marketRules(state) {
+    invariant(marketSetting(state), 'This network has no market');
+    const profile = state.config.profile;
+    invariant(typeof profile === 'string' && Object.hasOwn(MARKET_RULES, profile), 'Unsupported network profile');
+    return { profile, ...MARKET_RULES[profile], ...MARKET_LIMITS };
+  }
+  // Whether `script` is a receiving script (spec/market.md, 5.1): one of the five standard forms in lowercase
+  // hexadecimal. No other script can be listed, used or asked for. marketScriptForm, with the builders of market
+  // actions below, names the form and refuses anything else; MARKET_FORMS lists the names.
+  function marketScriptKnown(script) { return typeof script === 'string' && MARKET_SCRIPTS.some(([, pattern]) => pattern.test(script)); }
+  function marketPrice(value) { const price = BigInt(decimal(String(value))); invariant(price >= 1n && price <= BigInt(MARKET_LIMITS.priceMax), 'A price is from 1 to 10^15'); return price; }
+  // What `amountMicros` microseconds cost at `price`, in satoshis, rounded up: ceil(a x P / 10^12). Every rule of the
+  // market uses this one formula. More than 2.1 x 10^15 satoshis is refused.
+  function marketSats(amountMicros, price) {
+    const value = (BigInt(decimal(String(amountMicros))) * marketPrice(price) + MARKET_PRICE_SCALE - 1n) / MARKET_PRICE_SCALE;
+    invariant(value <= BigInt(MARKET_LIMITS.satsMax), 'More satoshis than exist');
+    return value.toString();
+  }
+  // The microseconds `sats` satoshis buy at `price`, rounded down: floor(s x 10^12 / P), and at most the largest
+  // number a row holds. So marketBought(marketSats(a, P), P) >= a: paying the price always buys the amount. No rule
+  // of the chain uses it: it is for a wallet that asks what a sum buys before a fill is made. Once a fill is made the
+  // satoshis agreed are fixed, and marketFillBuys says what a payment to it buys.
+  function marketBought(sats, price) {
+    const value = BigInt(decimal(String(sats))) * MARKET_PRICE_SCALE / marketPrice(price);
+    return (value > MAX_U64 ? MAX_U64 : value).toString();
+  }
+  // The checks of a proven row's form, as the verifier makes them (verifier-v4/src/market.rs). A row in any other
+  // form is refused: this build could not say what it means.
+  function marketFields(row, required, optional, what) {
+    invariant(row && typeof row === 'object' && !Array.isArray(row) && required.every(key => Object.hasOwn(row, key)) && Object.keys(row).every(key => required.includes(key) || optional.includes(key)), 'Unsupported market ' + what);
+    return JSON.parse(JSON.stringify(row));
+  }
+  function marketWithin(value, low, high, what) { const number = BigInt(decimal(value)); invariant(number >= BigInt(low) && number <= BigInt(high), 'Unsupported market ' + what); return number; }
+  function marketMoment(value, what) { const moment = marketFields(value, ['height', 'time_micros'], [], what); decimal(moment.height); decimal(moment.time_micros); }
+  function marketSummaryRow(value) {
+    const row = marketFields(value, ['fills', 'next_fill', 'next_order', 'orders', 'sats', 'seconds_micros', 'trades'], ['last_price'], 'summary');
+    for (const field of ['fills', 'next_fill', 'next_order', 'orders', 'sats', 'seconds_micros', 'trades']) decimal(row[field]);
+    invariant(BigInt(row.fills) < BigInt(row.next_fill) && BigInt(row.orders) < BigInt(row.next_order) && Object.hasOwn(row, 'last_price') === (row.trades !== '0'), 'Unsupported market summary');
+    if (row.last_price !== undefined) marketPrice(row.last_price);
+    return row;
+  }
+  function marketHeightsRow(value) {
+    const row = marketFields(value, ['entries'], [], 'clock of heights');
+    invariant(Array.isArray(row.entries) && row.entries.length >= 1 && row.entries.length <= MARKET_LIMITS.heightEntries, 'Unsupported market clock of heights');
+    row.entries.forEach((entry, index) => {
+      marketFields(entry, ['at', 'height'], [], 'clock of heights'); decimal(entry.at); marketWithin(entry.height, 0, 0xffffffff, 'clock of heights');
+      invariant(index === 0 || (BigInt(row.entries[index - 1].at) <= BigInt(entry.at) && BigInt(row.entries[index - 1].height) < BigInt(entry.height)), 'Unsupported market clock of heights');
+    });
+    return row;
+  }
+  function marketOrderRow(value, id) {
+    const sell = value?.side === 'sell'; invariant(sell || value?.side === 'buy', 'Unsupported market order');
+    const row = marketFields(value, ['amount_micros', 'bond_micros', 'confirmations', 'created', 'deposit_ppm', 'id', 'key', 'min_deposit_micros', 'min_sats', 'open', 'owner', 'pay_blocks', 'price', 'side', ...(sell ? ['scripts'] : ['fills', 'forms'])], [], 'order');
+    invariant(decimal(row.id) === id, 'The proven order is not the order asked for');
+    decimal(row.amount_micros); decimal(row.bond_micros); decimal(row.min_deposit_micros); decimal(row.owner); marketMoment(row.created, 'order'); hexToBytes(row.key, 32); marketPrice(row.price);
+    marketWithin(row.confirmations, 1, MARKET_LIMITS.kMax, 'order'); marketWithin(row.pay_blocks, 1, MARKET_LIMITS.nMax, 'order'); marketWithin(row.deposit_ppm, 0, 1000000, 'order'); marketWithin(row.min_sats, 1, MARKET_LIMITS.satsMax, 'order');
+    invariant(typeof row.open === 'boolean', 'Unsupported market order');
+    let fills;
+    if (sell) {
+      invariant(row.bond_micros === '0' && Array.isArray(row.scripts) && row.scripts.length >= 1 && row.scripts.length <= MARKET_LIMITS.scripts && new Set(row.scripts.map(entry => entry?.script)).size === row.scripts.length, 'Unsupported market order');
+      for (const entry of row.scripts) {
+        marketFields(entry, ['script'], ['fill', 'used'], 'order'); if (entry.fill !== undefined) decimal(entry.fill);
+        invariant(marketScriptKnown(entry.script) && (entry.used === undefined || (entry.used === true && entry.fill === undefined)), 'Unsupported market order');
+      }
+      fills = row.scripts.filter(entry => entry.fill !== undefined).length;
+    } else {
+      fills = Number(marketWithin(row.fills, 0, MARKET_LIMITS.buyFills, 'order'));
+      invariant(row.min_deposit_micros === '0' && Array.isArray(row.forms) && row.forms.length >= 1 && row.forms.every((form, index) => MARKET_FORMS.includes(form) && (index === 0 || row.forms[index - 1] < form)), 'Unsupported market order');
+    }
+    invariant(row.open || (row.amount_micros === '0' && row.bond_micros === '0' && fills > 0), 'Unsupported market order');
+    return row;
+  }
+  function marketFillRow(value, id) {
+    const row = marketFields(value, ['amount_micros', 'confirmations', 'created', 'deposit_micros', 'id', 'opened_micros', 'order', 'owner', 'pay_blocks', 'payer', 'price', 'sats', 'script', 'side', 'start_hash', 'start_height', 'to'], [], 'fill');
+    invariant(id === undefined || decimal(row.id) === id, 'The proven fill is not the fill asked for');
+    for (const field of ['id', 'deposit_micros', 'opened_micros', 'order', 'owner', 'payer', 'to']) decimal(row[field]);
+    marketMoment(row.created, 'fill'); hexToBytes(row.start_hash, 32);
+    marketWithin(row.amount_micros, 1, MAX_U64, 'fill'); marketWithin(row.confirmations, 1, MARKET_LIMITS.kMax, 'fill'); marketWithin(row.pay_blocks, 1, MARKET_LIMITS.nMax, 'fill'); marketWithin(row.start_height, 0, 0xffffffff, 'fill');
+    invariant(marketScriptKnown(row.script) && (row.side === 'sell' || (row.side === 'buy' && row.payer === row.to)), 'Unsupported market fill');
+    // What is still to pay: the price of the seconds when the fill is made, less every payment of a part since. It is
+    // never nothing, and never more than the price of what the fill still holds.
+    invariant(BigInt(decimal(row.sats)) >= 1n && BigInt(row.sats) <= BigInt(marketSats(row.amount_micros, row.price)), 'The satoshis of the proven fill are none, or more than the price of its seconds');
+    invariant(BigInt(marketFillLastHeight(row)) <= 0xffffffffn, 'Unsupported market fill');
+    return row;
+  }
+  function marketIndexRow(value) {
+    const row = marketFields(value, ['fills', 'orders'], [], 'index');
+    for (const [field, most] of [['fills', MARKET_LIMITS.payerFills], ['orders', MARKET_LIMITS.orders]]) invariant(Array.isArray(row[field]) && row[field].length <= most && row[field].every((item, index) => decimal(item) && (index === 0 || BigInt(row[field][index - 1]) < BigInt(item))), 'Unsupported market index');
+    invariant(row.fills.length + row.orders.length > 0, 'Unsupported market index');
+    return row;
+  }
+  function marketCandleRow(value) {
+    const row = marketFields(value, ['close', 'high', 'low', 'open', 'sats', 'seconds_micros', 'trades'], [], 'candle');
+    const [close, high, low, open] = [row.close, row.high, row.low, row.open].map(marketPrice); decimal(row.sats); decimal(row.seconds_micros);
+    invariant(decimal(row.trades) !== '0' && low <= open && low <= close && high >= open && high >= close, 'Unsupported market candle');
+    return row;
+  }
+  // The proven row of the market a selection named under `field` and `id`, or null when it was proven absent. A state
+  // verified without it says nothing, and that is an error. On a network without the market every row is absent.
+  function marketProven(state, field, id, ask) {
+    const enabled = marketSetting(state), market = state.market;
+    invariant(market && typeof market === 'object' && !Array.isArray(market), 'This state was verified without the market; ask for it with ' + ask);
+    const rows = id === undefined ? market : market[field];
+    invariant(rows && typeof rows === 'object' && !Array.isArray(rows) && Object.hasOwn(rows, id ?? field), 'This state was verified without that row of the market; ask for it with ' + ask);
+    const row = rows[id ?? field];
+    invariant(row === null || enabled, 'Market rows belong to a network with the market');
+    return row;
+  }
+  // The market's summary (`market/meta`): {fills, next_fill, next_order, orders, sats, seconds_micros, trades} and,
+  // once a payment was proven, `last_price`. `fills` and `orders` count the rows that exist; the three sums add up
+  // every proven payment. null on a network without the market. Asked for with `include_market`.
+  function marketSummary(state) {
+    const row = marketProven(state, 'summary', undefined, 'include_market');
+    invariant(row !== null || !marketSetting(state), 'A network with the market holds its summary');
+    return row === null ? null : marketSummaryRow(row);
+  }
+  // All the seconds the market holds, in microseconds: the field `market_micros` of the metadata row, which comes
+  // with every verified state of a network with the market (it is a term of the supply rule). null on any other.
+  function marketHeldMicros(state) {
+    const enabled = marketSetting(state), written = state.market_micros;
+    invariant(enabled ? typeof written === 'string' : written === undefined, 'The total the market holds belongs to a network with the market, and to no other');
+    return enabled ? decimal(written) : null;
+  }
+  // The clock of heights (`market/heights`): {entries:[{at, height}, ...]}, when the chain learnt of Bitcoin heights,
+  // `at` on the clock of the waits (securityNow). null on a network without the market. Asked for with `include_market`.
+  function marketHeights(state) {
+    const row = marketProven(state, 'heights', undefined, 'include_market');
+    invariant(row !== null || !marketSetting(state), 'A network with the market holds its clock of heights');
+    return row === null ? null : marketHeightsRow(row);
+  }
+  // An order (`market/order/<id>`; spec/market.md, 4.1), or null when there is none. Asked for with `market_orders`.
+  function marketOrder(state, id) { const row = marketProven(state, 'orders', decimal(String(id)), 'market_orders'); return row === null ? null : marketOrderRow(row, String(id)); }
+  // A fill (`market/fill/<id>`; 4.2), or null when there is none: it was never made, or it has ended. Asked for
+  // with `market_fills`. Its `sats` is what is still to pay to its `script`, and `amount_micros` what that buys.
+  function marketFill(state, id) { const row = marketProven(state, 'fills', decimal(String(id)), 'market_fills'); return row === null ? null : marketFillRow(row, String(id)); }
+  // The open orders an account owns and the open fills it pays (`market/account/<id>`): {fills:[id, ...],
+  // orders:[id, ...]}, ascending. Both are empty when the account has no row: that is what its absence means.
+  // Asked for with `market_accounts`.
+  function marketAccount(state, id) {
+    invariant(marketSetting(state), 'This network has no market');
+    const row = marketProven(state, 'accounts', decimal(String(id)), 'market_accounts');
+    return row === null ? { fills: [], orders: [] } : marketIndexRow(row);
+  }
+  // The candle of an hour (`market/candle/<hour>`): {close, high, low, open, sats, seconds_micros, trades}, or null
+  // when no payment was proven in it. Asked for with `market_candles`; marketHour gives the hour of a state.
+  function marketCandle(state, hour) { const row = marketProven(state, 'candles', decimal(String(hour)), 'market_candles'); return row === null ? null : marketCandleRow(row); }
+  // The hour a verified state lies in: the chain's time since genesis divided by the length of a candle.
+  function marketHour(state) { return (elapsedOf(state) / BigInt(marketRules(state).hourMicros)).toString(); }
+  // What a receiving script serves (`market/script/<SHA-256>`), asked for with `market_scripts`:
+  // - {status:'free'}: no row. No order lists the script and no fill has used it.
+  // - {status:'listed', order}: an order lists it. The row stays so while a fill against that order uses the script:
+  //   the order's own entry (marketOrder, `scripts`) names the fill.
+  // - {status:'in_use', fill}: it is the script of an open fill against a buy order.
+  // - {status:'used'}: a fill that used it has ended. A script serves one fill, ever: a payment to it now is for
+  //   nothing, and nobody can claim it.
+  function marketScript(state, script) {
+    marketScriptForm(script);
+    invariant(marketSetting(state), 'This network has no market');
+    const row = marketProven(state, 'scripts', script, 'market_scripts');
+    if (row === null) return { status: 'free' };
+    const checked = marketFields(row, [], ['fill', 'order'], 'script'), keys = Object.keys(checked);
+    invariant(keys.length <= 1, 'Unsupported market script');
+    if (keys.length === 0) return { status: 'used' };
+    return keys[0] === 'order' ? { status: 'listed', order: decimal(checked.order) } : { status: 'in_use', fill: decimal(checked.fill) };
+  }
+  // What a payment of `sats` satoshis to a fill's script buys, in microseconds (spec/market.md, 6.5): all the fill
+  // holds when it pays at least what is still to pay; else the same part of it, rounded down:
+  // floor(amount_micros x sats / fill.sats). A part counts when it is at least the order's smallest trade (`min_sats`
+  // of the order) or at least half of what is still to pay; a smaller one is not accepted, and one that buys less
+  // than a microsecond is not either: '0' is "nothing". More than is still to pay buys nothing more.
+  function marketFillBuys(fill, sats) {
+    const row = marketFillRow(fill), paid = BigInt(decimal(String(sats)));
+    return (paid >= BigInt(row.sats) ? BigInt(row.amount_micros) : BigInt(row.amount_micros) * paid / BigInt(row.sats)).toString();
+  }
+  // The last height of a fill (spec/market.md, 5.5): start_height + pay_blocks + confirmations - 1. When the chain
+  // knows this Bitcoin height, a payment made in the last block of the time to pay has its confirmations. Tell the
+  // payer this height: a payment that confirms after the fill has ended is with the seller, for nothing.
+  function marketFillLastHeight(fill) { return (BigInt(decimal(fill?.start_height)) + BigInt(decimal(fill?.pay_blocks)) + BigInt(decimal(fill?.confirmations)) - 1n).toString(); }
+  // The earliest moment a fill can end without payment whatever the chain learns of Bitcoin (5.5, point 4), on the
+  // clock of the waits: opened_micros + (pay_blocks + 2 x confirmations + SPARE) x BLOCK + GRACE, with the numbers of
+  // the state's profile. securityDeadline(state, thisMoment) turns it into a date, the earliest possible one.
+  function marketFillEarliestEnd(state, fill) {
+    const rules = marketRules(state), row = marketFillRow(fill);
+    const end = BigInt(row.opened_micros) + (BigInt(row.pay_blocks) + 2n * BigInt(row.confirmations) + BigInt(rules.spareBlocks)) * BigInt(rules.blockMicros) + BigInt(rules.graceMicros);
+    invariant(end <= MAX_U64, 'The moment lies beyond the time a chain can count');
+    return end.toString();
+  }
+  // When the chain learnt of a Bitcoin height (5.4): the `at` of the oldest entry of the clock of heights whose
+  // height is at least `height`, or null when no entry reaches it. `heights` is what marketHeights gives.
+  function marketHeightKnown(heights, height) {
+    const row = marketHeightsRow(heights), wanted = BigInt(decimal(String(height)));
+    return row.entries.find(entry => BigInt(entry.height) >= wanted)?.at ?? null;
+  }
+  // Whether a fill can be ended without payment (kind 55, which any account may send) at a moment on the clock of
+  // the waits: the engine's four conditions (5.5), judged on proven rows. The state must carry the clock of heights
+  // (`include_market`); `fill` is a proven fill (marketFill).
+  // - `bestHeight` and `halted`: the best height of the Bitcoin header chain the chain follows, and whether that
+  //   header chain is halted. Left out, both are read from the state's own proven row (`include_bitcoin`).
+  // - `nowMicros`: the moment, on the clock of the waits; by default that of the state (securityNow).
+  // Gives {possible, reason, lastHeight, knownMicros, earliestEndMicros, notBeforeMicros}:
+  // - `reason`: null when it is possible, else the first condition that fails: 'halted' (the header chain is halted:
+  //   a fill then ends by a release or a settle only), 'height' (the chain has not learnt the fill's last height),
+  //   'grace' (it has, less than GRACE ago: a proof of a payment made in time is still accepted), 'time' (the time
+  //   the fill was given from its making has not passed).
+  // - `knownMicros`: when the chain learnt the last height, or null.
+  // - `notBeforeMicros`: the earliest moment both waits are over. While `knownMicros` is null it is a lower bound:
+  //   the grace begins when the chain learns the height. The best height can fall, and the clock then forgets.
+  // The engine judges an expiry in the block that carries it, whose moment is later than this state's.
+  function marketExpiry(state, fill, { bestHeight, halted, nowMicros } = {}) {
+    const rules = marketRules(state), heights = marketHeights(state), row = marketFillRow(fill), last = BigInt(marketFillLastHeight(row));
+    if (bestHeight === undefined) {
+      const chain = state.bitcoin?.meta;
+      invariant(chain && typeof chain === 'object' && Number.isInteger(chain.best_height) && chain.best_height >= 0 && chain.best_height <= 0xffffffff && Object.hasOwn(chain, 'halted') && halted === undefined, 'The state does not prove the Bitcoin header chain; ask for it with include_bitcoin, or give bestHeight and halted');
+      bestHeight = String(chain.best_height); halted = chain.halted !== null;
+    }
+    invariant(typeof halted === 'boolean', 'Whether the Bitcoin header chain is halted is true or false');
+    const best = BigInt(decimal(String(bestHeight))), now = BigInt(decimal(String(nowMicros ?? securityNow(state))));
+    const known = best >= last ? marketHeightKnown(heights, last.toString()) : null, earliest = BigInt(marketFillEarliestEnd(state, row));
+    const graceOver = known === null ? null : BigInt(known) + BigInt(rules.graceMicros), notBefore = graceOver !== null && graceOver > earliest ? graceOver : earliest;
+    const reason = halted ? 'halted' : known === null ? 'height' : graceOver > now ? 'grace' : earliest > now ? 'time' : null;
+    return { possible: reason === null, reason, lastHeight: last.toString(), knownMicros: known, earliestEndMicros: earliest.toString(), notBeforeMicros: notBefore.toString() };
+  }
   function hexToBytes(value, size) { invariant(typeof value === 'string' && /^(?:[0-9a-f]{2})*$/.test(value) && (size === undefined || value.length === size * 2), 'Invalid canonical hexadecimal value'); return Uint8Array.from(value.match(/../g) || [], item => parseInt(item, 16)); }
   function bytesToHex(value) { return Array.from(value, byte => byte.toString(16).padStart(2, '0')).join(''); }
   function concat(...values) { const result = new Uint8Array(values.reduce((sum, value) => sum + value.length, 0)); let at = 0; for (const value of values) { result.set(value, at); at += value.length; } return result; }
@@ -484,7 +749,162 @@
     invariant(typeof payload.spec==='string'&&/^[0-9a-f]{64}$/.test(payload.spec),'The specification hash of a signal is 64 lowercase hexadecimal characters');
     return utf8.encode(`{"activate_elapsed_micros":"${decimal(payload.activate_elapsed_micros)}","spec":"${payload.spec}","version":"${decimal(payload.version)}"}`);
   }
+  // ---- The market of seconds against bitcoin: kinds 50 to 58 (spec/market.md, section 6; the engine is v5/src/market.rs).
+  // A payload of the market has exactly the fields of its kind, each in its one form, and is checked here before it is
+  // signed and when an action is read back (decodeAction). The builders below (marketSellOrder … marketNewScripts) take
+  // named arguments and return the payload, so that no caller writes a field name; `canonicalPayload` and `buildAction`
+  // take such a payload under its kind (MARKET_KINDS).
+  //   50 sell  {"amount_micros":D,"confirmations":D,"deposit_ppm":D,"min_deposit_micros":D,"min_sats":D,"pay_blocks":D,"price":D,"scripts":[X,…],"side":"sell"}
+  //   50 buy   {"amount_micros":D,"confirmations":D,"deposit_ppm":D,"forms":[F,…],"min_sats":D,"pay_blocks":D,"price":D,"side":"buy"}
+  //   51       {"order":D}                                             cancel
+  //   52       {"amount_micros":D,"order":D,"sats":D,"to":D}           take a sell order
+  //   53       {"amount_micros":D,"confirmations":D,"order":D,"sats":D,"script":X}   sell to a buy order
+  //   54       {"block_hash":H,"coinbase":X,"fill":D,"merkle_proof":X,"transaction":X,"vout":D}   proof of payment
+  //   55, 56, 57   {"fill":D}                                          expire, release, settle
+  //   58       {"order":D,"scripts":[X,…]}                             new receiving scripts
+  // D is a decimal string without leading zeros, X lowercase hexadecimal, H 64 lowercase hexadecimal characters, F one of
+  // MARKET_FORMS. Checked here: the field set of the kind and the side; a price from 1 to 10^15; an amount of at least a
+  // microsecond; what an order costs, ceil(amount × price / 10^12), at most 2.1 × 10^15 satoshis and at least its
+  // `min_sats`; `deposit_ppm` at most 1,000,000; a least deposit at most the amount; 1 to 16 scripts, each of a standard
+  // form, none twice; forms from the five names, ascending, each once; a list is a list, never null; a proof's block
+  // hash, its payment (65 to 100,000 bytes) and its coinbase (at most 150,000 bytes), both serialized without witness
+  // data, and its Merkle proof (86 to 4,096 bytes); ids of orders and fills from 1.
+  // NOT checked here, because it depends on the network's profile (spec/market.md, 2.1) or on its state, and the engine
+  // refuses it: `confirmations` and `pay_blocks` are held to the outer bounds 1 to 100 and 1 to 144 only (a production
+  // network asks at least 3 of each); `min_sats` to at least 1 (production: 1,000); a buy order's `deposit_ppm` to no
+  // least value (production: 30,000); `sats` of a fill to what any price allows, not to the order's price (marketTake and
+  // marketSell compute it); whether an order, a fill or an account exists, whether a script has served, whether the
+  // sender may send the action, and everything of a proof beyond its form. Bitcoin mainnet is closed to kinds 52 to 54.
+  // Three kinds pay more than the network's fee (marketActionFee): kinds 50 and 58 once more for each script they list,
+  // kind 54 once more for every 256 bytes of its payload (a proof of an ordinary payment costs about a dozen fees).
+  const MARKET_KINDS=Object.freeze({order:50,cancel:51,take:52,sell:53,proof:54,expire:55,release:56,settle:57,scripts:58});
+  const MARKET_FORMS=Object.freeze(['p2pkh','p2sh','p2tr','p2wpkh','p2wsh']);
+  const MARKET_ACTION_LIMITS=Object.freeze({priceMax:'1000000000000000',satsMax:'2100000000000000',depositPpmMax:'1000000',confirmationsMin:1,confirmationsMax:100,payBlocksMin:1,payBlocksMax:144,scriptsMax:16,transactionBytesMin:65,transactionBytesMax:100000,coinbaseBytesMin:1,coinbaseBytesMax:150000,merkleProofBytesMin:86,merkleProofBytesMax:4096,proofBytesPerFee:256});
+  const MARKET_SCRIPTS=Object.freeze([['p2pkh',/^76a914[0-9a-f]{40}88ac$/],['p2sh',/^a914[0-9a-f]{40}87$/],['p2wpkh',/^0014[0-9a-f]{40}$/],['p2wsh',/^0020[0-9a-f]{64}$/],['p2tr',/^5120[0-9a-f]{64}$/]]);
+  const MARKET_FIELDS=Object.freeze({
+    sell:['amount_micros','confirmations','deposit_ppm','min_deposit_micros','min_sats','pay_blocks','price','scripts','side'],
+    buy:['amount_micros','confirmations','deposit_ppm','forms','min_sats','pay_blocks','price','side'],
+    51:['order'],52:['amount_micros','order','sats','to'],53:['amount_micros','confirmations','order','sats','script'],
+    54:['block_hash','coinbase','fill','merkle_proof','transaction','vout'],55:['fill'],56:['fill'],57:['fill'],58:['order','scripts']});
+  // The form of a receiving script in lowercase hexadecimal, or a refusal: the engine's `market::form_of`.
+  // web-v4/shared/bitcoin-address.mjs (`scriptForm`, `addressToScript`) is the codec between scripts and addresses.
+  function marketScriptForm(script){const found=typeof script==='string'&&MARKET_SCRIPTS.find(([,pattern])=>pattern.test(script));invariant(found,'A receiving script is one of the five standard forms (p2pkh, p2sh, p2wpkh, p2wsh, p2tr), in lowercase hexadecimal');return found[0];}
+  // What `amount` microseconds cost at `price`, in satoshis: ceil(amount × price / 10^12), spec/market.md, section 3.
+  // Private to the builders of this block.
+  function marketCostOfFill(amount,price){
+    invariant(price>=1n&&price<=BigInt(MARKET_ACTION_LIMITS.priceMax),'A price is from 1 to 10^15 millionths of a satoshi for one second');
+    const cost=(amount*price+999999999999n)/1000000000000n;invariant(cost<=BigInt(MARKET_ACTION_LIMITS.satsMax),'This amount at this price costs more satoshis than exist');return cost;
+  }
+  function marketWhole(value,field,least,most){
+    invariant(typeof value==='string'&&/^(0|[1-9][0-9]*)$/.test(value)&&value.length<=20&&BigInt(value)<=MAX_U64,`${field} is a whole number as a decimal string without leading zeros`);
+    const number=BigInt(value);invariant(number>=least&&number<=most,`${field} is from ${least} to ${most}`);return number;
+  }
+  function marketHex(value,field,leastBytes,mostBytes){
+    invariant(typeof value==='string'&&value.length%2===0&&value.length>=2*leastBytes&&value.length<=2*mostBytes&&/^[0-9a-f]*$/.test(value),leastBytes===mostBytes?`${field} is ${2*leastBytes} lowercase hexadecimal characters`:`${field} is lowercase hexadecimal of ${leastBytes} to ${mostBytes} bytes`);
+  }
+  // A transaction as a proof carries it: without witness data. A serialization with witness data has the marker 00 where
+  // one without has its number of inputs, which is never zero. (`stripWitness` of web-v4/shared/bitcoin-address.mjs
+  // removes the witness data; `proofPayload` there puts a proof together from what a Bitcoin node gives.)
+  function marketTransaction(value,field){
+    marketHex(value,field,MARKET_ACTION_LIMITS[`${field}BytesMin`],MARKET_ACTION_LIMITS[`${field}BytesMax`]);
+    invariant(value.slice(8,10)!=='00',`${field} is serialized without witness data: this one carries its witness data, or has no input`);
+  }
+  function marketScripts(value){
+    invariant(Array.isArray(value)&&value.length>=1&&value.length<=MARKET_ACTION_LIMITS.scriptsMax,'scripts is a list of 1 to 16 receiving scripts');
+    value.forEach(marketScriptForm);invariant(new Set(value).size===value.length,'A receiving script is listed once');
+  }
+  const MARKET_CHECKS=Object.freeze({
+    amount_micros:value=>marketWhole(value,'amount_micros',1n,MAX_U64),
+    confirmations:value=>marketWhole(value,'confirmations',BigInt(MARKET_ACTION_LIMITS.confirmationsMin),BigInt(MARKET_ACTION_LIMITS.confirmationsMax)),
+    deposit_ppm:value=>marketWhole(value,'deposit_ppm',0n,BigInt(MARKET_ACTION_LIMITS.depositPpmMax)),
+    min_deposit_micros:value=>marketWhole(value,'min_deposit_micros',0n,MAX_U64),
+    min_sats:value=>marketWhole(value,'min_sats',1n,BigInt(MARKET_ACTION_LIMITS.satsMax)),
+    pay_blocks:value=>marketWhole(value,'pay_blocks',BigInt(MARKET_ACTION_LIMITS.payBlocksMin),BigInt(MARKET_ACTION_LIMITS.payBlocksMax)),
+    price:value=>marketWhole(value,'price',1n,BigInt(MARKET_ACTION_LIMITS.priceMax)),
+    sats:value=>marketWhole(value,'sats',1n,BigInt(MARKET_ACTION_LIMITS.satsMax)),
+    order:value=>marketWhole(value,'order',1n,MAX_U64),fill:value=>marketWhole(value,'fill',1n,MAX_U64),to:value=>marketWhole(value,'to',0n,MAX_U64),
+    vout:value=>marketWhole(value,'vout',0n,0xffffffffn),
+    side:value=>invariant(value==='sell'||value==='buy','The side of an order is "sell" or "buy"'),
+    scripts:marketScripts,script:marketScriptForm,
+    forms:value=>invariant(Array.isArray(value)&&value.length>=1&&value.every((form,index)=>MARKET_FORMS.includes(form)&&(index===0||value[index-1]<form)),'forms is a list of at least one of p2pkh, p2sh, p2tr, p2wpkh, p2wsh, in this order, each once'),
+    block_hash:value=>marketHex(value,'block_hash',32,32),
+    transaction:value=>marketTransaction(value,'transaction'),coinbase:value=>marketTransaction(value,'coinbase'),
+    merkle_proof:value=>marketHex(value,'merkle_proof',MARKET_ACTION_LIMITS.merkleProofBytesMin,MARKET_ACTION_LIMITS.merkleProofBytesMax)});
+  // A payload of kind 50 to 58, checked: returns a new object with the fields in the order they are signed. Throws for
+  // anything else. `canonicalPayload` writes exactly this object.
+  function marketActionPayload(kind,payload){
+    invariant(Number.isInteger(kind)&&kind>=50&&kind<=58,'The kinds of the market are 50 to 58');
+    invariant(payload&&typeof payload==='object'&&!Array.isArray(payload)&&Object.getPrototypeOf(payload)===Object.prototype,'A market payload is a plain object');
+    if(kind===50)MARKET_CHECKS.side(Object.hasOwn(payload,'side')?payload.side:undefined);
+    const fields=MARKET_FIELDS[kind===50?payload.side:kind],read={},canonical={};
+    invariant(Object.keys(payload).length===fields.length&&fields.every(field=>Object.hasOwn(payload,field)),`A payload of kind ${kind}${kind===50?` (${payload.side})`:''} has exactly the fields ${fields.join(', ')}`);
+    for(const field of fields){const value=payload[field];read[field]=MARKET_CHECKS[field](value);canonical[field]=Array.isArray(value)?[...value]:value;}
+    if(kind===50){
+      invariant(marketCostOfFill(read.amount_micros,read.price)>=read.min_sats,'An order is worth at least its smallest trade: amount_micros at price costs less than min_sats');
+      if(payload.side==='sell')invariant(read.min_deposit_micros<=read.amount_micros,'The least deposit of a fill is at most what the order offers');
+    }
+    // The satoshis of a fill are the price of its amount. The price is the order's, which is not in the payload: here
+    // they are held to what the lowest and the highest price make of the amount.
+    if(kind===52||kind===53)invariant(read.sats>=(read.amount_micros+999999999999n)/1000000000000n&&read.sats<=read.amount_micros*1000n,'sats is the price of amount_micros at the price of the order: ceil(amount_micros × price / 10^12)');
+    return canonical;
+  }
+  // The builders. Each takes one object of named arguments, all of them needed, and refuses a name it does not know. A
+  // whole number is a decimal string, a BigInt or a safe integer.
+  function marketArguments(given,names,builder){
+    invariant(given&&typeof given==='object'&&!Array.isArray(given)&&Object.getPrototypeOf(given)===Object.prototype,`${builder} takes one object of named arguments: ${names.join(', ')}`);
+    for(const name of Object.keys(given))invariant(names.includes(name),`${builder} has no argument ${name}: it takes ${names.join(', ')}`);
+    for(const name of names)invariant(Object.hasOwn(given,name)&&given[name]!==undefined&&given[name]!==null,`${builder} needs ${name}`);
+    return given;
+  }
+  function marketDecimal(value,name){
+    if(typeof value==='bigint'||(typeof value==='number'&&Number.isSafeInteger(value)))value=value.toString();
+    invariant(typeof value==='string'&&/^(0|[1-9][0-9]*)$/.test(value)&&value.length<=20&&BigInt(value)<=MAX_U64,`${name} is a whole number from 0 to 2^64-1: a decimal string without leading zeros, a BigInt or a safe integer`);return value;
+  }
+  function marketList(value,name){invariant(Array.isArray(value),`${name} is a list`);return [...value];}
+  // Kind 50, a sell order: `amountMicros` seconds on offer at `price` (millionths of a satoshi for one second), paid to
+  // one of `scripts` (receiving scripts of the seller, one for each fill the order can have).
+  function marketSellOrder(given){const a=marketArguments(given,['amountMicros','price','scripts','confirmations','payBlocks','minSats','depositPpm','minDepositMicros'],'marketSellOrder');
+    return marketActionPayload(50,{amount_micros:marketDecimal(a.amountMicros,'amountMicros'),confirmations:marketDecimal(a.confirmations,'confirmations'),deposit_ppm:marketDecimal(a.depositPpm,'depositPpm'),min_deposit_micros:marketDecimal(a.minDepositMicros,'minDepositMicros'),min_sats:marketDecimal(a.minSats,'minSats'),pay_blocks:marketDecimal(a.payBlocks,'payBlocks'),price:marketDecimal(a.price,'price'),scripts:marketList(a.scripts,'scripts'),side:'sell'});}
+  // Kind 50, a buy order: a promise to pay for `amountMicros` seconds at `price`, with a bond of `depositPpm` millionths
+  // of them. `forms` are the forms of receiving script the buyer can pay to, in any order.
+  function marketBuyOrder(given){const a=marketArguments(given,['amountMicros','price','forms','confirmations','payBlocks','minSats','depositPpm'],'marketBuyOrder');
+    return marketActionPayload(50,{amount_micros:marketDecimal(a.amountMicros,'amountMicros'),confirmations:marketDecimal(a.confirmations,'confirmations'),deposit_ppm:marketDecimal(a.depositPpm,'depositPpm'),forms:marketList(a.forms,'forms').sort(),min_sats:marketDecimal(a.minSats,'minSats'),pay_blocks:marketDecimal(a.payBlocks,'payBlocks'),price:marketDecimal(a.price,'price'),side:'buy'});}
+  // Kind 51: the owner takes back what an order still offers.
+  function marketCancel(given){const a=marketArguments(given,['order'],'marketCancel');return marketActionPayload(51,{order:marketDecimal(a.order,'order')});}
+  // Kind 52: take `amountMicros` of sell order `order`, whose price is `price` (read from verified state), for account
+  // `to`. The sender promises the bitcoin and locks the deposit. `sats` is computed here.
+  function marketTake(given){const a=marketArguments(given,['order','amountMicros','price','to'],'marketTake'),amount=marketDecimal(a.amountMicros,'amountMicros');
+    return marketActionPayload(52,{amount_micros:amount,order:marketDecimal(a.order,'order'),sats:marketCostOfFill(BigInt(amount),BigInt(marketDecimal(a.price,'price'))).toString(),to:marketDecimal(a.to,'to')});}
+  // Kind 53: sell `amountMicros` to buy order `order`, whose price is `price`, to be paid to `script`, with
+  // `confirmations` asked of the payment (at most what the buyer waits for). `sats` is computed here.
+  function marketSell(given){const a=marketArguments(given,['order','amountMicros','price','confirmations','script'],'marketSell'),amount=marketDecimal(a.amountMicros,'amountMicros');
+    return marketActionPayload(53,{amount_micros:amount,confirmations:marketDecimal(a.confirmations,'confirmations'),order:marketDecimal(a.order,'order'),sats:marketCostOfFill(BigInt(amount),BigInt(marketDecimal(a.price,'price'))).toString(),script:a.script});}
+  // Kind 54: the proof that output `vout` of `transaction`, in the Bitcoin block `blockHash`, paid for `fill`.
+  // `coinbase` is the first transaction of that block; both are serialized without witness data. `merkleProof` is what
+  // Bitcoin Core's gettxoutproof returns for the two transaction ids. Anyone may send it, for a payment in full or of a
+  // part; a part counts if it is at least the order's `min_sats` or at least half of what the fill still needs, and leaves
+  // the fill open for the rest.
+  function marketProof(given){const a=marketArguments(given,['fill','blockHash','transaction','coinbase','vout','merkleProof'],'marketProof');
+    return marketActionPayload(54,{block_hash:a.blockHash,coinbase:a.coinbase,fill:marketDecimal(a.fill,'fill'),merkle_proof:a.merkleProof,transaction:a.transaction,vout:marketDecimal(a.vout,'vout')});}
+  // Kinds 55, 56 and 57: a fill that was not paid in time ends (anyone sends it); the account its seconds would go to
+  // gives it up, and the deposit is lost; the owner of its seconds hands them over without a proof.
+  function marketExpire(given){const a=marketArguments(given,['fill'],'marketExpire');return marketActionPayload(55,{fill:marketDecimal(a.fill,'fill')});}
+  function marketRelease(given){const a=marketArguments(given,['fill'],'marketRelease');return marketActionPayload(56,{fill:marketDecimal(a.fill,'fill')});}
+  function marketSettle(given){const a=marketArguments(given,['fill'],'marketSettle');return marketActionPayload(57,{fill:marketDecimal(a.fill,'fill')});}
+  // Kind 58: new receiving scripts for an open sell order of the sender.
+  function marketNewScripts(given){const a=marketArguments(given,['order','scripts'],'marketNewScripts');return marketActionPayload(58,{order:marketDecimal(a.order,'order'),scripts:marketList(a.scripts,'scripts')});}
+  // What an action of the market costs its sender in fees, in microseconds, on a network whose fee is `networkFeeMicros`
+  // (`networkFee` of a verified state): the fee, and for kinds 50 and 58 once more for each script listed, for kind 54
+  // once more for every 256 bytes of the payload as it is signed (about a dozen fees for a proof of an ordinary payment;
+  // the engine refuses a proof whose sender cannot pay that with what it holds and what the proof brings it). Beside it
+  // an action locks what it locks (the seconds of a sell order, a bond, a deposit, the seconds sold).
+  function marketActionFee(kind,payload,networkFeeMicros){
+    const fee=BigInt(marketDecimal(networkFeeMicros,'networkFeeMicros')),checked=marketActionPayload(kind,payload);
+    const more=kind===54?Math.floor(utf8.encode(JSON.stringify(checked)).length/MARKET_ACTION_LIMITS.proofBytesPerFee):Array.isArray(checked.scripts)?checked.scripts.length:0;
+    const cost=fee*BigInt(1+more);invariant(cost<=MAX_U64,'The fee of this action is more than a balance can hold');return cost.toString();
+  }
   function canonicalPayload(kind, payload) {
+    if(kind>=MARKET_KINDS.order&&kind<=MARKET_KINDS.scripts){const body=utf8.encode(JSON.stringify(marketActionPayload(kind,payload)));invariant(body.length<=512*1024,'Extension payload exceeds 512 KiB');return body;}
     if(kind===SIGNAL_KIND)return signalBytes(payload);
     if(EXTENSIONS.has(kind)){invariant(payload&&typeof payload==='object'&&!Array.isArray(payload),'Extension payload must be an object');const body=utf8.encode(JSON.stringify(sortedJSON(payload)));invariant(body.length<=512*1024,'Extension payload exceeds 512 KiB');return body;}
 
@@ -728,7 +1148,7 @@
     }
     function selection(input={}){
       const arrays=['names','ids','public_keys','owners','candidates','epochs','blocks'],flags=['include_pos','include_bitcoin','include_policy','include_security','include_upgrade'];
-      invariant(input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).every(k=>arrays.includes(k)||flags.includes(k)),'Invalid proof selection');
+      invariant(input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).every(k=>arrays.includes(k)||flags.includes(k)||k==='include_market'||Object.hasOwn(MARKET_SELECTION,k)),'Invalid proof selection');
       const value={};for(const field of arrays){invariant(input[field]===undefined||Array.isArray(input[field]),'Proof selections must be arrays');value[field]=[...new Set(input[field]||[])];}
       for(const field of flags){invariant(input[field]===undefined||typeof input[field]==='boolean','Proof flags must be booleans');value[field]=input[field]||false;}
       if(!value.include_security)delete value.include_security;
@@ -737,7 +1157,18 @@
       // Like include_security, left out when false: a node that predates the flag refuses it.
       if(!value.include_upgrade)delete value.include_upgrade;
       invariant(value.names.length<=8&&value.ids.length<=8&&value.public_keys.length<=8&&value.names.length+value.ids.length+value.public_keys.length<=16&&value.owners.length<=16&&value.candidates.length<=16&&value.epochs.length<=8&&value.blocks.length<=16,'Proof selection exceeds budget');
-      value.names.forEach(n=>invariant(typeof n==='string'&&/^[a-z0-9_]{2,15}$/.test(n),'Invalid name'));value.public_keys.forEach(k=>hexToBytes(k,32));for(const f of ['ids','owners','candidates','epochs','blocks'])value[f].forEach(decimal);value.blocks.forEach(h=>invariant(h!=='0','Canonical history heights start at one'));return value;
+      value.names.forEach(n=>invariant(typeof n==='string'&&/^[a-z0-9_]{2,15}$/.test(n),'Invalid name'));value.public_keys.forEach(k=>hexToBytes(k,32));for(const f of ['ids','owners','candidates','epochs','blocks'])value[f].forEach(decimal);value.blocks.forEach(h=>invariant(h!=='0','Canonical history heights start at one'));
+      // The rows of the market (spec/market.md). Like include_security, each part is left out when it asks nothing: a
+      // node that predates the selection refuses it. Ids and hours are decimal numbers, a script is one of the five
+      // standard forms, and each list is held to the node's bound.
+      invariant(input.include_market===undefined||typeof input.include_market==='boolean','Proof flags must be booleans');if(input.include_market)value.include_market=true;
+      for(const field of Object.keys(MARKET_SELECTION)){
+        invariant(input[field]===undefined||Array.isArray(input[field]),'Proof selections must be arrays');const list=[...new Set(input[field]||[])];
+        invariant(list.length<=MARKET_SELECTION[field],'Proof selection exceeds budget');
+        if(field==='market_scripts')list.forEach(script=>marketScriptForm(script));else list.forEach(decimal);
+        if(list.length)value[field]=list;
+      }
+      return value;
     }
     // options.timeoutMs: the longest the whole read may take (0, the default: no limit). When it
     // passes, the request is abandoned and the read fails with an error marked `timeout: true`.
@@ -764,6 +1195,8 @@
         // Asked for, the upgrade entry is there (null when proven absent). A verifier that left
         // it out has proven nothing about it, and that is never read as "no plan".
         if(query.include_upgrade)invariant(Object.hasOwn(result.state,'upgrade'),'The verified state lacks the upgrade entry that was asked for');
+        // The same for the rows of the market: a verifier that does not know the selection has proven nothing of them.
+        if(query.include_market||Object.keys(MARKET_SELECTION).some(field=>query[field]))invariant(Object.hasOwn(result.state,'market'),'The verified state lacks the rows of the market that were asked for');
         const height=BigInt(result.state.height);invariant(height>=latestHeight,'Chain proof rolled back');latestHeight=height;
         // The fee is a setting of the network's genesis and comes with every verified state. From
         // here on getNetwork() gives the verified setting, whatever the gateway reported.
@@ -874,7 +1307,8 @@
         if(Date.now()-started<400)await new Promise(resolve => setTimeout(resolve, again?250:600));
       }
       const found=await ownVersionFinding(hash,ownCheckMs);if(found)throw found;
-      const error = new Error('Transaction pending; retain its signed bytes and hash. Do not send a replacement blindly.'); error.hash = hash; throw error;
+      const error = new Error('Transaction pending; retain its signed bytes and hash. Do not send a replacement blindly.');
+      error.code = 'TX_PENDING'; error.hash = hash; throw error;
     }
     // `busyBudgetMs`: how long the same bytes may be sent again after busy answers (BUSY.submitBudgetMs unless given;
     // a wallet gives BUSY.protectiveBudgetMs to an action that protects an account). They are never signed again: a
@@ -1060,5 +1494,5 @@
       prepared.then(value => { invariant(value && ['login', 'payment'].includes(value.type), 'Unsupported wallet request'); resolvedRequest = value; send(); }, error => { settled = true; finish(error); }).catch(error => { settled = true; finish(error); });
     });
   }
-  root.TimeSDK = Object.freeze({ KINDS, MAX_U64: MAX_U64.toString(), BUSY, isBusy, busyAnswer, busyDelayMs, retryAfterMs, createClient, buildAction, signAction, transactionHash, decodeAction, canonicalPayload, nameCommitment, deviceProofBytes, recoveryProofBytes, loginMessage, loginBytes, signLogin, requestWallet, compactBitcoinReceipt, sponsorConsentBytes, sponsorConsentExpiry, SPONSOR_CONSENT_MAX_AHEAD_MICROS, bitcoinBidCommitment, publicHeadersAction, orderReference,decodeOrderReference,checkMerchantQuote,decimal, PROTOCOL_FEE_MICROS, isFee, networkFee, nameSkeleton, distinctNames, waitsSurviveStops, stoppedMicros, securityNow, securityDeadline, protectedRegistration, REGISTER_PROTECTED_KIND, registrationRoleBytes, protectedSetup, protectedNameCommitment, signProtectedRegistration, FIRST_VERSION, IMPLEMENTED, KNOWN_VERSIONS, sinceFirstVersion, knowsVersion, knowsPlan, requireKnownVersion, isUpgradeRequired, upgradeStatusOf, nodesReportUpgrades, SIGNAL_RULES, SIGNAL_ADMISSION_MARGIN_MICROS, SIGNAL_SHARES, signalSupport, signalWithdrawal, samePlan, signalFactsOf, signalStatusOf, judgeSignal, hexToBytes, bytesToHex, base64, fromBase64, concat, sameOriginURL });
+  root.TimeSDK = Object.freeze({ KINDS, MAX_U64: MAX_U64.toString(), BUSY, isBusy, busyAnswer, busyDelayMs, retryAfterMs, createClient, buildAction, signAction, transactionHash, decodeAction, canonicalPayload, nameCommitment, deviceProofBytes, recoveryProofBytes, loginMessage, loginBytes, signLogin, requestWallet, compactBitcoinReceipt, sponsorConsentBytes, sponsorConsentExpiry, SPONSOR_CONSENT_MAX_AHEAD_MICROS, bitcoinBidCommitment, publicHeadersAction, orderReference,decodeOrderReference,checkMerchantQuote,decimal, PROTOCOL_FEE_MICROS, isFee, networkFee, nameSkeleton, distinctNames, waitsSurviveStops, stoppedMicros, securityNow, securityDeadline, protectedRegistration, REGISTER_PROTECTED_KIND, registrationRoleBytes, protectedSetup, protectedNameCommitment, signProtectedRegistration, FIRST_VERSION, IMPLEMENTED, KNOWN_VERSIONS, sinceFirstVersion, knowsVersion, knowsPlan, requireKnownVersion, isUpgradeRequired, upgradeStatusOf, nodesReportUpgrades, SIGNAL_RULES, SIGNAL_ADMISSION_MARGIN_MICROS, SIGNAL_SHARES, signalSupport, signalWithdrawal, samePlan, signalFactsOf, signalStatusOf, judgeSignal, hexToBytes, bytesToHex, base64, fromBase64, concat, MARKET_KINDS, MARKET_FORMS, MARKET_ACTION_LIMITS, marketScriptForm, marketActionPayload, marketSellOrder, marketBuyOrder, marketCancel, marketTake, marketSell, marketProof, marketExpire, marketRelease, marketSettle, marketNewScripts, marketActionFee, sameOriginURL, marketSetting, MARKET_SELECTION, MARKET_RULES, MARKET_LIMITS, marketRules, marketSats, marketBought, marketSummary, marketHeldMicros, marketHeights, marketOrder, marketFill, marketAccount, marketCandle, marketHour, marketScript, marketFillBuys, marketFillLastHeight, marketFillEarliestEnd, marketHeightKnown, marketExpiry });
 })(globalThis);

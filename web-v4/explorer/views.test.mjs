@@ -592,8 +592,9 @@ test('validators: who validates with what share, announced changes, and an upgra
 
 // ------------------------------------------------------------------ run a validator (join.json)
 const JOIN = { script_url: 'https://join.example/join/join.sh', wallet_url: 'https://wallet.example', chain_id: 'time-devnet-v4-test', min_self_bond_micros: '1000000',
-  files: { node_sha256: 'a1'.repeat(32), cometbft_sha256: 'b2'.repeat(32), genesis_sha256: 'c3'.repeat(32) }, peers: [`${'0f'.repeat(20)}@203.0.113.7:26656`], pace: '500ms' };
-const COMMANDS = 'curl -fsSLO https://join.example/join/join.sh\nless join.sh\nsudo bash join.sh --account YOUR_ACCOUNT_NUMBER';
+  files: { node_sha256: 'a1'.repeat(32), cometbft_sha256: 'b2'.repeat(32), genesis_sha256: 'c3'.repeat(32) }, peers: [`${'0f'.repeat(20)}@203.0.113.7:26656`], pace: '500ms',
+  release_key: 'd4'.repeat(32), script_sha256: 'e5'.repeat(32), source_url: 'https://github.com/thetimenetwork/time/blob/main/testnet/join.sh' };
+const COMMANDS = 'curl -fsSLO https://join.example/join/join.sh\nsha256sum join.sh\nless join.sh\nsudo bash join.sh --account YOUR_ACCOUNT_NUMBER';
 /// The section "Run a validator": a part of its own, after the validators and their parts.
 const joinPart = (p) => all(p.view).find((element) => element.tagName === 'section' && element.children[0]?.tagName === 'h2' && element.children[0].textContent === 'Run a validator');
 const GENERAL = /^Run a validator Anyone can run a validator on this network\. A validator is a computer that stays online, checks every block and signs it\. For each block it signs it is paid new seconds, in proportion to its votes\. How it works Two keys\. Your node makes a validator key, which stays on that machine and signs blocks\..* A bond\. Your account registers the validator's key on the chain and locks a bond with it, at least the network's minimum\. The bond is what you lose if your validator signs two different blocks at the same height\. Votes\. .* Who decides\. .* What you need A Linux computer or server that stays on: .* An account on this network that holds a little more than the bond\. If the account is protected, its daily limit must also have the bond and the fee left on the day you register\. Steps Create an account in the wallet\. Its account number is on the wallet's Home screen\. On the server, download the script, read it, then run it with your account number\. Whoever runs this network gives you the script for it\. This page was not set up with one\. The script prints a registration text\. In the wallet, open More, then Validator operator, paste the text and confirm\. If your account is protected, type its payment password there as well\. The bond is taken from your balance, and on a protected account it counts, with the fee, against the daily limit\. .* about half an hour for each day the network has run\. The script shows how far it is\. What the script does It downloads .* sudo bash join\.sh --status shows what the node is doing\. sudo bash join\.sh --uninstall removes the services and programs and keeps the key\. Take care Keep a copy of the validator key file \(\/var\/lib\/time-validator\/node\/config\/priv_validator_key\.json\) somewhere safe\. .* These instructions are part of this page, as it was installed for this network\. The page does not check the script: read it before you run it\.$/;
@@ -640,14 +641,14 @@ test('run a validator, without join.json: the general explanation after the vali
   assert.equal(calls, 2, 'once for the first page, once for this one');
 });
 
-test('run a validator, with this network\'s join.json: the three command lines, the two outside links, the network\'s files', async () => {
+test('run a validator, with this network\'s join.json: the four command lines, the two outside links, the network\'s files', async () => {
   let calls = 0;
   const p = await open('#/validators', () => {}, { loadJoin: async () => { calls += 1; return JSON.stringify(JOIN); } });
   const join = joinPart(p), text = textOf(join);
   assert.match(text, /^Run a validator Anyone can run a validator on this network\./);
   // The bond with the page's own formatter for amounts of seconds, and with the switch to microseconds.
   assert.match(text, /A bond\. Your account registers the validator's key on the chain and locks a bond with it: at least 1 s on this network\. The bond is what you lose/);
-  assert.match(text, /An account on this network that holds a little more than the bond\. If the account is protected, its daily limit must also have the bond and the fee left on the day you register\. The faucet's test time is enough\. Steps Create an account in the wallet\. Its account number is on the wallet's Home screen\. On the server, download the script, read it, then run it with your account number: curl/);
+  assert.match(text, /An account on this network that holds a little more than the bond\. If the account is protected, its daily limit must also have the bond and the fee left on the day you register\. The faucet's test time is enough\. Steps Create an account in the wallet\. Its account number is on the wallet's Home screen\. On the server, download the script, check its SHA-256 against the one below, read it, then run it with your account number\. Where this page names the copy published with the source, compare with that copy too, from another computer: this page and the script come from the same place\. curl/);
   // The commands: one block, made as text, with exactly these three lines.
   const blocks = all(join).filter((element) => element.tagName === 'pre');
   assert.equal(blocks.length, 1);
@@ -657,8 +658,8 @@ test('run a validator, with this network\'s join.json: the three command lines, 
   assert.deepEqual(all(join).filter((element) => element.tagName === 'a').map((element) => [element.textContent, element.attributes.href, element.attributes.rel]),
     [['the wallet', 'https://wallet.example', 'noopener noreferrer'], ['https://join.example/join/join.sh', 'https://join.example/join/join.sh', 'noopener noreferrer']]);
   // The network's files as the page shows other facts, the hashes in its hexadecimal form.
-  assert.match(text, new RegExp(`This network's files The script https://join\\.example/join/join\\.sh Chain time-devnet-v4-test Node program, SHA-256 ${'a1'.repeat(32)} CometBFT, SHA-256 of the archive ${'b2'.repeat(32)} Genesis file, SHA-256 ${'c3'.repeat(32)} Entry node ${'0f'.repeat(20)}@203\\.0\\.113\\.7:26656 Take care`));
-  assert.equal(within(join, 'hex').length, 3);
+  assert.match(text, new RegExp(`This network's files The script https://join\\.example/join/join\\.sh The script, SHA-256 ${'e5'.repeat(32)} The script, as published with the source https://github\\.com/thetimenetwork/time/blob/main/testnet/join\\.sh Release key \\(signs the network's description\\) ${'d4'.repeat(32)} Chain time-devnet-v4-test Node program, SHA-256 ${'a1'.repeat(32)} CometBFT, SHA-256 of the archive ${'b2'.repeat(32)} Genesis file, SHA-256 ${'c3'.repeat(32)} Sentry ${'0f'.repeat(20)}@203\\.0\\.113\\.7:26656 Take care`));
+  assert.equal(within(join, 'hex').length, 5, 'the script, the release key and the three files');
   assert.equal(within(join, 'facts').length, 1);
   // Installed text: not the page's check and not the service's word, and said to be that at the end.
   assert.doesNotMatch(text, /could not be read|Whoever runs this network|at least the network's minimum|Not checked|Checked in your browser/);
@@ -674,7 +675,7 @@ test('run a validator, with this network\'s join.json: the three command lines, 
   // Several entry nodes are listed one under the other; no pace is needed.
   const { pace, ...unpaced } = JOIN;
   const many = await open('#/validators', () => {}, { loadJoin: async () => JSON.stringify({ ...unpaced, peers: [JOIN.peers[0], `${'1e'.repeat(20)}@198.51.100.20:26656`] }) });
-  assert.match(textOf(joinPart(many)), new RegExp(`Entry nodes ${'0f'.repeat(20)}@203\\.0\\.113\\.7:26656 ${'1e'.repeat(20)}@198\\.51\\.100\\.20:26656 Take care`));
+  assert.match(textOf(joinPart(many)), new RegExp(`Sentries ${'0f'.repeat(20)}@203\\.0\\.113\\.7:26656 ${'1e'.repeat(20)}@198\\.51\\.100\\.20:26656 Take care`));
   assert.equal(pace, '500ms');
 });
 

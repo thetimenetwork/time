@@ -11,11 +11,17 @@ export async function fetchLightBlock({rpc,height}){
  const [current,next]=await Promise.all([validators(h),validators((BigInt(h)+1n).toString())]);
  return {signed_header:signed,validators:current,next_validators:next};
 }
-export async function fetchCertifiedView({rpc,selection,attempts=3}){
+// `at`, when given, is the height of the state to read: the state after that block, which the header of the next
+// block commits to. Without it the newest state is read. A node keeps the states of its last blocks only (32 unless it
+// is run otherwise); asked for an older one it refuses ("proof version pruned"), and the refusal is passed on in the
+// error's message. A reader that follows the chain block by block asks this way (market-index.mjs).
+export async function fetchCertifiedView({rpc,selection,attempts=3,at}){
+ if(at!==undefined&&(typeof at!=='string'||!/^[1-9][0-9]{0,15}$/.test(at)))throw Error('Invalid state height');
  let last;
- for(let attempt=0;attempt<attempts;attempt++)try{
+ for(let attempt=0;attempt<(at===undefined?attempts:1);attempt++)try{
   let light;
-  try{light=await fetchLightBlock({rpc});}catch(first){
+  if(at!==undefined)light=await fetchLightBlock({rpc,height:(BigInt(at)+1n).toString()});
+  else try{light=await fetchLightBlock({rpc});}catch(first){
    const commit=await rpc('/commit');const h=BigInt(commit.signed_header.header.height);if(h<3n)throw first;
    light=await fetchLightBlock({rpc,height:(h-1n).toString()});
   }

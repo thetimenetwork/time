@@ -200,6 +200,18 @@ pub struct Genesis {
     /// and its state roots. The production profile requires it.
     #[serde(default, skip_serializing_if = "is_false", deserialize_with = "set_records")]
     pub service_records: bool,
+    /// The market of seconds against bitcoin (`spec/market.md`,
+    /// `crate::market`): orders and fills under `market/`, kinds 50 to 58,
+    /// one more field in the metadata row (`Meta::market_micros`) and one
+    /// more term in the supply rule. With it the chain follows the Bitcoin
+    /// header chain (kind 40) whether or not it has a bitcoin auction.
+    /// Without it none of that exists and the network keeps its encoding,
+    /// its network id and its state roots.
+    ///
+    /// Written only when it is set, as `true`, last of all; `false` cannot
+    /// be written.
+    #[serde(default, skip_serializing_if = "is_false", deserialize_with = "set_market")]
+    pub market: bool,
 }
 /// A genesis account that starts with a set of keys and a policy
 /// (`Genesis::protected_accounts`).
@@ -305,6 +317,14 @@ fn set_records<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool
     }
     Ok(true)
 }
+fn set_market<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    if !bool::deserialize(deserializer)? {
+        return Err(serde::de::Error::custom(
+            "a network without the market is written by leaving the field out, not as false",
+        ));
+    }
+    Ok(true)
+}
 fn set_accounts<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<ProtectedAccount>, D::Error> {
@@ -401,9 +421,13 @@ impl Genesis {
     }
     /// Whether this network has a bitcoin auction, and with it the actions
     /// that serve it: kinds 40 (bitcoin headers), 41 (bitcoin receipts), 42
-    /// (auction claims) and 60 to 63 (treasury governance).
+    /// (auction claims) and 60 to 63 (treasury governance). A network with
+    /// the market follows the Bitcoin header chain in any case: kind 40 is
+    /// accepted there, and only there, without an auction.
     pub fn bitcoin_kind_allowed(&self, kind: u8) -> bool {
-        !self.all_new_time_to_validators || !matches!(kind, 40..=42 | 60..=63)
+        !self.all_new_time_to_validators
+            || !matches!(kind, 40..=42 | 60..=63)
+            || (self.market && kind == 40)
     }
     /// The part of `fees`, the action fees charged in one block, that this
     /// network pays on to validators. The rest stays in the bank.
@@ -436,6 +460,25 @@ impl Genesis {
         ensure!(
             self.recovery_approval_window_micros == 7 * pos::DAY,
             "recovery approval window must be seven accepted days"
+        );
+        // The market counts every wait of a fill on the clock of the waits.
+        // On a network whose waits do not survive a stop, a chain that
+        // stood for hours would come back with every open fill ready to
+        // end, and no payer could have sent a proof meanwhile.
+        ensure!(
+            !self.market || self.waits_survive_stops,
+            "a network with the market needs waits that survive a stop (waits_survive_stops)"
+        );
+        // The market's rules quote three numbers of the Bitcoin header
+        // chain: a reorganisation is followed to 144 blocks, a fresh tip is
+        // at most two hours old, and competing branches are kept (with one
+        // tip kept, a payment after a reorganisation could never count).
+        ensure!(
+            !self.market
+                || (self.bitcoin.max_reorg == 144
+                    && self.bitcoin.max_tip_age_secs <= 7200
+                    && self.bitcoin.max_fork_tips >= 2),
+            "a network with the market keeps the header chain's reorganisation bound of 144 blocks, a tip age of at most two hours, and at least two fork tips"
         );
         self.registration.validate()?;
         ensure!(

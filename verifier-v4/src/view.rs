@@ -2,7 +2,7 @@
 use crate::{
     decimal,
     light::{self, LightBlock, Trust},
-    parse,
+    market, parse,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
@@ -53,6 +53,18 @@ struct Selection {
     include_security: bool,
     #[serde(default)]
     include_upgrade: bool,
+    #[serde(default)]
+    include_market: bool,
+    #[serde(default)]
+    market_orders: Vec<String>,
+    #[serde(default)]
+    market_fills: Vec<String>,
+    #[serde(default)]
+    market_accounts: Vec<String>,
+    #[serde(default)]
+    market_scripts: Vec<String>,
+    #[serde(default)]
+    market_candles: Vec<String>,
 }
 /// The key of the row that holds a scheduled change of the protocol version
 /// and the validators' signals for one.
@@ -222,7 +234,7 @@ fn key_hash(raw: &[u8]) -> jmt::KeyHash {
 fn canonical_u64(text: &str, label: &str) -> Result<u64, String> {
     state_integer(&json!(text), label)
 }
-fn get<'a>(
+pub(crate) fn get<'a>(
     rows: &'a std::collections::BTreeMap<Vec<u8>, Option<Value>>,
     key: &[u8],
 ) -> Result<Option<&'a Value>, String> {
@@ -522,17 +534,28 @@ pub fn authenticate_entries(
             return Err("account value exceeds protocol size limit".into());
         }
         let value = bytes
+            .as_deref()
             .map(|value| {
-                serde_json::from_slice::<Value>(&value)
+                serde_json::from_slice::<Value>(value)
                     .map_err(|_| "invalid authenticated value JSON")
             })
             .transpose()?;
+        // A row of the market is canonical JSON (`spec/market.md`, section
+        // 4): its fields in alphabetical order, each once, no spaces. A
+        // wallet shows a person what such a row says before they pay
+        // bitcoin, so bytes that can be read in two ways are refused.
+        if key.starts_with(market::PREFIX)
+            && let (Some(raw), Some(row)) = (&bytes, &value)
+            && serde_json::to_vec(row).ok().as_ref() != Some(raw)
+        {
+            return Err("noncanonical market row".into());
+        }
         rows.insert(key, value);
     }
     Ok(rows)
 }
 
-type AuthenticatedRows = BTreeMap<Vec<u8>, Option<Value>>;
+pub type AuthenticatedRows = BTreeMap<Vec<u8>, Option<Value>>;
 pub fn current_rows(
     proof: StateProof,
     trust: &Trust,
@@ -671,6 +694,11 @@ pub fn current_rows(
             .checked_add(decimal(&meta[name], name)?)
             .ok_or("supply overflow")?;
     }
+    // On a network with the market the seconds it holds are one more term
+    // (`spec/market.md`, section 4); on any other the term does not exist.
+    total = total
+        .checked_add(market::held(&meta)?)
+        .ok_or("supply overflow")?;
     if total != elapsed {
         return Err("authenticated aggregate supply differs from elapsed minting".into());
     }
@@ -694,6 +722,17 @@ pub fn view(
         || request.epochs.len() > 8
         || request.blocks.len() > 16
     {
+        return Err("selection budget exceeded".into());
+    }
+    let asked = market::Asked {
+        summary: request.include_market,
+        orders: &request.market_orders,
+        fills: &request.market_fills,
+        accounts: &request.market_accounts,
+        scripts: &request.market_scripts,
+        candles: &request.market_candles,
+    };
+    if !asked.within_budget() {
         return Err("selection budget exceeded".into());
     }
     let proof: StateProof = parse(proof_json)?;
@@ -872,6 +911,12 @@ pub fn view(
             Some(row) => upgrade_row(row, current)?,
             None => Value::Null,
         };
+    }
+    // Whether the network has the market is its setting, in `config` (it
+    // was read when the supply was checked). What was asked of the market
+    // is one object, and it is there only when something was asked.
+    if let Some(proven) = market::rows(&rows, &asked, market::setting(&state)?)? {
+        state["market"] = proven;
     }
     for (field, prefix, ids) in [
         ("stake_owners", b"pos/owner/".as_slice(), &request.owners),

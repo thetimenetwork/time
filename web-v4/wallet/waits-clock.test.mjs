@@ -352,7 +352,7 @@ test('a website\'s sign-in is refused while the clock of the waits says frozen (
   for (const listener of windowListeners.message) listener({ data: { type: 'time:request', version: 1, id: 'request-login-1', request: { type: 'login', challenge: { purpose: 'login', origin: SHOP, networkId: NET, nonce: 'ab'.repeat(32), issuedAt: Date.now(), expiresAt: Date.now() + 60000 } } }, source: website, origin: SHOP });
   assert.equal($('approval-title').textContent, 'Sign in to this website?');
   const asked = await answerTo(() => $('approve-request').fire('click'));
-  assert.deepEqual([asked.review, asked.error, asked.notice], [null, true, 'The account is frozen: nobody signs in until the freeze ends or its keys are replaced']);
+  assert.deepEqual([asked.review, asked.error, asked.notice], [null, true, 'Sign-in is paused while your account is frozen. Open Home to check when the freeze ends.']);
   // A website's payment (security-ui.mjs, payWebsite): refused too, before its review.
   await freshPage({ pathname: '/approve', opener: website }); await unlock();
   const carol = chain.accounts.find(a => a.name === 'carol_p'), orderId = SDK.orderReference({ nonce: (BigInt(carol.nonce) + 1n).toString(), expiresElapsedMicros: (chain.now + 600000000n).toString() });

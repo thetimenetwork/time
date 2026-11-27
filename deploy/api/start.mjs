@@ -105,7 +105,7 @@ export function validateConfig(config) {
   };
 }
 
-/// Starts the service. `inject` replaces parts for tests: rpc, readState, webhookFetcher, log, now, pollMs.
+/// Starts the service. `inject` replaces parts for tests: rpc, readState, readMarketState, webhookFetcher, log, now, pollMs.
 export async function start(rawConfig, inject = {}) {
   const config = validateConfig(rawConfig), log = inject.log || jsonLog();
   await mkdir(config.data_directory, { recursive: true, mode: 0o700 });
@@ -137,7 +137,7 @@ export async function start(rawConfig, inject = {}) {
       ...(config.max_touch_streams === undefined ? {} : { maxTouchStreams: config.max_touch_streams }), ...(config.max_touch_streams_per_client === undefined ? {} : { maxTouchStreamsPerClient: config.max_touch_streams_per_client }),
       explorer: config.serve_explorer === true, explorerJoin: config.explorer_join ?? null, log,
       census: config.stats_census ? { everyMs: config.stats_census.every_seconds * 1000, maxAccounts: config.stats_census.max_accounts, named: config.stats_census.named_accounts, top: config.stats_census.top } : null,
-      ...(inject.readState ? { readState: inject.readState } : {}), ...(inject.webhookFetcher ? { webhookFetcher: inject.webhookFetcher } : {}),
+      ...(inject.readState ? { readState: inject.readState } : {}), ...(inject.readMarketState ? { readMarketState: inject.readMarketState } : {}), ...(inject.webhookFetcher ? { webhookFetcher: inject.webhookFetcher } : {}),
       ...(inject.now ? { now: inject.now } : {}), ...(inject.pollMs ? { pollMs: inject.pollMs } : {}),
     });
     // Origins and counts only: no secret, and no path or query of the RPC or of a webhook.

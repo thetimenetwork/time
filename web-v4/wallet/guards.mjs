@@ -56,23 +56,38 @@ export async function withSigningLock(locks, networkId, accountId, callback) {
   if (!locks?.request) throw new Error('This browser needs Web Locks for safe multi-tab signing. Use a current Chrome, Edge or Firefox.');
   return locks.request(`timecurrency:sign:${networkId}:${accountId}`, { mode: 'exclusive' }, callback);
 }
+export function isLimitChange(item) {
+  return (item?.kind === 77 && ['Lower daily limit', 'Raise daily limit'].includes(item.label))
+    || (item?.kind === 73 && item.label === 'Raise daily limit with a recovery proof');
+}
+export const limitReceiptSlot = (account, kind) => `limit-receipt-${kind}-${account}`;
+
+// An advanced nonce or authority proves these bytes cannot execute again. It does not prove their outcome.
+export function retireReservation(pending, network, account, slot, item) {
+  if (isLimitChange(item)) {
+    const archive = limitReceiptSlot(account, item.kind), previous = pending.get(network, archive);
+    if (!previous) pending.put(network, archive, item);
+    else if (previous.hash !== item.hash) return;
+  }
+  pending.clear(network, slot, item.hash);
+}
 export class PendingReservations {
   constructor(storage, prefix = 'timecurrency.pending.v1:') { this.storage = storage; this.prefix = prefix; }
   key(network, account) { return this.prefix + network + ':' + account; }
   get(network, account) {
     const raw = this.storage.getItem(this.key(network, account));
     if (!raw) return null;
-    let record; try { record = JSON.parse(raw); } catch { throw new Error('Pending transaction storage is damaged; do not sign again until reconciled.'); }
-    if (!record || !/^[0-9a-f]{64}$/i.test(record.hash) || !/^(0|[1-9][0-9]*)$/.test(record.nonce) || typeof record.authEpoch !== 'string' || !/^(0|[1-9][0-9]*)$/.test(record.authEpoch) || typeof record.tx !== 'string' || record.tx.length > 768*1024) throw new Error('Invalid pending transaction; reconciliation is required.');
+    let record; try { record = JSON.parse(raw); } catch { throw new Error('The saved request is damaged. Check your account activity before making another request.'); }
+    if (!record || !/^[0-9a-f]{64}$/i.test(record.hash) || !/^(0|[1-9][0-9]*)$/.test(record.nonce) || typeof record.authEpoch !== 'string' || !/^(0|[1-9][0-9]*)$/.test(record.authEpoch) || typeof record.tx !== 'string' || record.tx.length > 768*1024) throw new Error('This browser could not read the saved request. Check your account activity before making another request.');
     return record;
   }
   put(network, account, record) {
-    if (this.get(network, account)) throw new Error('A transaction is already pending. Resolve it before signing another.');
+    if (this.get(network, account)) throw new Error('A request is already pending. Open Activity and choose Check pending receipt.');
     this.storage.setItem(this.key(network, account), JSON.stringify(record));
   }
   clear(network, account, expectedHash) {
     const pending = this.get(network, account);
-    if (pending && pending.hash !== expectedHash) throw new Error('Pending transaction changed in another tab.');
+    if (pending && pending.hash !== expectedHash) throw new Error('Your request changed in another tab. Refresh this wallet to see its latest status.');
     this.storage.removeItem(this.key(network, account));
   }
 }
@@ -81,13 +96,13 @@ export class PaymentMarkers {
   key(network, account, reference) { if (!/^[0-9a-f]{64}$/.test(reference)) throw new Error('Invalid payment reference.'); return `${this.prefix}${network}:${account}:${reference}`; }
   get(network, account, reference) {
     const raw = this.storage.getItem(this.key(network, account, reference)); if (!raw) return null;
-    let record; try { record = JSON.parse(raw); } catch { throw new Error('Payment marker is damaged. Refusing to pay this order again.'); }
-    if (!record || Object.keys(record).sort().join(',') !== 'at,hash,origin,status' || !/^[0-9a-f]{64}$/i.test(record.hash) || !['pending', 'verified'].includes(record.status) || typeof record.origin !== 'string' || record.origin.length > 1024 || !Number.isSafeInteger(record.at)) throw new Error('Payment marker is invalid. Refusing to pay this order again.');
+    let record; try { record = JSON.parse(raw); } catch { throw new Error('The saved payment record is damaged. Check the order’s payment status before paying again.'); }
+    if (!record || Object.keys(record).sort().join(',') !== 'at,hash,origin,status' || !/^[0-9a-f]{64}$/i.test(record.hash) || !['pending', 'verified'].includes(record.status) || typeof record.origin !== 'string' || record.origin.length > 1024 || !Number.isSafeInteger(record.at)) throw new Error('This browser could not read the saved payment. Check the order’s payment status before paying again.');
     return record;
   }
   reserve(network, account, reference, hash, origin = 'unknown') {
     const previous = this.get(network, account, reference);
-    if (previous) { if (previous.hash.toUpperCase() !== hash.toUpperCase()) throw new Error('This order already has a different signed payment. Recheck its receipt; do not pay twice.'); return previous; }
+    if (previous) { if (previous.hash.toUpperCase() !== hash.toUpperCase()) throw new Error('This order already has a different signed payment. Check its receipt in Activity.'); return previous; }
     const record = { hash: hash.toUpperCase(), origin, status: 'pending', at: Date.now() };
     this.storage.setItem(this.key(network, account, reference), JSON.stringify(record)); return record;
   }

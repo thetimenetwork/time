@@ -50,6 +50,20 @@ pub fn fixture_built(
     anchor_version: u64,
     receipt_version: u64,
 ) -> Value {
+    let more = more
+        .into_iter()
+        .map(|(key, row)| (key, serde_json::to_vec(&row).unwrap()))
+        .collect();
+    fixture_raw(edit, more, absent, anchor_version, receipt_version)
+}
+/// The same, with each row of `more` given as the bytes stored under its key.
+pub fn fixture_raw(
+    edit: impl FnOnce(&mut Value),
+    more: Vec<(Vec<u8>, Vec<u8>)>,
+    absent: Vec<Vec<u8>>,
+    anchor_version: u64,
+    receipt_version: u64,
+) -> Value {
     let a = [(1, 10), (2, 10), (3, 10), (4, 10)];
     let b = [(5, 10), (6, 10), (7, 10), (8, 10)];
     let mut h1 = block(1, &a, &a, None, T0 + 1).signed_header.header;
@@ -110,13 +124,17 @@ pub fn fixture_built(
         );
     }
     rows.push(([b"registration/commit/".as_slice(),&[0xcc;32]].concat(),json!({"public_key":"cc".repeat(32),"commitment":"dd".repeat(32),"entry_id":"ee".repeat(32),"sponsor":"0","created_elapsed_micros":"1209898000000","expires_elapsed_micros":"1296298000000","height":"5"})));
+    let mut rows: Vec<(Vec<u8>, Vec<u8>)> = rows
+        .into_iter()
+        .map(|(key, row)| (key, serde_json::to_vec(&row).unwrap()))
+        .collect();
     rows.extend(more);
     let db = MockTreeStore::default();
     let tree = JellyfishMerkleTree::<_, Sha256>::new(&db);
     let (root, batch) = tree
         .put_value_set(
             rows.iter()
-                .map(|(k, v)| (kh(k), Some(serde_json::to_vec(v).unwrap()))),
+                .map(|(k, v)| (kh(k), Some(v.clone()))),
             0,
         )
         .unwrap();

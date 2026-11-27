@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { startLocalVault } from './vault-host.mjs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -205,8 +206,11 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
   async function getStateProof(query={}){
     // Native and verifier independently enforce exact fields, counts and types.
     const arrays=['names','ids','public_keys','owners','candidates','epochs','blocks'],flags=['include_pos','include_bitcoin','include_policy','include_security','include_upgrade'];
+    // The rows of the market (spec/market.md): the same fields and bounds as the node and the SDK.
+    const market=SDK.MARKET_SELECTION;arrays.push(...Object.keys(market));flags.push('include_market');
     if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(k=>!arrays.includes(k)&&!flags.includes(k))||JSON.stringify(query).length>4096)throw Error('Invalid proof selection');
-    for(const f of arrays)if(query[f]!==undefined&&(!Array.isArray(query[f])||query[f].length>({names:8,ids:8,public_keys:8,owners:16,candidates:16,epochs:8,blocks:16}[f])))throw Error('Proof selection exceeds limit');
+    for(const f of arrays)if(query[f]!==undefined&&(!Array.isArray(query[f])||query[f].length>({names:8,ids:8,public_keys:8,owners:16,candidates:16,epochs:8,blocks:16,...market}[f])))throw Error('Proof selection exceeds limit');
+    for(const f of Object.keys(market))for(const item of query[f]||[])if(f==='market_scripts')SDK.marketScriptForm(item);else SDK.decimal(item);
     if((query.names?.length||0)+(query.ids?.length||0)+(query.public_keys?.length||0)>16)throw Error('Proof selection exceeds limit');
     for(const f of flags)if(query[f]!==undefined&&typeof query[f]!=='boolean')throw Error('Invalid proof flag');
     for(const n of query.names||[])if(typeof n!=='string'||!/^[a-z0-9_]{2,15}$/.test(n))throw Error('Invalid name');for(const k of query.public_keys||[])SDK.hexToBytes(k,32);for(const f of ['ids','owners','candidates','epochs','blocks'])for(const n of query[f]||[])SDK.decimal(n);if(query.blocks?.includes('0'))throw Error('Canonical history heights start at one');
@@ -425,9 +429,9 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
     }catch(error){last=error;if(!/ROLLBACK|CHECKPOINT_MISMATCH/.test(error.message))throw error;}throw last;
   }
   let login; let orders;let orderRepository;let blog;let regtestBusy=false;const regtestLast=new Map();let sponsorQueue=Promise.resolve();const sponsorLast=new Map();
-  async function chainRoute(request, response, url) {
+  async function chainRoute(request, response, url, pageOrigin) {
     if (request.method === 'GET' && url.pathname === '/api/light-block') { await light.ready(); json(response,200,await fetchLightBlock({rpc,height:url.searchParams.get('height')||undefined}));return true; }
-    if (request.method === 'GET' && url.pathname === '/api/network') { json(response, 200, { ...network, ...(feeMicros === undefined ? {} : { feeMicros }) }); return true; }
+    if (request.method === 'GET' && url.pathname === '/api/network') { json(response, 200, { ...network, walletOrigin: pageOrigin, ...(feeMicros === undefined ? {} : { feeMicros }) }); return true; }
     if (request.method === 'GET' && url.pathname === '/api/view-proof') { const text = url.searchParams.get('query') || '{}'; if (text.length > 4096) throw new Error('Proof selection exceeds limit'); json(response, 200, await getStateProof(JSON.parse(text))); return true; }
     if(request.method==='GET'&&url.pathname==='/api/notifications'){const id=url.searchParams.get('account');SDK.decimal(id);const checked=await verifiedState({ids:[id]});const account=checked.state.accounts.find(a=>a.id===id);if(!account)throw Error('Unknown account');json(response,200,{...(await archive.observeAccount(account,checked.state)),proof:await getStateProof({ids:[id]})});return true;}
     if(request.method==='GET'&&url.pathname==='/api/archive/receipt'){json(response,200,await getReceipt(url.searchParams.get('hash')||'',{canonical:true}));return true;}
@@ -439,7 +443,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       json(response, 200, await awaitReceipt(url.searchParams.get('hash') || '',Number(wait),{canonical:canonical==='1'||fast!=='1',trustedHeight:trusted===null?undefined:BigInt(trusted)})); return true;
     }
     if(request.method==='POST'&&url.pathname==='/api/sponsor-registration'){
-      requireOrigin(request,walletOrigin);if(typeof onSponsorRegistration!=='function'||network.sponsorAccount===undefined)throw Error('A funded registration sponsor is not configured');
+      requireOrigin(request,pageOrigin);if(typeof onSponsorRegistration!=='function'||network.sponsorAccount===undefined)throw Error('A funded registration sponsor is not configured');
       const p=await body(request);if(Object.keys(p).sort().join(',')!=='commitment,expires_elapsed_micros,proof,public_key')throw Error('Invalid sponsorship request');SDK.hexToBytes(p.public_key,32);SDK.hexToBytes(p.commitment,32);SDK.hexToBytes(p.proof,64);SDK.decimal(p.expires_elapsed_micros);
       const key=await crypto.subtle.importKey('raw',SDK.hexToBytes(p.public_key,32),'Ed25519',false,['verify']);
       if(!await crypto.subtle.verify('Ed25519',key,SDK.hexToBytes(p.proof,64),SDK.sponsorConsentBytes({networkId:manifest.networkId,sponsorAccount:network.sponsorAccount,publicKey:p.public_key,commitment:p.commitment,expiresElapsedMicros:p.expires_elapsed_micros})))throw Error('New device sponsorship consent is invalid');
@@ -456,7 +460,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       });sponsorQueue=operation.catch(()=>{});json(response,200,await operation);return true;
     }
     if(request.method==='POST'&&url.pathname==='/api/regtest-bid'){
-      requireOrigin(request,walletOrigin);if(typeof onRegtestBid!=='function'||manifest.trust.app_version!=='4')throw Error('Bitcoin regtest earning is unavailable');
+      requireOrigin(request,pageOrigin);if(typeof onRegtestBid!=='function'||manifest.trust.app_version!=='4')throw Error('Bitcoin regtest earning is unavailable');
       const p=await body(request);if(Object.keys(p).sort().join(',')!=='account,epoch')throw Error('Invalid regtest bid request');SDK.decimal(p.account);SDK.decimal(p.epoch);
       const checked=await verifiedState({ids:[p.account],include_bitcoin:true,include_policy:true});
       if(checked.state.treasury.paused)throw Error('Treasury receiving is paused');if(checked.state.treasury.pending)throw Error('Treasury rotation is pending; wait for activation or cancellation before funding');
@@ -468,7 +472,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       regtestBusy=true;regtestLast.set(p.account,now);try{json(response,200,await onRegtestBid({account:p.account,epoch:p.epoch}));}finally{regtestBusy=false;}return true;
     }
     if (request.method === 'POST' && url.pathname === '/api/submit') {
-      requireOrigin(request, walletOrigin); const payload = await body(request);
+      requireOrigin(request, pageOrigin); const payload = await body(request);
       if (Object.keys(payload).join(',') !== 'tx' || typeof payload.tx !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload.tx)) throw new Error('Invalid signed transaction');
       const raw = Buffer.from(payload.tx, 'base64'); if (raw.length > 512*1024+512 || raw.length < 64 || raw.toString('base64') !== payload.tx) throw new Error('Invalid transaction encoding');
       const result = await rpc('/broadcast_tx_sync', { tx: '0x' + raw.toString('hex') });
@@ -566,6 +570,9 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       callers.take(who.caller); if (who.network) networks.take(who.network); return 0;
     };
     const server = http.createServer(async (request, response) => {
+      // WebAuthn needs the localhost hostname. Keep the numeric wallet usable for its existing local records.
+      const localVaultWallet = !publicOrigins && role === 'wallet' && origin === 'http://127.0.0.1:8780' && request.headers.host === 'localhost:8780';
+      const pageOrigin = localVaultWallet ? 'http://localhost:8780' : origin;
       response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Content-Type-Options', 'nosniff'); response.setHeader('Referrer-Policy', 'no-referrer'); response.setHeader('X-Frame-Options', 'DENY'); response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
       // The wallet page may connect to its own origin and, when one is configured, to the registration service. It
       // alone has a web app manifest (web-v4/wallet/manifest.webmanifest, for a phone's Home Screen), from its own origin.
@@ -574,13 +581,16 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
       // The wallet's pages keep no tie to a page that opened them, which could otherwise send the wallet's tab to a
       // look-alike later; except /approve, the window a website opens to ask for a sign-in or a payment, which answers
       // its opener by postMessage (web-v4/merchant/app.js, TimeSDK.requestWallet; the wallet's setupApproval).
-      if (role === 'wallet' && String(request.url).split('?')[0] !== '/approve') response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      if (role === 'wallet' && String(request.url).split('?')[0] !== '/approve') {
+        const opensVault = origin === 'https://wallet.testnet.thetimenetwork.org' || localVaultWallet;
+        response.setHeader('Cross-Origin-Opener-Policy', opensVault ? 'same-origin-allow-popups' : 'same-origin');
+      }
       const who = askerOf(request);
       await asking.run(who ?? { caller: null, network: null }, async () => { try {
-        if (request.headers.host !== new URL(origin).host || request.socket.remoteAddress !== '127.0.0.1') { json(response, 403, { error: 'Loopback host rejected' }); return; }
+        if (request.headers.host !== new URL(pageOrigin).host || request.socket.remoteAddress !== '127.0.0.1') { json(response, 403, { error: 'Loopback host rejected' }); return; }
         if (!['GET', 'POST'].includes(request.method)) { json(response, 405, { error: 'Method not allowed' }); return; }
-        if (request.headers.origin && request.headers.origin !== origin) { json(response, 403, { error: 'Cross-origin request rejected' }); return; }
-        const url = new URL(request.url, origin);
+        if (request.headers.origin && request.headers.origin !== pageOrigin) { json(response, 403, { error: 'Cross-origin request rejected' }); return; }
+        const url = new URL(request.url, pageOrigin);
         // Two limits a second for everyone together: one for what asks the node or a store (every /api/ route and
         // every POST), one for the page's own files, which are only read from the disk. Opening the wallet asks for
         // about forty files; while files counted against the first, two openings in the same second left a page with
@@ -592,7 +602,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
         if (rates.get('second') !== second) { rates.clear(); rates.set('second', second); }
         const count = (rates.get(kind) || 0) + 1; rates.set(kind, count);
         if (count > (who ? (work ? L.perCaller.work : L.perCaller.files) : (work ? L.work : L.files))) { const refused = limitRefusal(RATE_LIMITED, 1); json(response, 429, refused.body, refused.headers); return; }
-        if (role === 'wallet' && await chainRoute(request, response, url)) return;
+        if (role === 'wallet' && await chainRoute(request, response, url, pageOrigin)) return;
         if (role === 'merchant' && await merchantRoute(request, response, url)) return;
         if (url.pathname.startsWith('/api/')) { json(response, 404, { error: 'Unknown API route' }); return; }
         if (request.method !== 'GET') { json(response, 405, { error: 'Method not allowed' }); return; }
@@ -611,6 +621,7 @@ export async function createV4Servers({ root, manifest, rpc, walletPort = 8907, 
   const close=async()=>{closed=true;clearTimeout(upgradeTimer);for(const waiter of [...watchers])waiter.done();await Promise.all(servers.map(server=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})));orderRepository?.close();orderRepository=undefined;blog?.close();blog=undefined;};
   try {
     walletOrigin = await start('wallet', walletPort); merchantOrigin = await start('merchant', merchantPort);
+    if (!publicOrigins && walletOrigin === 'http://127.0.0.1:8780') servers.push(await startLocalVault(root));
     network = { ...manifest, ...(typeof onSponsorRegistration==='function'?{sponsorAccount:String(manifest.sponsorAccount??'0')}:{ }),...(registrationService?{registrationService}:{}),walletOrigin, merchantOrigin, protocolVersion, mode: 'local-devnet', publicLaunchAllowed: false, transport:publicOrigins?'explicit-https-proxy':'literal-loopback',trustModel:'Dynamic voting-power light client with independently installed genesis/checkpoint. Private development network, not independent production operators.' };
     login = createLoginService({ origin: merchantOrigin, networkId: manifest.networkId, verifiedState });
     let initialOrders;

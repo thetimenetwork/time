@@ -4,7 +4,7 @@
 // (nothing about the wallet's checks) and what it shows (the pages, their layout, their wiring, their CSP).
 //
 //   node web-v4/wallet/tests/preview-server.mjs &
-//   node web-v4/wallet/tests/preview-drive.mjs [--out DIR] [--chrome PATH] [--widths 390,1280] [--theme light|dark] [--only screens,flows,alerts,busy]
+//   node web-v4/wallet/tests/preview-drive.mjs [--out DIR] [--chrome PATH] [--widths 390,1280] [--theme light|dark] [--only screens,flows,alerts,busy,market]
 //
 // DIR receives NNNN-name.png per screen and width, and log.txt: each step with ok or FAIL, and what the pages complained of.
 import { launchChrome, createBrowser } from '../../../campaign/lib/browser-check.mjs';
@@ -648,6 +648,120 @@ if (only.has('busy')) for (const width of widths) {
       return { says };
     } finally { await busyFor(page, 'status='); }
   });
+}
+// The market of seconds against bitcoin (market-ui.mjs), on the mock network with the setting (/__market?on=1): the
+// menu, the addresses, a purchase from the offer to the pay screen and a payment of a part, a sell order read back, the
+// purchase someone prepared for carol, and the traders' view. Each screen is looked at for sideways scrolling.
+if (only.has('market')) {
+  const codec = await import('../../shared/bitcoin-address.mjs');
+  const address = (byte) => codec.scriptToAddress('0014' + byte.repeat(20), 'testnet3');
+  const market = (page, query) => browser.ask(page, `fetch('${query}').then(r => r.json())`);
+  const view = (page) => browser.ask(page, `document.querySelector('#market-view').innerText.replace(/\\s+/g, ' ').trim()`);
+  const wide = (page) => browser.ask(page, `document.documentElement.scrollWidth > window.innerWidth + 1`);
+  const shown = (page, words, what = words) => until(page, `document.querySelector('#market-view').innerText.replace(/\\s+/g, ' ').toLowerCase().includes(${JSON.stringify(words.toLowerCase())})`, what, 60000);
+  const toMarket = async (page) => { await browser.click(page, '.nav [data-panel="more"]'); await until(page, `!document.querySelector('#tab-market').hidden`, 'the Market row under More'); await browser.click(page, '#tab-market'); await shown(page, 'Buy and sell seconds for bitcoin'); };
+  const confirm = async (page, title) => {
+    await until(page, `document.querySelector('#review-dialog').open === true`, 'the review');
+    const said = await browser.ask(page, `({ title: document.querySelector('#review-title').textContent, body: document.querySelector('#review-body').innerText, ack: document.querySelector('#review-ack-text').textContent })`);
+    expect(said.title === title, `the review is titled "${said.title}", expected "${title}"`);
+    return said;
+  };
+  const sign = async (page) => { await browser.ask(page, `(() => { const box = document.querySelector('#review-ack'); if (!document.querySelector('#review-ack-wrap').hidden && !box.checked) box.click(); return true; })()`); await delay(800); await browser.click(page, '#review-confirm'); };
+  for (const width of widths) {
+    // Addresses of this width's own: an address serves once, and the mock chain remembers the widths before.
+    const mark = String(widths.indexOf(width) % 10), mine = [await address('7' + mark), await address('8' + mark), await address('9' + mark)];
+    await step(`market ${width}: nowhere without the setting; menu, addresses, a purchase and its pay screen (alice, one key)`, async () => {
+      const page = await opened('single', width);
+      await market(page, '/__market?on=0'); await unlock(page, 'alice');
+      await browser.click(page, '.nav [data-panel="more"]');
+      expect(await browser.ask(page, `document.querySelector('#tab-market').hidden && document.querySelector('#home-market-row').hidden`), 'the market shows on a network without it');
+      await market(page, '/__market?on=1'); await browser.click(page, '.nav [data-panel="home"]'); await browser.click(page, '#refresh');
+      await until(page, `!document.querySelector('#home-market-row').hidden`, 'the Market line on Home');
+      await shot(page, 'm01-home', width);
+      await toMarket(page); await shot(page, 'm02-menu', width, { full: true });
+      const note = await browser.text(page, '#market-test-note'); expect(/test bitcoin \(Bitcoin testnet\)/.test(note), note);
+      // A. my Bitcoin addresses
+      await browser.click(page, '#market-open-addresses'); await shown(page, 'Paste one address, or several');
+      await browser.fill(page, 'market-address-input', mine.join('\n') + '\nbc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4\nnot an address');
+      await browser.click(page, '#market-address-add'); await shown(page, '3 addresses added. Nothing was published.');
+      const listed = await browser.ask(page, `[...document.querySelectorAll('#market-address-list .market-address')].map(n => n.textContent.replace(/ /g, ''))`);
+      expect(JSON.stringify(listed) === JSON.stringify(mine), 'the list shows ' + JSON.stringify(listed));
+      expect(!(await wide(page)), 'the addresses make the page scroll sideways'); await shot(page, 'm03-addresses', width, { full: true });
+      // B. buy
+      await browser.click(page, '#market-back'); await browser.click(page, '#market-open-buy'); await shown(page, 'Find the best offer');
+      await browser.fill(page, 'market-buy-amount', '60'); await browser.click(page, '#market-buy-find'); await shown(page, 'Review this purchase');
+      const offer = await view(page); expect(/60 seconds for 0\.00015000 BTC \(15,000 satoshis\)/.test(offer) && /Price 250 satoshis for one second/.test(offer) && /Deposit 3 seconds, locked now/.test(offer), offer);
+      expect(!(await wide(page)), 'the offer makes the page scroll sideways'); await shot(page, 'm04-offer', width, { full: true });
+      await browser.click(page, '#market-buy-review'); const review = await confirm(page, 'Buy seconds with bitcoin'); await shot(page, 'm05-review-buy', width);
+      expect(/You will pay\s+0\.00015000 BTC/.test(review.body) && /Total\s+3\.001 seconds leave your balance now/.test(review.body) && /I lose the deposit/.test(review.ack), review.body);
+      await sign(page); await shown(page, 'Pay exactly', 'the pay screen');
+      const pay = await browser.ask(page, `({ address: document.querySelector('#market-pay-address').textContent.replace(/ /g, ''), amount: document.querySelector('#market-pay-amount').firstChild.textContent, link: document.querySelector('#market-pay-link').href, state: document.querySelector('#market-pay-state').innerText.replace(/\\s+/g, ' ') })`);
+      // The address on the screen is the one the mock chain holds for this fill, turned into an address here.
+      const held = await market(page, '/v1/market/fills/' + (/Purchase number Fill ([0-9]+)/.exec(await view(page)) ?? [])[1]);
+      expect(pay.address === await codec.scriptToAddress(held.fill.script, 'testnet3') && pay.amount === '0.00015000 BTC' && pay.link === 'bitcoin:' + pay.address + '?amount=0.00015000' && /Waiting for payment/.test(pay.state), JSON.stringify(pay));
+      expect(!(await wide(page)), 'the pay screen scrolls sideways'); await shot(page, 'm06-pay', width, { full: true });
+      // The prover's part: a payment of a part is proven. The screen reads the fill again and shows what is still to pay.
+      const fill = (/Purchase number Fill ([0-9]+)/.exec(await view(page)) ?? [])[1]; expect(fill, 'the pay screen names its fill');
+      await market(page, '/__market-pay?fill=' + fill + '&sats=5000'); await browser.click(page, '#market-pay-refresh'); await shown(page, 'Part counted');
+      expect(await browser.ask(page, `document.querySelector('#market-pay-amount').firstChild.textContent`) === '0.00010000 BTC', 'what is still to pay was not read again');
+      await shot(page, 'm07-pay-part', width, { full: true });
+      await market(page, '/__market-pay?fill=' + fill + '&sats=10000'); await browser.click(page, '#market-pay-refresh'); await shown(page, 'This purchase has ended');
+      await shot(page, 'm08-paid', width, { full: true });
+      // B. sell, and the order read back
+      await browser.click(page, '#market-back'); await browser.click(page, '#market-open-sell'); await shown(page, 'Seconds to sell');
+      await browser.fill(page, 'market-sell-amount', '5'); await browser.fill(page, 'market-sell-price', '255'); await browser.click(page, '#market-sell-address-1');
+      await browser.ask(page, `(document.querySelector('.market-terms').open = true)`); expect(!(await wide(page)), 'the sell form scrolls sideways'); await shot(page, 'm09-sell', width, { full: true });
+      await browser.click(page, '#market-sell-review'); const selling = await confirm(page, 'Sell seconds for bitcoin'); await shot(page, 'm10-review-sell', width);
+      expect(selling.body.replace(/ /g, '').includes(mine[0]) && selling.body.replace(/ /g, '').includes(mine[1]), 'the review shows both addresses whole: ' + selling.body);
+      await sign(page); await shown(page, 'is on the chain', 'the order read back');
+      const back = await browser.ask(page, `[...document.querySelectorAll('#market-made .market-address')].map(n => n.textContent.replace(/ /g, ''))`);
+      expect(JSON.stringify(back) === JSON.stringify(mine.slice(0, 2)), 'read back: ' + JSON.stringify(back));
+      expect(!(await wide(page)), 'my orders scroll sideways'); await shot(page, 'm11-mine', width, { full: true });
+      return { offer: offer.slice(0, 120), pay, back };
+    });
+    await step(`market ${width}: a purchase someone prepared for a protected account, with the payment password field (carol)`, async () => {
+      const page = await opened('protected', width);
+      await market(page, '/__market?on=1'); await unlock(page, 'carol'); await toMarket(page);
+      await shown(page, 'prepared for you'); await browser.click(page, '#market-open-mine'); await shown(page, 'Prepared for you by account 2');
+      await shot(page, 'm12-mine-protected', width, { full: true });
+      await browser.ask(page, `([...document.querySelectorAll('#market-purchases .row')].find(row => /Prepared for you/.test(row.innerText)).querySelector('button').click(), true)`); await shown(page, 'Someone else prepared this purchase for you');
+      const text = await view(page); expect(/far above another offer on the list: 420 satoshis for one second, against /.test(text), text);
+      expect(await browser.ask(page, `!document.querySelector('#market-payment-wrap').hidden && document.querySelector('#market-pay').contains(document.querySelector('#market-payment'))`), 'the payment password field is on the pay screen of a protected account');
+      expect(!(await wide(page)), 'the pay screen scrolls sideways'); await shot(page, 'm13-pay-helper', width, { full: true });
+      // The payment key signs for a protected account (security-ui.mjs, marketAction). Giving up this purchase would count its 40 seconds
+      // against a daily limit of 30: refused in words, before any review. A purchase within the limit is reviewed and signed.
+      await browser.fill(page, 'market-payment', PAYMENT); await browser.click(page, '#market-pay-release');
+      await notice(page, 'Daily limit reached. Giving up counts 40.001 seconds against your daily limit', 'the daily limit refuses the release');
+      await browser.click(page, '#market-back'); await browser.click(page, '#market-open-buy'); await shown(page, 'Find the best offer');
+      await browser.fill(page, 'market-buy-amount', '20'); await browser.click(page, '#market-buy-find'); await shown(page, 'Review this purchase');
+      await browser.fill(page, 'market-payment', PAYMENT); await browser.click(page, '#market-buy-review');
+      const signed = await confirm(page, 'Buy seconds with bitcoin');
+      expect(/Signed by\s+Your payment key, with your payment password/.test(signed.body) && /Daily limit\s+1\.001 seconds count against your daily limit/.test(signed.body), signed.body.slice(-400));
+      await shot(page, 'm13b-review-protected', width); await sign(page); await notice(page, 'The deposit is locked.', 'the take signed by the payment key');
+      expect(await browser.ask(page, `document.querySelector('#market-payment').value === ''`), 'the payment password stays in its field');
+      return { text: text.slice(0, 160) };
+    });
+    await step(`market ${width}: the traders' view: the book, the chart, the forms and the service's flags (alice)`, async () => {
+      const page = await opened('single', width);
+      await market(page, '/__market?on=1'); await unlock(page, 'alice'); await toMarket(page);
+      await browser.click(page, '#market-open-trade'); await shown(page, 'Order book');
+      await until(page, `document.querySelectorAll('#market-chart-section svg rect').length >= 5`, 'the candles');
+      const seen = await browser.ask(page, `({ asks: document.querySelectorAll('#market-asks tbody tr').length, bids: document.querySelectorAll('#market-bids tbody tr').length, candles: document.querySelectorAll('#market-chart-section svg rect').length, checked: /rows the chain keeps/.test(document.querySelector('#market-chart-section').innerText) })`);
+      expect(seen.asks >= 3 && seen.bids >= 2 && seen.candles >= 5 && seen.checked, JSON.stringify(seen));
+      expect(!(await wide(page)), 'the traders view scrolls sideways'); await shot(page, 'm14-trade', width, { full: true });
+      await market(page, '/__market-index?consistent=0&tape=0&lag=40'); await browser.click(page, '#market-back'); await browser.click(page, '#market-open-trade'); await shown(page, 'does not agree with the chain');
+      await shot(page, 'm15-trade-flags', width, { full: true }); await market(page, '/__market-index');
+      // A stop order: kept in this browser, then fired by the book as the wallet reads it, and nothing is signed.
+      await browser.click(page, '#market-back'); await browser.click(page, '#market-open-trade'); await shown(page, 'A new stop order');
+      await browser.ask(page, `(document.querySelector('#market-stop-side').value = 'buy', document.querySelector('#market-stop-when').value = 'at_or_above', true)`);
+      await browser.fill(page, 'market-stop-amount', '20'); await browser.fill(page, 'market-stop-trigger', '240'); await browser.fill(page, 'market-stop-size', '10'); await browser.fill(page, 'market-stop-limit', '251');
+      await browser.click(page, '#market-stop-keep'); await notice(page, 'The stop order is kept in this browser. Nothing was signed', 'the stop order is kept');
+      await until(page, `/Fired/.test(document.querySelector('#market-stop-list').innerText)`, 'the stop order fires on the book', 90000);
+      expect(!(await wide(page)), 'the stop orders scroll sideways'); await shot(page, 'm16-stops', width, { full: true });
+      await browser.ask(page, `(document.querySelector('#market-stop-list button.secondary').click(), true)`);
+      return seen;
+    });
+  }
 }
 for (const page of pages) for (const p of page.problems) if (!/favicon\.ico/.test(p.text)) log.push(`page: ${p.kind}: ${p.text}`);
 await writeFile(path.join(out, 'log.txt'), log.join('\n') + '\n');

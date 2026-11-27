@@ -8,6 +8,7 @@
 // loads it from `/sdk/` and the tests from `client-v4/`.
 import { KDF, hex, unhex, checkPassword, validateVaultRecord, vaultIntent, newDevice, sealVault, sealUnder, makePassword, forgetSecret, SYLLABLES, RULE, sealOf } from './vault.mjs';
 import { effectiveLimit, pauseLimit } from './protection.mjs';
+import { formatSeconds } from './guards.mjs';
 import { readyToMake } from './entropy.mjs';
 
 const encoder = new TextEncoder();
@@ -284,6 +285,14 @@ export function checkPasswords({ login, payment, name = '', current = null }) {
 /// How much a spend key alone can move: the allowance refills evenly over 24 hours, so the full
 /// limit can go at once and, as it refills, almost as much again within the same 24 hours.
 export const limitExposure = limitMicros => ({ atOnce: BigInt(limitMicros), within24h: 2n * BigInt(limitMicros) });
+export function checkLimitFee(account, feeMicros) {
+  const fee = BigInt(feeMicros);
+  if (BigInt(account.balance) < fee) {
+    const error = new Error(`Changing your daily limit requires a network fee of ${formatSeconds(fee)} seconds. Your balance is ${formatSeconds(account.balance)} seconds.`);
+    error.code = 'LIMIT_FEE_SHORTFALL';
+    throw error;
+  }
+}
 export const DEFAULTS = Object.freeze({ delayHours: '48', freezeHours: '48', threshold: '2' });
 /// The daily limit that "Protect my account" suggests, in seconds. The one place it is written: the form is
 /// prefilled from it and its words are made from it (security-ui.mjs).
@@ -337,14 +346,14 @@ export async function sealedKey({ password, networkId, name, intent, argon2id, c
 /// `under` ({ secret, binding }: the registration key of a sign-up, with the plaintext of vault version 1): sealed under
 /// the new login key while that key's secret is in memory (vault version 4, sealUnder); that key's entry carries it as
 /// `under`.
-export async function sealedKeys({ wanted, networkId, name, argon2id, cryptoImpl = globalThis.crypto, lock = null, under = null }) {
+export async function sealedKeys({ wanted, networkId, name, argon2id, cryptoImpl = globalThis.crypto, lock = null, under = null, askForExtraRandomness = true }) {
   assert(Array.isArray(wanted) && wanted.length >= 1 && wanted.length <= 2, 'One or two new keys at a time.');
   if (!lock && wanted.some(w => w.password !== undefined)) throw new Error(RULE);
   if (lock && wanted.some(w => typeof w.password !== 'string')) throw new Error('A key locked to this device is sealed with a password too.');
   if (under) assert(wanted.some(w => w.intent === 'signin'), 'A key is kept under the new login key only.');
   // Where the wallet makes the passwords, the person may add their own randomness first (entropy.mjs), before any key
   // is made: a step they close ends here with nothing made.
-  if (!lock) await readyToMake(wanted.length);
+  if (!lock && askForExtraRandomness) await readyToMake(wanted.length);
   const keys = [];
   let given = null;
   try {
@@ -658,9 +667,17 @@ export function assertSpendKeyKind(kind) {
 /// account. A sign-in key or a recovery key cannot signal"). It moves nothing; its fee counts
 /// against the daily limit, and a frozen account cannot send it.
 export const SIGNAL_KIND = 'upgrade_signal';
+/// The market of seconds against bitcoin (market-ui.mjs; spec/market.md, section 6): an order, its cancellation, a take, a
+/// sale into a buy order, the end of a fill that was not paid, a release, a settle and new receiving addresses. The
+/// engine takes each from a key that can spend, so on a secured account from the payment key and from no other, and
+/// counts what it locks, and for three of them what it hands over, against the daily limit (spec/market.md, section 7).
+/// Each is reviewed by market-ui.mjs and signed with the payment password, for that one action (security-ui.mjs,
+/// marketAction). A proof of payment (kind 54) is not on the list: this wallet builds none.
+export const MARKET_KINDS = Object.freeze(['market_order', 'market_cancel', 'market_take', 'market_sell', 'market_expire', 'market_release', 'market_settle', 'market_scripts']);
 /// What app.js asks before it signs anything with a payment key: a kind of the list above, or a signal.
 export function assertSpendKeySigns(kind) {
   if (kind === SIGNAL_KIND) return true;
+  if (typeof kind === 'string' && MARKET_KINDS.includes(kind)) return true;
   return assertSpendKeyKind(kind);
 }
 /// Whether the account is secured, by a verified state that carries the security rows: it has a row there. The
@@ -830,6 +847,11 @@ export function createSecurityFlows({ security: sec }) {
     const next = BigInt(decimal(String(dailyLimitMicros))), current = waitsNow === undefined ? BigInt(security.policy.daily_limit_micros) : effectiveLimit(security, waitsNow);
     assert(next !== current, 'The daily limit already has this value.');
     assert(next > BigInt(feeMicros), 'Choose a daily limit above the network fee, or your payment key cannot pay at all.');
+    checkLimitFee(account, feeMicros);
+    if (waitsNow !== undefined) {
+      assert(!sec.frozen(security, waitsNow), 'The account is frozen. End the freeze first.');
+      assert(sec.allowance(security, waitsNow) >= BigInt(feeMicros), 'Your daily allowance needs to refill enough to cover the network fee. Try again once it has refilled.');
+    }
     return { ...await sign({ networkId, kind: KIND.limit, account, signer: spend, payload: sec.payloads.limit(next.toString()) }), raise: next > current };
   }
   /// "Pause payments": kind 77 lowering the limit to exactly the fee of one action, at once (protection.mjs says why
@@ -853,7 +875,7 @@ export function createSecurityFlows({ security: sec }) {
     assert(!sec.frozen(security, waitsNow), 'The account is frozen. End the freeze first.');
     assert(next > BigInt(feeMicros), 'Choose a daily limit above the network fee, or your payment key cannot pay at all.');
     assert(next !== effectiveLimit(security, waitsNow), 'The daily limit already has this value.');
-    assert(BigInt(account.balance) >= BigInt(feeMicros), 'This costs the network fee, and the account holds less.');
+    checkLimitFee(account, feeMicros);
     const keys = account.devices.map(d => sec.keepKey(d.public_key, sec.roleOf(d)));
     return buildRoot({ networkId, account, security, operation: sec.operations.replace(keys, { ...security.policy, daily_limit_micros: next.toString() }), approvers: [spend, recovery], submitter: spend, expiresElapsedMicros: BigInt(now) + APPROVAL_LIFETIME_MICROS });
   }

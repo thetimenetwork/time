@@ -185,7 +185,10 @@ test('an action in words: every kind the API returns has its sentence, and every
     17: { commission_bps: 1000, consensus_key: KEY, proof: KEY }, 18: { amount: '5000000' }, 19: { amount: '5000000', min_amount: '1' }, 21: { entry: '2' }, 44: { public_key: KEY },
     45: { name: 'alice', salt: KEY, security: { keys: [{ proof: KEY + KEY, public_key: KEY, role: 'spend' }], policy: { daily_limit_micros: '60000000', delay_seconds: '172800', freeze_seconds: '172800', threshold: '2' } } }, 70: { keys: [{ public_key: KEY, role: 'spend' }], policy: { threshold: '2', daily_limit_micros: '60000000', delay_seconds: '86400', freeze_seconds: '600' } },
     71: { add: [{ public_key: KEY }], remove: [KEY] }, 72: { freezes: '0', version: '1', expires_elapsed_micros: '9' }, 73: { op: { type: 'replace', keys: [{ public_key: KEY, role: 'recover' }], policy: { daily_limit_micros: '5' } }, approvals: [{ public_key: KEY }] }, 74: { version: '2' },
-    75: { type: 'execute', id: '2' }, 76: { type: 'payment', id: '2' }, 77: { daily_limit_micros: '120000000' }, 80: { activate_elapsed_micros: '1814400000000', spec: KEY, version: '5' } };
+    75: { type: 'execute', id: '2' }, 76: { type: 'payment', id: '2' }, 77: { daily_limit_micros: '120000000' }, 80: { activate_elapsed_micros: '1814400000000', spec: KEY, version: '5' },
+    // The market's kinds (spec/market.md, section 6), with the fields the page reads.
+    50: { amount_micros: '100000000', price: '250000000', min_sats: '1000', side: 'sell' }, 51: { order: '1' }, 52: { amount_micros: '40000000', order: '1', sats: '10000', to: '8' }, 53: { amount_micros: '20000000', order: '2', sats: '5000' },
+    54: { fill: '1' }, 55: { fill: '1' }, 56: { fill: '1' }, 57: { fill: '1' }, 58: { order: '1' } };
   const sentences = new Set();
   for (const [kindText, name] of Object.entries(KIND_NAMES)) {
     const kind = Number(kindText);
@@ -208,7 +211,7 @@ test('an action in words: every kind the API returns has its sentence, and every
   const more = [item(3, { recipient: '5', amount: '5' }), item(10, { recipient: '5', amount: '5', reference: REFERENCE }), item(12, { payload: { target: '9', accept: false } }), item(2, { payload: {} }),
     item(73, { recipient: '5', amount: '5', payload: { op: { type: 'pay', to: '5', amount: '5' } } }), item(73, { payload: { op: { type: 'cancel' } } }), item(73, { payload: { op: { type: 'unfreeze' } } }), item(73),
     item(75, { payload: { type: 'request', to: '5', amount: '5' }, recipient: '5', amount: '5', request_status: 'waiting' }), item(75, { recipient: '5', amount: '5', transfers: true, request_hash: HASH, payload: { type: 'execute', id: '1' } }), item(75, { unattributed: true }), item(75),
-    item(76, { payload: { type: 'limit', id: '1' } }), item(76), item(77), item(80, { payload: {} }), item(23, { opaque: true }), item(63, { opaque: true }), item(200), { kind: null, opaque: true, sender: null },
+    item(76, { payload: { type: 'limit', id: '1' } }), item(76), item(77), item(80, { payload: {} }), item(50, { payload: { amount_micros: '50000000', price: '250000000', min_sats: '1000', side: 'buy' } }), item(23, { opaque: true }), item(63, { opaque: true }), item(200), { kind: null, opaque: true, sender: null },
     { kind: 75, from: '7', nonce: '1', payload: { type: 'execute', id: '1' } }];
   for (const action of more) sentences.add(describeAction(action).sentence);
   for (const key of Object.keys(STRINGS.en).filter((entry) => entry.startsWith('act.'))) assert(sentences.has(key), `no action says ${key}`);

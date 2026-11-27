@@ -133,7 +133,7 @@ node tools/ci-checks.mjs rust-v5             # one
 
 ## 8. Versions
 
-- The commit to audit is named in the request that comes with this document. Its engine reports `time-node-v5 0.9.0 protocol=4`.
+- The commit to audit is named in the request that comes with this document. Its engine reports `time-node-v5 0.10.0 protocol=4`.
 - Protocol version 4 is defined by `spec/protocol-4.md`; the engine carries the SHA-256 of that file as `rules::SPEC_4` and a test compares the two. Four optional settings of a network's genesis (`distinct_names`, `waits_survive_stops`, `protected_registration`, `service_records`) are specified in `spec/settings.md`, which that hash does not cover.
 - CometBFT 0.38.26, built from upstream source with the module versions in `consensus/go.mod` (`consensus/BUILD.md`).
 - Third-party code and licences: `THIRD-PARTY-LICENSES.md`.

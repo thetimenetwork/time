@@ -240,7 +240,9 @@ test('explorer_join: checked strictly at start, only with serve_explorer, and ne
     [{ files: { ...JOIN.files, node_sha256: SECRET } }, /^explorer_join\.files holds node_sha256, cometbft_sha256 and genesis_sha256/], [{ files: { ...JOIN.files, extra: 'a1'.repeat(32) } }, /files/], [{ files: { node_sha256: 'a1'.repeat(32) } }, /files/],
     [{ peers: [`${'0f'.repeat(20)}@${SECRET}.example:26656`] }, /^explorer_join\.peers lists 1 to 8 entry nodes/], [{ peers: [] }, /peers/], [{ peers: Array(9).fill(0).map((_, i) => `${'0f'.repeat(20)}@10.0.0.${i}:26656`) }, /peers/], [{ peers: [JOIN.peers[0], JOIN.peers[0]] }, /peers/],
     [{ pace: `${SECRET}` }, /^explorer_join\.pace is "100ms" to "999ms", or "1s" to "5s"$/], [{ pace: '6s' }, /pace/],
-    [{ [SECRET]: 1 }, /^explorer_join takes script_url, wallet_url, chain_id, min_self_bond_micros, files, peers and pace, nothing else$/],
+    [{ [SECRET]: 1 }, /^explorer_join takes script_url, wallet_url, chain_id, min_self_bond_micros, files, peers, pace, release_key, script_sha256 and source_url, nothing else$/],
+    [{ release_key: SECRET }, /^explorer_join\.release_key is 64 of 0-9 and a-f$/], [{ script_sha256: 'A1'.repeat(32) }, /^explorer_join\.script_sha256 is 64 of 0-9 and a-f$/],
+    [{ source_url: `https://github.com/${SECRET}` }, /^explorer_join\.source_url is the https:\/\/github\.com\/ address/], [{ source_url: 'https://evil.example/thetimenetwork/time/blob/main/testnet/join.sh' }, /source_url/],
   ];
   for (const [change, words] of refusals) assert.throws(() => validateConfig({ ...base, explorer_join: { ...JOIN, ...change } }), (error) => words.test(error.message) && !error.message.includes(SECRET), JSON.stringify(change));
   const { peers: _, ...withoutPeers } = JOIN;

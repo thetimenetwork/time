@@ -259,12 +259,23 @@ test('a limit set at once is one root operation approved by the payment key and 
   await refuses({ security: row({ account: accountId }), dailyLimitMicros: '600000000' }, /already has this value/);
   // Not for a frozen account: being a replacement, it would end the freeze as well.
   await refuses({ security: { ...paused, frozen_until_elapsed_micros: String(now + 1n) } }, /The account is frozen\. End the freeze first\./);
-  await refuses({ account: account({ balance: '999' }) }, /costs the network fee, and the account holds less/);
+  await refuses({ account: account({ balance: '999' }) }, /network fee of 0\.001 seconds\. Your balance is 0\.000999 seconds/);
   // A raise that has waited is in force: the limit it brought is the one a new limit is compared with.
   const matured = row({ account: accountId, pending_limit: { id: '2', daily_limit_micros: '900000000', ready_elapsed_micros: String(now - 1n) } });
   await refuses({ security: matured, dailyLimitMicros: '900000000' }, /already has this value/);
   assert.equal((await flows.buildLimit({ networkId, account: account(), security: matured, spend: keys.spend, dailyLimitMicros: '700000000', feeMicros: FEE, now })).raise, false, 'below the limit in force: a lowering');
   assert.equal((await flows.buildLimit({ networkId, account: account(), security: matured, spend: keys.spend, dailyLimitMicros: '700000000', feeMicros: FEE })).raise, true, 'without the time, compared with the stored row as before');
+});
+
+test('a limit change checks its fee, freeze and remaining allowance before signing', async () => {
+  const build = (balance, changes = {}) => flows.buildLimit({
+    networkId, account: account({ balance }), security: row({ account: accountId, ...changes }),
+    spend: keys.spend, dailyLimitMicros: '700000000', feeMicros: FEE, now,
+  });
+  await assert.rejects(build('0'), /network fee of 0\.001 seconds\. Your balance is 0 seconds/);
+  await assert.rejects(build(FEE, { frozen_until_elapsed_micros: String(now + 1n) }), /account is frozen/);
+  await assert.rejects(build(FEE, { allowance_micros: '999' }), /allowance needs to refill/);
+  assert.equal((await build(FEE, { allowance_micros: String(FEE) })).kind, 77);
 });
 
 test('"Protect my account" suggests a daily limit of 600 seconds, written for a person, from one constant', async () => {

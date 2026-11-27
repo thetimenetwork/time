@@ -30,6 +30,13 @@
 // that state (nothing, a payment that waits, a replacement of her keys asked with her recovery words) and touches her
 // account, as another browser's action would. GET /__alerts?mode=offered makes /alerts/v1/ an alert service that gives
 // its key and takes what it is sent (mode=off: no such service, as on a lab gateway).
+// The market of seconds against bitcoin (market-ui.mjs): GET /__market?on=1 gives the mock network the `market` setting,
+// with a book, recorded trades and a purchase someone prepared for carol (tests/mock-market-chain.mjs: a reading of
+// spec/market.md, not the engine); the trading API's lists are then served under /v1/market and /v1/accounts/N/market, made
+// of the same rows. GET /__market-pay?fill=N&sats=S does what an accepted proof of a payment does (the prover's part);
+// /__market-index?consistent=0&tape=0&lag=40&lie=ORDER:PRICE makes the lists unclean, late or untrue;
+// /__market-bitcoin?best=H&halted=1&fresh=0 moves the Bitcoin header chain.
+//
 // A busy network (web-v4/wallet/busy.mjs): GET /__busy?status=429|503&seconds=S (or &count=N)&route=R&retry=T refuses
 // requests for load for S seconds (or the next N), as the test network's proxy and gateway do: a 429 in plain text, a 503
 // with the gateway's JSON, each with Retry-After: T (default 2; retry=none sends none). R is one path of the wallet's
@@ -37,6 +44,7 @@
 // given. GET /__busy?status= ends it; its answer says how many requests were refused.
 // preview-drive.mjs drives Chrome through the screens with it.
 import http from 'node:http';
+import { startLocalVault } from '../../../client-v4/vault-host.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -44,7 +52,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const argument = (name, fallback) => { const at = process.argv.indexOf(name); return at < 0 ? fallback : process.argv[at + 1]; };
 const WALLET_PORT = Number(argument('--port', '8977')), FAUCET_PORT = WALLET_PORT + 1;
-const walletOrigin = `http://127.0.0.1:${WALLET_PORT}`, faucetOrigin = `http://127.0.0.1:${FAUCET_PORT}`;
+if (WALLET_PORT === 8780) await startLocalVault(root);
+const previewSites = hostname => ({
+  walletOrigin: 'http://' + hostname + ':' + WALLET_PORT,
+  faucetOrigin: 'http://' + hostname + ':' + FAUCET_PORT,
+});
+const { walletOrigin, faucetOrigin } = previewSites(WALLET_PORT === 8780 ? 'localhost' : '127.0.0.1');
+function requestSites(request, port) {
+  for (const hostname of ['localhost', '127.0.0.1']) {
+    if (request.headers.host === hostname + ':' + port) return previewSites(hostname);
+  }
+  return null;
+}
 await import(pathToFileURL(path.join(root, 'client-v4/time-sdk.js')).href);
 const SDK = globalThis.TimeSDK;
 const { newDevice, hex } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/vault.mjs')).href);
@@ -52,7 +71,8 @@ const { sealLegacy } = await import(pathToFileURL(path.join(root, 'web-v4/wallet
 const security = await import(pathToFileURL(path.join(root, 'client-v4/account-security.mjs')).href);
 const { newSheetSeed, encodeSheet, keyFromSeed, generatePassphrase, passphraseKey, recoveryWordsSecondKey } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/security-flows.mjs')).href);
 const { sealRecoveryKit } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/recovery-file.mjs')).href);
-const { createSecurityChain } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/tests/mock-security-chain.mjs')).href);
+const { createSecurityChain, level: allowanceLeft, settle: settleRow, frozen: rowFrozen } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/tests/mock-security-chain.mjs')).href);
+const { createMarketChain } = await import(pathToFileURL(path.join(root, 'web-v4/wallet/tests/mock-market-chain.mjs')).href);
 const umdSource = await readFile(path.join(root, 'web-v4/wallet/vendor/argon2-4.12.0.umd.min.js'), 'utf8'), umd = { exports: {} };
 new Function('module', 'exports', umdSource)(umd, umd.exports);
 const argon2id = umd.exports.argon2id;
@@ -121,12 +141,46 @@ function stateFor(q) {
   if (q.include_security) state.security = accounts.map(a => chain.security[a.id]).filter(Boolean);
   if (q.include_pos) state.pos = { profile: 'production', candidate_ids: Object.keys(chain.candidates), active: chain.active, scheduled: [], safety_hold: false, bootstrap_ended: true };
   if (q.include_upgrade) state.upgrade = null;
+  // A network with the market: its setting, the header chain it follows, and the rows a selection names.
+  if (chain.marketOn) { Object.assign(state.config, market.config()); state.stopped_micros = '0'; state.market_micros = market.held(); state.bitcoin = market.bitcoinRow(); state.market = market.select(q); }
   return state;
 }
 const secured = createSecurityChain({ sdk: SDK, security, networkId, accounts: chain.accounts, rows: chain.security, fee: FEE });
+// The market (tests/mock-market-chain.mjs). What an action counts is charged to a protected account's daily limit, and a
+// frozen account is refused, as the security rows say.
+const market = createMarketChain({ sdk: SDK, accounts: chain.accounts, genesis: GENESIS, profile: 'production', fee: FEE, bitcoin: { network: 'testnet3', best: 4200000, halted: false, fresh: true },
+  spend: (account, count, now) => { const row = chain.security[account.id]; if (!row) return; settleRow(row, now); const left = allowanceLeft(row, now); if (count > left) throw new Error('over the daily limit of this account'); row.allowance_micros = (left - count).toString(); row.allowance_elapsed_micros = now.toString(); },
+  frozen: (account, now) => Boolean(chain.security[account.id]) && rowFrozen(chain.security[account.id], now) });
+const WPKH = byte => `0014${byte.repeat(20)}`;
+/// A book, some recorded trades over a few hours of the chain, and a purchase that bob prepared for carol.
+function seedMarket() {
+  market.learn(4200000, chain.now);
+  for (const id of ['2', '3', '4', '6']) chain.accounts.find(a => a.id === id).balance = '9000000000';
+  const act = (from, kind, payload) => { const account = chain.accounts.find(a => a.id === from); market.apply({ kind, from, nonce: (BigInt(account.nonce) + 1n).toString(), publicKey: account.devices[0].public_key, payload }, chain.now, chain.height); };
+  const sell = (from, amount, price, scripts, extra = {}) => act(from, 50, SDK.marketSellOrder({ amountMicros: amount, price, scripts, confirmations: '3', payBlocks: '6', minSats: '1000', depositPpm: '50000', minDepositMicros: '0', ...extra }));
+  // Recorded trades: one small order an hour at a price that moves, taken and paid in full, over the last ten hours.
+  const prices = ['240000000', '246000000', '251000000', '248000000', '255000000', '262000000', '258000000', '250000000', '253000000', '250000000'];
+  prices.forEach((price, index) => {
+    const order = String(index + 1), back = BigInt(prices.length - index) * 3600000000n, script = WPKH((0x40 + index).toString(16));
+    sell('4', '20000000', price, [script]); act('6', 52, SDK.marketTake({ order, amountMicros: '20000000', price, to: '6' }));
+    market.pay(String(index + 1), SDK.marketSats('20000000', price), chain.now - back, chain.height);
+  });
+  sell('2', '900000000', '250000000', ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'ba', 'bb', 'bc'].map(WPKH));
+  sell('3', '300000000', '262500000', [WPKH('c1'), WPKH('c2')]);
+  sell('4', '2000000000', '300000000', [WPKH('d1')], { minSats: '50000' });
+  act('6', 50, SDK.marketBuyOrder({ amountMicros: '400000000', price: '240000000', forms: ['p2wpkh', 'p2tr'], confirmations: '6', payBlocks: '6', minSats: '1000', depositPpm: '50000' }));
+  act('2', 50, SDK.marketBuyOrder({ amountMicros: '100000000', price: '230000000', forms: ['p2wpkh'], confirmations: '3', payBlocks: '6', minSats: '1000', depositPpm: '30000' }));
+  // bob takes the dearest sell order for carol: a purchase prepared for her by someone else (spec/market.md, 10.8).
+  sell('3', '40000000', '420000000', [WPKH('e1')]);
+  act('2', 52, SDK.marketTake({ order: String(prices.length + 6), amountMicros: '40000000', price: '420000000', to: '7' }));
+}
+let marketSeeded = false;
 async function include(tx) {
   const action = SDK.decodeAction(tx), from = chain.accounts.find(a => a.id === action.from);
   if (!from) throw new Error('unknown account');
+  // An action of the market, on a network that has it.
+  if (chain.marketOn && market.takes(action)) market.apply(action, chain.now, chain.height);
+  else
   // A protected account: its payments count against its daily limit, and its Protection card's actions are applied.
   if (secured.takes(action)) await secured.apply(action, chain.now);
   else {
@@ -165,7 +219,7 @@ const alertKey = Buffer.from(await crypto.subtle.exportKey('raw', (await crypto.
 setInterval(() => { chain.height += 1; chain.now += 1000000n; }, 1000).unref();
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
-const CSP = `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' ${faucetOrigin}; img-src 'self' data:; font-src 'self'; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`;
+const previewPolicy = faucetOrigin => `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' ${faucetOrigin}; img-src 'self' data:; font-src 'self'; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`;
 const json = (response, status, body, headers = {}) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); response.end(JSON.stringify(body)); };
 async function file(response, location) {
   try { const content = await readFile(location); response.writeHead(200, { 'Content-Type': MIME[path.extname(location)] || 'application/octet-stream', 'Cache-Control': 'no-store' }); response.end(content); }
@@ -197,8 +251,12 @@ function refuseForLoad(response, server, route, headers = {}) {
 
 http.createServer(async (request, response) => {
   try {
+    const sites = requestSites(request, WALLET_PORT);
+    if (!sites) return json(response, 403, { error: 'Unknown preview host' });
+    const { walletOrigin, faucetOrigin } = sites;
     const url = new URL(request.url, walletOrigin), route = url.pathname;
-    response.setHeader('Content-Security-Policy', CSP);
+    response.setHeader('Content-Security-Policy', previewPolicy(faucetOrigin));
+    if (route !== '/approve') response.setHeader('Cross-Origin-Opener-Policy', walletOrigin === 'http://localhost:8780' ? 'same-origin-allow-popups' : 'same-origin');
     if (route === '/__busy') return json(response, 200, setBusy(url));
     if (refuseForLoad(response, 'wallet', route)) return;
     if (route === '/__rich') { chain.accounts.find(a => a.id === '7').balance = url.searchParams.get('on') === '1' ? '9000000000' : '48250000'; return json(response, 200, { rich: url.searchParams.get('on') === '1' }); }
@@ -212,6 +270,18 @@ http.createServer(async (request, response) => {
     if (route === '/sdk/proof-verifier.js') { response.writeHead(200, { 'Content-Type': MIME['.js'] }); return response.end(VERIFIER); }
     // The network menu every page carries, served from web-v4/shared/ as the gateway does (client-v4/server.mjs).
     if (route === '/web-v4/shared/network-menu.js' || route === '/web-v4/shared/network-menu.css') return file(response, path.join(root, route.slice(1)));
+    // The codec between Bitcoin addresses and receiving scripts, which the wallet loads for its market.
+    if (route === '/web-v4/shared/bitcoin-address.mjs') return file(response, path.join(root, route.slice(1)));
+    // The market: the switch, the prover's part, the state of the index and of the header chain, and the trading API's lists.
+    if (route === '/__market') { chain.marketOn = url.searchParams.get('on') === '1'; if (chain.marketOn && !marketSeeded) { seedMarket(); marketSeeded = true; } return json(response, 200, { market: chain.marketOn }); }
+    if (route === '/__market-pay') { market.pay(url.searchParams.get('fill'), url.searchParams.get('sats'), chain.now, chain.height); chain.height += 1; chain.now += 1000000n; return json(response, 200, { paid: true }); }
+    if (route === '/__market-index') { const p = url.searchParams, lie = /^([0-9]+):([0-9]+)$/.exec(p.get('lie') || ''); Object.assign(market.index, { consistent: p.get('consistent') !== '0', tapeReconciled: p.get('tape') !== '0', lag: Number(p.get('lag') || 0), lie: lie ? { order: lie[1], with: { price: lie[2] } } : null }); return json(response, 200, { index: market.index }); }
+    if (route === '/__market-bitcoin') { const p = url.searchParams; if (p.get('best')) market.learn(Number(p.get('best')), chain.now); market.bitcoin.halted = p.get('halted') === '1'; market.bitcoin.fresh = p.get('fresh') !== '0'; return json(response, 200, { bitcoin: market.bitcoin }); }
+    if (route.startsWith('/v1/market') || /^\/v1\/accounts\/[0-9]+\/market$/.test(route)) {
+      if (!chain.marketOn) return json(response, 404, { error: { code: 'no_market', message: 'This network has no market' } });
+      const answer = market.api(route, Object.fromEntries(url.searchParams), chain.now, chain.height);
+      return json(response, answer.status, answer.body);
+    }
     if (route === '/api/network') return json(response, 200, { protocolVersion: '4', networkId, chainId, mode: 'local-devnet', publicLaunchAllowed: false, registrationService: faucetOrigin, walletOrigin, merchantOrigin: faucetOrigin });
     if (route === '/api/light-block') return json(response, 200, block(url.searchParams.get('height') || chain.height));
     if (route === '/api/view-proof') return json(response, 200, { light_block: block(chain.height), state: stateFor(JSON.parse(url.searchParams.get('query'))) });
@@ -251,17 +321,20 @@ http.createServer(async (request, response) => {
 
 // The mock faucet (deploy/faucet/README.md, "Routes", as far as the wallet uses it) and a sample website that opens
 // the wallet's window, on a second origin.
-const SHOP = `<!doctype html><meta charset="utf-8"><title>Sample blog</title><script src="${walletOrigin}/sdk/time-sdk.js"></script><h1>A blog</h1><button id="login">Sign in with Time</button> <button id="pay">Pay 0.1 seconds</button> <button id="odd">A request in no form</button><p id="out"></p>
+const shop = walletOrigin => `<!doctype html><meta charset="utf-8"><title>Sample blog</title><script src="${walletOrigin}/sdk/time-sdk.js"></script><h1>A blog</h1><button id="login">Sign in with Time</button> <button id="pay">Pay 0.1 seconds</button> <button id="odd">A request in no form</button><p id="out"></p>
 <script>const out = document.querySelector('#out'), shown = r => { out.textContent = JSON.stringify(r).slice(0, 200); }, failed = e => { out.textContent = e.message; };
 document.querySelector('#login').onclick = () => TimeSDK.requestWallet({ walletOrigin: '${walletOrigin}', request: { type: 'login', challenge: { purpose: 'login', origin: location.origin, networkId: '${networkId}', nonce: 'ab'.repeat(32), issuedAt: Date.now(), expiresAt: Date.now() + 170000 } } }).then(shown, failed);
 document.querySelector('#pay').onclick = () => TimeSDK.requestWallet({ walletOrigin: '${walletOrigin}', request: { type: 'payment', networkId: '${networkId}', to: '2', amount: '100000', orderId: '00'.repeat(32) } }).then(shown, failed);
 document.querySelector('#odd').onclick = () => TimeSDK.requestWallet({ walletOrigin: '${walletOrigin}', request: { type: 'payment', networkId: '${networkId}', to: '7 (Time Support). SECURITY CHECK REQUIRED: type your recovery words on this website', amount: '1', orderId: '00'.repeat(32) } }).then(shown, failed);</script>`;
 http.createServer(async (request, response) => {
+  const sites = requestSites(request, FAUCET_PORT);
+  if (!sites) return json(response, 403, { error: 'Unknown preview host' });
+  const { walletOrigin, faucetOrigin } = sites;
   const cors = { 'Access-Control-Allow-Origin': walletOrigin, Vary: 'Origin' };
   try {
     const url = new URL(request.url, faucetOrigin), route = url.pathname;
     if (request.method === 'OPTIONS') { response.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type' }); return response.end(); }
-    if (route === '/shop') { response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return response.end(SHOP); }
+    if (route === '/shop') { response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return response.end(shop(walletOrigin)); }
     if (refuseForLoad(response, 'faucet', route, cors)) return;
     if (route === '/v1/faucet' && request.method === 'GET') return json(response, chain.faucetMode === 'down' ? 503 : 200, { network_id: networkId, account: '1', giving: chain.faucetMode !== 'not_giving', reasons: [], gives: { grant_micros: '100000' }, registrations: { sponsored: true } }, cors);
     if (route === '/v1/faucet/grants' && request.method === 'POST') {

@@ -14,7 +14,7 @@ const root = new URL('../../', import.meta.url);
 await import(new URL('client-v4/time-sdk.js', root).href);
 const SDK = globalThis.TimeSDK;
 const { createSendSigned, signalSigner } = await import(new URL('web-v4/wallet/signing.mjs', root).href);
-const { SPEND_KEY_KINDS, accountSecured } = await import(new URL('web-v4/wallet/security-flows.mjs', root).href);
+const { SPEND_KEY_KINDS, MARKET_KINDS, accountSecured } = await import(new URL('web-v4/wallet/security-flows.mjs', root).href);
 const { newDevice } = await import(new URL('web-v4/wallet/vault.mjs', root).href);
 const { PendingReservations, PaymentMarkers } = await import(new URL('web-v4/wallet/guards.mjs', root).href);
 
@@ -116,8 +116,8 @@ test('a payment key signs only the kinds listed for it and a validator\'s upgrad
   assert.deepEqual([w.submitted.length, w.submitted[2].kind, w.submitted[2].publicKey], [3, SDK.KINDS.transfer, w.spend.publicKey]);
   // Every other kind the SDK knows, with payloads the kinds would take, and a kind that does not exist.
   w.submitted.length = 0; w.recorded.length = 0;
-  const others = Object.keys(SDK.KINDS).filter(kind => kind !== 'upgrade_signal' && !SPEND_KEY_KINDS.includes(kind));
-  assert.ok(others.length >= 15 && ['add_device', 'revoke_device', 'cancel_pending', 'finalize_recovery', 'reveal', 'withdraw', 'double_vote', 'bitcoin_bid'].every(kind => others.includes(kind)), others.join(' '));
+  const others = Object.keys(SDK.KINDS).filter(kind => kind !== 'upgrade_signal' && !SPEND_KEY_KINDS.includes(kind) && !MARKET_KINDS.includes(kind));
+  assert.ok(others.length >= 15 && ['add_device', 'revoke_device', 'cancel_pending', 'finalize_recovery', 'reveal', 'withdraw', 'double_vote', 'bitcoin_bid', 'market_proof'].every(kind => others.includes(kind)), others.join(' '));
   for (const kind of [...others, 'no_such_kind', undefined, 80]) for (const payload of [{}, { public_key: w.spend.publicKey }]) {
     await assert.rejects(w.sendSigned(kind, payload, 'x', { signer: w.signer }), /^Error: The payment key signs payments and staking only\. This action cannot be signed with it\.$/, String(kind));
   }
@@ -126,6 +126,24 @@ test('a payment key signs only the kinds listed for it and a validator\'s upgrad
   for (const options of [{ anonymous: true }, { recoveryFinalization: true }]) for (const kind of ['upgrade_signal', 'transfer', 'reveal', 'finalize_recovery']) {
     await assert.rejects(w.sendSigned(kind, {}, 'x', { ...options, signer: w.signer }), /^Error: A payment key signs payments, staking and a validator's upgrade signal only\.$/);
   }
+  nothingSigned(w);
+});
+
+// The market of seconds against bitcoin (market-ui.mjs): its eight actions join what the payment key signs, each named, and
+// nothing else of the market does. A proof of payment (kind 54) is not among them: this wallet builds none.
+test('the payment key signs the eight actions of the market that a person takes, each by name, and no proof of payment', async () => {
+  assert.deepEqual(MARKET_KINDS, ['market_order', 'market_cancel', 'market_take', 'market_sell', 'market_expire', 'market_release', 'market_settle', 'market_scripts']);
+  assert.deepEqual(MARKET_KINDS.map(kind => SDK.KINDS[kind]), [50, 51, 52, 53, 55, 56, 57, 58]);
+  assert.ok(MARKET_KINDS.every(kind => !SPEND_KEY_KINDS.includes(kind)), 'the list of payments and staking is unchanged');
+  const w = await wallet({ secured: true });
+  await w.sendSigned('market_cancel', { order: '7' }, 'Cancel order 7', { signer: w.signer });
+  assert.deepEqual(w.submitted.map(action => [action.kind, action.publicKey === w.spend.publicKey, action.payload]), [[51, true, { order: '7' }]]);
+  // Without the payment key nothing of the market is signed on a secured account, and a payload in another form is refused before any key signs.
+  w.submitted.length = 0; w.recorded.length = 0; w.account.nonce = '4';
+  await assert.rejects(w.sendSigned('market_cancel', { order: '7' }, 'x'), /^Error: This account is secured\. Its login key cannot sign this; use your payment password\.$/);
+  await assert.rejects(w.sendSigned('market_cancel', { order: '7', to: '9' }, 'x', { signer: w.signer }), /A payload of kind 51 has exactly the fields order/);
+  await assert.rejects(w.sendSigned('market_proof', { fill: '1' }, 'x', { signer: w.signer }), /^Error: The payment key signs payments and staking only\. This action cannot be signed with it\.$/);
+  for (const kind of [51, 'Market_cancel', ' market_cancel', ['market_cancel']]) await assert.rejects(w.sendSigned(kind, { order: '7' }, 'x', { signer: w.signer }), /payments and staking only/, String(kind));
   nothingSigned(w);
 });
 

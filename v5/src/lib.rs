@@ -6,6 +6,7 @@ pub mod bitcoin_adapter;
 pub mod engine;
 pub mod evidence;
 pub mod genesis;
+pub mod market;
 pub mod merkle;
 pub mod names;
 pub mod pos_adapter;

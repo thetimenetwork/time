@@ -152,7 +152,10 @@ export function readJoin(text) {
   if (typeof text !== 'string' || text.length > 16384) return null;
   let value;
   try { value = JSON.parse(text); } catch { return null; }
-  if (!record(value) || Object.keys(value).some((key) => !JOIN_KEYS.includes(key) && key !== 'pace') || JOIN_KEYS.some((key) => !Object.hasOwn(value, key))) return null;
+  if (!record(value) || Object.keys(value).some((key) => !JOIN_KEYS.includes(key) && !['pace', 'release_key', 'script_sha256', 'source_url'].includes(key)) || JOIN_KEYS.some((key) => !Object.hasOwn(value, key))) return null;
+  // The release key, the script's hash and where the source publishes it (testnet/join.mjs, explorerJoin): shown as text.
+  for (const key of ['release_key', 'script_sha256']) if (value[key] !== undefined && (typeof value[key] !== 'string' || !/^[0-9a-f]{64}$/.test(value[key]))) return null;
+  if (value.source_url !== undefined && (typeof value.source_url !== 'string' || !/^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/blob\/[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._/-]{1,200}$/.test(value.source_url))) return null;
   const { script_url: script, wallet_url: wallet, chain_id: chain, min_self_bond_micros: bond, files, peers, pace } = value;
   if (outsideAddress(script) !== 'script' || outsideAddress(wallet) !== 'origin') return null;
   if (typeof chain !== 'string' || !/^[a-z0-9-]{3,64}$/.test(chain)) return null;
@@ -161,5 +164,6 @@ export function readJoin(text) {
   if (!Array.isArray(peers) || peers.length < 1 || peers.length > 8 || !peers.every(isPeer) || new Set(peers).size !== peers.length) return null;
   if (pace !== undefined && (typeof pace !== 'string' || !/^(?:[1-9][0-9]{2}ms|[1-5]s)$/.test(pace))) return null;
   return Object.freeze({ script_url: script, wallet_url: wallet, chain_id: chain, min_self_bond_micros: bond,
-    files: Object.freeze(Object.fromEntries(JOIN_FILES.map((key) => [key, files[key]]))), peers: Object.freeze([...peers]), ...(pace === undefined ? {} : { pace }) });
+    files: Object.freeze(Object.fromEntries(JOIN_FILES.map((key) => [key, files[key]]))), peers: Object.freeze([...peers]), ...(pace === undefined ? {} : { pace }),
+    ...Object.fromEntries(['release_key', 'script_sha256', 'source_url'].filter((key) => value[key] !== undefined).map((key) => [key, value[key]])) });
 }

@@ -27,6 +27,7 @@
 // account it subscribed (`timecurrency.alerts-push.v1:<network>:<account>`). The words are alerts.mjs's and
 // alerts-push.mjs's; every one goes into the page by textContent.
 import { alertsOf, readMarker, markerKey } from './alerts.mjs';
+import { failureNotice } from './actions.mjs';
 import { askWhenFree, isBusyError } from './busy.mjs';
 import { WORDS, ALERTS_PATH, pushSupport, applicationServerKey, challengeBody, proveFor, subscribeBody, unsubscribeBody, refusalWords, touchPath, readTouch, statusBody, readStatus } from './alerts-push.mjs';
 
@@ -301,7 +302,7 @@ export function createAlertsUI({ sdk, $ = id => document.getElementById(id), net
   }
 
   $('alerts-confirm').addEventListener('click', () => confirm());
-  $('alerts-turn-on').addEventListener('click', () => turnOn().catch(error => notice(error?.message || WORDS.failed, 'error')));
+  $('alerts-turn-on').addEventListener('click', () => turnOn().catch(error => notice(failureNotice(error, WORDS.failed), 'error')));
   $('alerts-turn-off').addEventListener('click', () => turnOff());
   $('alerts-off-everywhere').addEventListener('click', () => offEverywhere());
   return { render: (account, state) => { remember(state); render(account, state); }, reset, confirm, syncSwitch, live: () => live, following: () => followed, idle: () => working };

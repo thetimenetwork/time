@@ -63,7 +63,10 @@ test('password policy accepts Unicode, spaces, paste-equivalent long text; does 
   assert.equal(checkPassword('  our lovely summer forest  '), true);
   assert.equal(checkPassword('🦦'.repeat(12) + 'pine tree forest'), true);
   assert.throws(() => checkPassword('short'), /15/); assert.throws(() => checkPassword('password123456789'), /easy/);
-  assert.throws(() => checkPassword('aaaaaaaaaaaaaaaa'), /easy/); assert.throws(() => checkPassword('abc\ud800long password'), /Unicode/);
+  assert.throws(() => checkPassword('aaaaaaaaaaaaaaaa'), /easy/);
+  for (const invalid of ['abc\ud800long password', 'abc\0long password']) {
+    assert.throws(() => checkPassword(invalid), /contains a character the wallet cannot use\. Try typing it again/);
+  }
   assert.equal(validateName('@alice_12'), 'alice_12'); assert.throws(() => validateName('ALICE'));
   const trailing = await sealLegacy(device.secret, password + ' ', binding, argon2id, webcrypto);
   await assert.rejects(openVault(trailing, password, argon2id, webcrypto));
@@ -211,7 +214,7 @@ test('order markers persist before broadcast and block a second payment across p
   assert.throws(() => first.reserve(networkId, '1', ref, 'cc'.repeat(32), 'https://merchant.example'), /different signed payment/);
   assert.equal(first.get(networkId, '2', ref), null);
   storage.setItem(first.key(networkId, '1', ref), 'corrupt'); assert.throws(() => afterReload.get(networkId, '1', ref), /damaged/);
-  storage.setItem(first.key(networkId, '1', ref), JSON.stringify({ hash, status: 'verified' })); assert.throws(() => afterReload.get(networkId, '1', ref), /invalid/);
+  storage.setItem(first.key(networkId, '1', ref), JSON.stringify({ hash, status: 'verified' })); assert.throws(() => afterReload.get(networkId, '1', ref), /Check the order’s payment status before paying again/);
 });
 test('another device consuming a failed cancel nonce cannot permanently block a new emergency cancellation', () => {
   const failedCancel = { authEpoch: '2', nonce: '7' }, proof = { auth_epoch: '2', nonce: '7' };

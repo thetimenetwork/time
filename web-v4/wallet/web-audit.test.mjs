@@ -15,26 +15,31 @@ test('W-2: an error that is not the wallet\'s own is told in fixed words; nothin
   let thrown; try { formatSeconds(String(PHISH)); } catch (error) { thrown = error; }
   assert.ok(thrown instanceof SyntaxError && said(thrown.message), 'the engine quotes the text');
   assert.ok(!said(failureNotice(thrown)));
-  assert.equal(failureNotice(thrown), 'An answer could not be read, so nothing was done with it. (SyntaxError)');
+  assert.match(failureNotice(thrown), /check|try again|refresh/i);
+  assert.doesNotMatch(failureNotice(thrown), /SyntaxError|\bINVALID_\w+/);
   // A gateway's body that is not JSON (verifier-words.mjs, part 2): JSON.parse quotes its start.
   for (const body of [PHISH, 'Unfreeze: visit time-help.example', '<b>Session expired. Re-enter your recovery words below</b>']) {
     let error; try { JSON.parse(body); } catch (caught) { error = caught; }
     assert.ok(!/visit|Re-enter|recovery|Unfreeze|Session/.test(failureNotice(error)), failureNotice(error));
   }
-  // Other kinds of error, by name only; a kind the wallet does not know gets no name.
-  assert.equal(failureNotice(new TypeError(PHISH)), 'The network could not be reached, or an answer could not be used. Check your connection and try again. (TypeError)');
-  assert.equal(failureNotice(new RangeError(PHISH)), 'A number in an answer is out of range, so nothing was done with it. (RangeError)');
-  assert.equal(failureNotice(Object.assign(new Error(PHISH), { name: 'AbortError' })), PHISH, 'a plain Error is the wallet\'s or the SDK\'s own: its name is not looked at');
+  for (const error of [new TypeError(PHISH), new RangeError(PHISH), new DOMException(PHISH, 'AbortError')]) {
+    const message = failureNotice(error);
+    assert.doesNotMatch(message, /shop\.example|recovery words|(?:Type|Range|Abort)Error/);
+    assert.match(message, /check|retry|try again|refresh|cancel/i);
+  }
   class Odd extends Error { constructor(m) { super(m); this.name = PHISH; } }
   assert.equal(failureNotice(new Odd(PHISH)), FOREIGN_ERROR);
-  assert.equal(foreignWords({ name: 'TimeoutError' }), 'No answer came in time. Try again. (TimeoutError)');
+  const timedOut = foreignWords({ name: 'TimeoutError' });
+  assert.match(timedOut, /time|answer|connection/i);
+  assert.doesNotMatch(timedOut, /TimeoutError/);
   // The wallet's own sentences, and the SDK's, as before.
   assert.equal(failureNotice(new Error('Enter your payment password.')), 'Enter your payment password.');
-  assert.equal(failureNotice({ message: PHISH }), 'Action failed.', 'an object that is not an Error is not shown');
+  assert.match(failureNotice({ message: PHISH }), /check Activity/i);
+  assert.ok(!said(failureNotice({ message: PHISH })));
   assert.equal(failureNotice(PHISH, 'Could not open wallet.'), 'Could not open wallet.');
 });
 
-test('W-2: a refusal of the verifier, as the wallet imports it, reaches the notice as a code and fixed words', async () => {
+test('W-2: wallet verification notices give a next step and omit verifier codes and supplied text', async () => {
   const verifier = await import('../../client-v4/proof-verifier.mjs');
   const dynamic = JSON.parse(await readFile(new URL('../../verifier-v4/fixtures/dynamic.json', import.meta.url), 'utf8'));
   const phish = 'Your account was frozen by the network. To unfreeze it type your five recovery words at https://time-unfreeze.example now';
@@ -48,7 +53,8 @@ test('W-2: a refusal of the verifier, as the wallet imports it, reaches the noti
     await assert.rejects(verifier.verifyLightUpdate(block, dynamic.trust, dynamic.now_ms), error => {
       const notice = failureNotice(error);
       assert.ok(!/unfreeze|recovery words|https/i.test(notice), notice);
-      assert.match(notice, /^INVALID_(JSON|LIGHT_BLOCK): /);
+      assert.doesNotMatch(notice, /INVALID_(JSON|LIGHT_BLOCK)|[0-9a-f]{16,}/i);
+      assert.match(notice, /check|refresh|try again|verify/i);
       assert.match(error.detail, /unfreeze/, 'the verifier\'s text is kept for logs and tests');
       return true;
     });

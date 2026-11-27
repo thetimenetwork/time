@@ -501,6 +501,16 @@ test('a signed action is submitted to the node, and every refusal has its own an
     state.readState = async (selection) => ({ ...(await without(selection)), state: { ...(await without(selection)).state, config: { all_new_time_to_validators: true } } });
     await call(service, '/v1/accounts/1');
     assert.deepEqual([(await post({ tx: relay })).status, (await post({ tx: relay })).body.error.code], [400, 'not_on_this_network']);
+    // With the market such a network follows the Bitcoin header chain all the same: the relay of headers passes, and
+    // the auction's other kinds are still refused.
+    state.readState = async (selection) => ({ ...(await without(selection)), state: { ...(await without(selection)).state, config: { all_new_time_to_validators: true, market: true } } });
+    await call(service, '/v1/accounts/2'); // another account: a read of the same one is shared for a second
+    state.broadcast = (parameters) => ({ code: 0, hash: sha(Buffer.from(parameters.tx.slice(2), 'hex')).toString('hex').toUpperCase() });
+    assert.equal((await post({ tx: relay })).status, 202);
+    state.calls.length = 0; state.broadcast = () => assert.fail('must not be submitted');
+    state.readState = async (selection) => ({ ...(await without(selection)), state: { ...(await without(selection)).state, config: { all_new_time_to_validators: true } } });
+    await call(service, '/v1/accounts/3');
+    assert.deepEqual([(await post({ tx: relay })).status, (await post({ tx: relay })).body.error.code], [400, 'not_on_this_network']);
     state.readState = without;
     const other = signedAction(3, { to: '8', amount: '5' }, { networkId: 'cd'.repeat(32) }).toString('base64');
     const cases = [
@@ -914,7 +924,9 @@ test('the OpenAPI description and the routes agree', async () => {
   await lab(async ({ service }) => {
     await indexAll(service);
     assert.deepEqual((await call(service, '/v1/openapi.json')).body, description);
-    const samples = { height: ['2', '0', '01'], hash: [hashOf('2', 0), 'abc'], id: ['1', '01', 'alice'], account: ['1', 'payer', '@payer', 'A', 'x'], limit: ['1', '200', '0', '201'], order: ['asc', 'down'], cursor: ['2.0', '2', 'x'], reference: ['ab'.repeat(32), 'AB'.repeat(32)], from: ['7', '07'], after: ['2', '2.0', '0'] };
+    const samples = { height: ['2', '0', '01'], hash: [hashOf('2', 0), 'abc'], id: ['1', '01', 'alice'], account: ['1', 'payer', '@payer', 'A', 'x'], limit: ['1', '200', '0', '201'], order: ['asc', 'down'], cursor: ['2.0', '2', 'x'], reference: ['ab'.repeat(32), 'AB'.repeat(32)], from: ['7', '07'], after: ['2', '2.0', '0'],
+      // The market's routes. The fixture network has no market, so a request in an accepted form is answered 404 `no_market`, never 400.
+      side: ['sell', 'both'], levels: ['1', '200', '0', '201'], interval: ['hour', '1m', '1h'], to: ['7', '07'], orderid: ['1', '0', '01'], fillid: ['1', '0', 'x'], script: [`0014${'01'.repeat(20)}`, `5120${'ab'.repeat(32)}`, 'abc', `0014${'AB'.repeat(20)}`] };
     for (const route of ROUTES.filter((r) => r.method === 'GET' && r.path !== '/v1/stream' && r.path !== '/v1/touches')) {
       const operation = description.paths[route.path].get;
       for (const parameter of (operation.parameters || []).map(resolve)) for (const sample of samples[parameter.name]) {

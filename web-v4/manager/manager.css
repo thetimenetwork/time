@@ -1,0 +1,28 @@
+:root { color-scheme: light dark; font: 100%/1.55 system-ui, sans-serif; color: #182725; background: #f5f7f5; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: clamp(16px, 7vh, 80px) 16px; }
+main { width: min(100%, 30rem); margin: auto; padding: clamp(20px, 5vw, 40px); border-radius: 18px; border: 1px solid #cad4cc; background: white; }
+header { display: flex; gap: .7rem; align-items: center; font-weight: 650; }
+.mark { display: grid; place-items: center; width: 2rem; height: 2rem; color: #fff; background: #1b5445; border-radius: .5rem; }
+h1 { margin: 1.65rem 0 .4rem; line-height: 1.2; font-size: clamp(1.55rem, 5vw, 2rem); }
+p { margin: .6rem 0 1rem; }
+#context { font-weight: 600; overflow-wrap: anywhere; }
+label { display: block; margin: 1rem 0 .3rem; font-weight: 600; }
+input, select, button { font: inherit; border: 1px solid #768982; border-radius: 7px; padding: .65rem .8rem; width: 100%; }
+button { margin-top: .8rem; cursor: pointer; background: #1b5445; color: white; border-color: transparent; font-weight: 600; }
+button.secondary { color: inherit; background: transparent; border-color: #88968f; }
+.generator-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .5rem; }
+.generator-actions button { width: auto; margin: 0; padding: .4rem .65rem; font-size: .9rem; }
+#generated-value { user-select: all; }
+button:disabled { opacity: .55; cursor: wait; }
+.hint { font-size: .9rem; }
+.secret { display: block; padding: .8rem; background: #edf3ef; border-radius: 7px; font: 600 1.12rem/1.7 ui-monospace, monospace; overflow-wrap: anywhere; }
+#status:empty { display: none; }
+:focus-visible { outline: 3px solid #498caa; outline-offset: 2px; }
+[hidden] { display: none !important; }
+@media (prefers-color-scheme: dark) {
+  :root { color: #edf4ef; background: #131b18; }
+  main { background: #1c2823; border-color: #43574b; }
+  .secret { background: #293b31; }
+  button { background: #a9ddbf; color: #132c20; }
+}

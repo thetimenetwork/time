@@ -131,8 +131,10 @@ test('a deposit cursor never skips what the index holds, and the guide says what
   assert.ok(guide.includes('so a cursor never skips a payment that this index holds'));
   // The service: the refusal, in the routes that take a cursor, described; and the stream's word for the same.
   assert.match(apiSource, /throw new ApiError\(409, 'cursor_below_index_start',/);
-  assert.equal((apiSource.match(/cursorWithinIndex\(query\.cursor/g) ?? []).length, 3);
-  for (const route of ['/v1/blocks', '/v1/accounts/{id}/activity', '/v1/accounts/{id}/payments']) assert.equal(openapi.paths[route].get.responses['409'].$ref, '#/components/responses/CursorBelowStart', route);
+  // The three lists of blocks and payments, and the two lists of the market that are read in chain order (the
+  // trades, and the fills that ended for an account).
+  assert.equal((apiSource.match(/cursorWithinIndex\(query\.cursor/g) ?? []).length, 5);
+  for (const route of ['/v1/blocks', '/v1/accounts/{id}/activity', '/v1/accounts/{id}/payments', '/v1/market/trades', '/v1/accounts/{id}/market']) assert.equal(openapi.paths[route].get.responses['409'].$ref, '#/components/responses/CursorBelowStart', route);
   assert.match(apiReadme, /\*\*A cursor below the start of the index is refused:\*\* 409 `cursor_below_index_start`/);
   assert.match(apiSource, /This index starts at height \$\{store\.startHeight\} and does not hold these heights/);
   assert.match(guide, /409 `cursor_below_index_start`: your cursor is from below the start of this index/);

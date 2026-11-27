@@ -70,21 +70,11 @@ export function upgradeRequiredScreen(error) {
 // exportReceiptEvidence then throw that finding with the hash of the action). Null for any other
 // error. The wallet checks a receipt in three situations: after it signed and sent an action, on
 // "Recheck" of a stored receipt, and on "Save public receipt" of one it verified before. The
-// sentence is true in all three. The words are this app's own; the one thing taken from the
-// error is the hash, in its fixed form.
+// presence of the original transaction hash identifies a receipt check.
 export function upgradeWhileWaiting(error) {
   if (upgradeRequiredScreen(error) === null || typeof error.hash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(error.hash)) return null;
-  return `This app was checking the receipt of the action ${error.hash.toUpperCase()} when it stopped. It can no longer check receipts: neither whether an action you just signed was included, nor a receipt it checked before. An action listed as pending under Activity stays there. Do not sign it again: after you have updated this app, check it under Activity.`;
+  return 'The wallet needs an update to check this request. After updating, open Activity and check the original request before approving another.';
 }
-// A gateway's answer to a refused request, for the notice. The SDK marks such an error
-// (`error.gateway === true`); its text is whatever the gateway chose to write. So it is never
-// shown as this wallet's own sentence: it follows a fixed introduction that says whose words they
-// are, and it is made plain first. Only printable characters of the basic alphabet are kept, quote
-// marks are dropped, every run of 12 or more characters that could be part of a hash or a number
-// is broken into groups of four (nothing in it can be pasted as a value), and it is cut to 160
-// characters. Nothing of this wallet follows it, so a gateway cannot end its part and go on as
-// the wallet.
-export const GATEWAY_WORDS_INTRO = 'The gateway refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ';
 // Whether a receipt is the one a registration waits for: the verified receipt of a registration sponsorship
 // (kind 44) for this very key and this very commitment of the name. A sponsor that answers with the hash of any
 // other action (another key's sponsorship, a payment) has shown nothing about this registration.
@@ -93,53 +83,111 @@ export function sponsorReceiptBinds(receipt, publicKey, commitment) {
   return receipt?.verified === true && action?.kind === 44 && typeof publicKey === 'string' && publicKey !== '' && typeof commitment === 'string' && commitment !== ''
     && action.payload?.public_key === publicKey && action.payload?.commitment === commitment;
 }
-const plainWords = error => {
-  const text = typeof error?.message === 'string' ? error.message : '';
-  return [...text].map(character => (character >= ' ' && character <= '~' && !'"\'`'.includes(character) ? character : ' ')).join('')
-    .replace(/[0-9A-Fa-f]{12,}/g, run => run.match(/.{1,4}/g).join(' ')).replace(/\s+/g, ' ').trim().slice(0, 160) || '(no text)';
-};
-export function gatewayWords(error) { return GATEWAY_WORDS_INTRO + plainWords(error); }
-// The same for a registration service (a test network's faucet, which the wallet asks to sponsor a new account,
-// app.js, registrationSponsor): a party the wallet trusts no more than its gateway. Its refusal is marked
-// (`error.registrationService === true`) and shown by the same rule, after a sentence that names it.
-export const REGISTRATION_WORDS_INTRO = 'The registration service refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ';
-export function registrationWords(error) { return REGISTRATION_WORDS_INTRO + plainWords(error); }
-// The same for the test faucet, asked for a grant by "Get test time" (askFaucet below). It is the registration
-// service of the same test network, and the wallet trusts it no more: a refusal it has no sentence of its own for is
-// marked (`error.faucet === true`) and shown by the same rule, after a sentence that names it.
-export const FAUCET_WORDS_INTRO = 'The test faucet refused this request. Its answer follows; this wallet did not check it. Do not copy or enter anything from it: ';
-export function faucetWords(error) { return FAUCET_WORDS_INTRO + plainWords(error); }
-// An error whose words are not the wallet's own is told by its kind, in fixed words (web audit of November 2026,
-// W-2). The wallet's own refusals are plain Errors with its sentences, and so are the SDK's; the verifier's wrapper
-// gives its own words or a code and fixed words (client-v4/proof-verifier.mjs). Anything else comes from the
-// browser's or the engine's machinery, whose messages may quote what came from outside: JSON.parse quotes the start
-// of a text it cannot read, BigInt the text it cannot convert, a module that does not load its address.
-const FOREIGN_WORDS = Object.freeze({
-  SyntaxError: 'An answer could not be read, so nothing was done with it.',
-  TypeError: 'The network could not be reached, or an answer could not be used. Check your connection and try again.',
-  RangeError: 'A number in an answer is out of range, so nothing was done with it.',
-  AbortError: 'No answer came in time. Try again.',
-  TimeoutError: 'No answer came in time. Try again.',
-});
-/// The kinds of error whose name the notice may add, in brackets, after the fixed words.
-const FOREIGN_NAMES = new Set([...Object.keys(FOREIGN_WORDS), 'ReferenceError', 'EvalError', 'URIError', 'CompileError', 'LinkError', 'RuntimeError', 'NetworkError', 'NotAllowedError', 'SecurityError', 'InvalidStateError', 'QuotaExceededError', 'OperationError', 'DataError', 'NotSupportedError']);
-export const FOREIGN_ERROR = 'Something went wrong that this wallet cannot describe. Nothing was signed that you did not review. Try again.';
-export function foreignWords(error) {
-  let name = ''; try { name = typeof error?.name === 'string' ? error.name : ''; } catch { name = ''; }
-  return (Object.hasOwn(FOREIGN_WORDS, name) ? FOREIGN_WORDS[name] : FOREIGN_ERROR) + (FOREIGN_NAMES.has(name) ? ` (${name})` : '');
+// Remote services can explain a refusal, but do not get to write instructions in the wallet.
+const GATEWAY_DECLINED = "The network service couldn't complete this request. If you approved an action, check Activity for its status.";
+export function gatewayWords(error) {
+  switch (error?.message) {
+    case 'insufficient funds':
+    case 'insufficient funds for fee':
+      return 'The network reports that your balance is too low. Check your balance on Home and allow for the network fee.';
+    case 'incorrect nonce or nonce exhausted':
+    case 'stale authority or incorrect nonce':
+      return 'The network reports that your account has changed. Check Activity for the original request before approving another.';
+    case 'account is frozen':
+      return 'The network reports that this account is frozen. Open Home to check its protection settings.';
+    case 'over the daily limit of this account: use a payment that waits, or a second proof':
+      return 'The network reports that this exceeds your available daily allowance. Check your daily limit on Home.';
+    default: return GATEWAY_DECLINED;
+  }
 }
-// What the notice says after a failed step: the wallet's sentence about a receipt it could no
-// longer check, a gateway's answer marked as such, the error's own text when it is a plain Error
-// (the wallet's, the SDK's or the verifier wrapper's), or fixed words for any other error.
-export function failureNotice(error, fallback = 'Action failed.') {
+export function registrationWords(error) {
+  switch (error?.serviceCode) {
+    case 'chain_daily_limit':
+    case 'daily_total': return 'The signup service has reached its daily limit. Try opening your saved signup again tomorrow.';
+    case 'address_limit': return 'Too many accounts have been requested from this connection in the past 24 hours. Try again tomorrow.';
+    case 'account_limit':
+    case 'already_committed':
+    case 'already_registered': return 'The signup service reports an earlier request for this account. Open your saved account in this browser to check its status.';
+    default: return "The signup service couldn't confirm your registration. Open your saved signup in this browser to check its status.";
+  }
+}
+export const faucetWords = () => "The test faucet couldn't confirm your request. Check your balance on Home before asking again.";
+
+export const FOREIGN_ERROR = "The wallet couldn't finish this step. Check Activity for updates before trying again.";
+const CHECK_NETWORK = "The wallet couldn't verify the network's answer. Check your connection and refresh the wallet.";
+const CHECK_ACTIVITY = "This wallet hasn't confirmed the request yet. Check its status before trying again.";
+const CONNECTION = "The wallet couldn't connect or read the reply. Check your connection. If you approved an action, check Activity for its status.";
+export function foreignWords(error, fallback = FOREIGN_ERROR) {
+  switch (error?.name) {
+    case 'NetworkError':
+    case 'TypeError': return CONNECTION;
+    case 'AbortError':
+    case 'TimeoutError': return 'The request ended before the wallet received an answer. If you approved an action, check Activity for its status.';
+    case 'NotAllowedError': return "Your browser didn't approve this request. Try again when you're ready to confirm on your device.";
+    case 'QuotaExceededError': return "Your browser couldn't save the change. Free up space on this device and keep this wallet's site data.";
+    case 'SecurityError':
+    case 'NotSupportedError': return "This browser can't use the feature you selected. Open the wallet in a browser that supports it.";
+    case 'SyntaxError':
+    case 'RangeError':
+    case 'DataError': return "The wallet couldn't read the information it received. Check the details and try again.";
+    default: return fallback;
+  }
+}
+
+// SDK and verifier diagnostics remain available to their programmatic callers.
+const walletProblems = [
+  [/^CHECKPOINT_REFRESH_REQUIRED/, 'Your saved network check has expired. Open Activity and follow the steps under Offline trust and checkpoint refresh.'],
+  [/^CURRENT_TRUST_STILL_VALID/, 'Your saved network check is still current. The wallet can update it automatically.'],
+  [/^INDEPENDENT_CHECKPOINT_HASH_REQUIRED/, 'Use the complete block hash you confirmed with the network operator for this checkpoint file.'],
+  [/^Awaiting canonical receipt anchor/, 'The network is still preparing the downloadable receipt. Try saving it again later.'],
+  [/^LIGHT_UPDATE_BUDGET/, 'The wallet is catching up with the network. Give it a moment, then refresh.'],
+  [/^CHECKPOINT_STORAGE_UNAVAILABLE/, "Your browser couldn't save the network check. Allow storage for this wallet and try again."],
+  [/^(?:[A-Z][A-Z0-9]+_)+[A-Z0-9]+\b|verification failed|inclusion proof|unverified (?:receipt|state)|certified (?:V4 )?state|\b(?:verifier|RPC|light.client|bisection)\b/i, CHECK_NETWORK],
+  [/^Could not unlock this vault|^Invalid password input/, "The vault couldn't unlock. Check the password and use the device where you saved this account."],
+  [/^(?:Invalid|Unsupported|Non-canonical) (?:encoded vault|vault|encrypted backup|key encoding)|^Vault key does not match/, "The wallet couldn't open the saved keys. Use the original browser or restore a backup you trust."],
+  [/\b(?:Web Locks|Argon2id asset|local SDK|secure browser cryptography)\b/i, "This browser can't open the wallet securely. Open its HTTPS address in an up-to-date browser."],
+  [/^(?:Invalid payment network|Wrong login audience|Payment order must have|Invalid payment reference)/, 'This request from the website is incomplete or belongs to another network. Return to the website and start again.'],
+  [/^(?:Expired or invalid login challenge|Invalid login nonce|Only a login challenge|Login origin must)/, 'This sign-in request is no longer valid. Return to the website and choose Sign in again.'],
+  [/^This payment quote expired/, 'This payment request has expired. Return to the shop and ask for a new order.'],
+  [/^(?:Wrong transaction network|Wrong receipt network)/, 'This request belongs to another network. Open the wallet for that network to check it.'],
+  [/enrollment (?:fields|proof)|proof of key possession|obsolete authority epoch|public enrollment request/i, "The wallet couldn't verify this device request. Create a new request on the device you want to add."],
+  [/^(?:Insufficient seconds|Insufficient balance|insufficient funds)/i, 'Your balance needs to cover the amount and the network fee. Check your balance on Home.'],
+  [/Device permission is insufficient/i, "This device isn't allowed to approve that action. Use a device with the required account permission."],
+  [/^The account is frozen: nobody signs in/, 'Sign-in is paused while your account is frozen. Open Home to check when the freeze ends.'],
+  [/^This key can spend or recover: sign in with a sign-in key$/, 'Use your sign-in password to approve this website login.'],
+  [/^This key is not a key of the account$/, "This device isn't approved for this account. Open the account on one of your approved devices."],
+  [/\b(?:registration salt|name commitment|registration bytes|proved commitment)\b/i, "The wallet couldn't confirm this signup. Reopen your saved signup in this browser to check its progress."],
+];
+
+export function failureNotice(error, fallback = FOREIGN_ERROR) {
+  if (error?.gateway === true) return gatewayWords(error);
+  if (error?.registrationService === true) return registrationWords(error);
+  if (error?.faucet === true) return faucetWords();
   const waiting = upgradeWhileWaiting(error); if (waiting) return waiting;
-  // A network that stayed busy (busy.mjs): before anything was sent, or with a signed action kept (it carries the hash).
   if (isBusyError(error)) return typeof error.hash !== 'string' ? BUSY_NOTHING : error.sameButton === true ? BUSY_KEPT_PRESS_AGAIN : BUSY_KEPT;
-  if (typeof error === 'object' && error !== null && error.gateway === true) return gatewayWords(error);
-  if (typeof error === 'object' && error !== null && error.registrationService === true) return registrationWords(error);
-  if (typeof error === 'object' && error !== null && error.faucet === true) return faucetWords(error);
-  if (!(error instanceof Error) || typeof error.message !== 'string' || error.message === '') return fallback;
-  return Object.getPrototypeOf(error) === Error.prototype ? error.message : foreignWords(error);
+  if (!(error instanceof Error)) return fallback;
+  if (Object.getPrototypeOf(error) !== Error.prototype) return foreignWords(error, fallback);
+  switch (error.code) {
+    case 'TX_PENDING': return CHECK_ACTIVITY;
+    case 'UPGRADE_REQUIRED': return 'Update the wallet from the place you installed it to check this network again.';
+    case 'NAME_TAKEN': return 'That account name is already in use. Choose another name.';
+    case 'SPONSOR_REQUIRED':
+    case 'PROTECTED_REGISTRATION_UNAVAILABLE': return "This network can't create this type of account right now. Check that you've opened the right wallet.";
+    case 'REGISTRATION_MISMATCH':
+    case 'COMMITMENT_MISMATCH':
+    case 'SPONSOR_MISMATCH': return "The wallet couldn't match this signup to your saved account. Open your original signup in this browser.";
+    case 'BID_EXPIRED': return 'The bidding period ended before this bid was accepted. Review the current period before bidding again.';
+  }
+  const message = error.message;
+  if (typeof message !== 'string' || !message) return fallback;
+  for (const [pattern, explanation] of walletProblems) {
+    if (pattern.test(message)) return explanation;
+  }
+  if (error.sdkDiagnostic === true || typeof error.detail === 'string') return fallback;
+  // Local forms already supply instructions such as "Enter your payment password."
+  // Unformatted diagnostics and identifiers fall back to the screen's own instructions.
+  return /^[A-Z]/.test(message) && /[.!?…]$/.test(message) && !/[\x00-\x1f]|\b(?:nonce|pkcs8|ciphertext|CheckTx)\b|[a-f0-9]{64}/i.test(message)
+    ? message : fallback;
 }
 // A line of the gateway's notification feed (/api/notifications), which no proof covers. Only a
 // short name in small letters and a block height are taken from it, and the line says whose
@@ -273,8 +321,7 @@ export function durationWords(secondsText) {
 // - Each answer is waited for `timeoutMs` (fifteen seconds) at most and read to `maxBytes` (64 KiB) at most, as for a
 //   registration (app.js, registrationSponsor). No cookie, no referrer, no redirect.
 // - A refusal with a code listed in the faucet's README is told in this wallet's own sentence, which says that it is
-//   what the faucet says (`FAUCET_SAYS`); the faucet's own words are then not shown. Any other refusal is the faucet's
-//   own text, marked (`error.faucet`) and shown as a gateway's words are (`faucetWords`).
+//   what the faucet says (`FAUCET_SAYS`). An unrecognized refusal is marked so the wallet can give its own fallback.
 // - Whether the time arrived is not taken from the faucet's word: the caller waits for the receipt of the hash and
 //   checks it (`faucetReceiptPays`).
 const NOT_GIVING = 'The test faucet is not giving test time right now. Try again later.';
@@ -356,7 +403,7 @@ export const KIT_HINT_ABOVE_MICROS = 3600n * 1000000n;
 // key per browser that are not this browser's. `paused`: payments of a protected account are paused (Home,
 // Protection): its limit is then no amount to name as what the payment password pays. `balanceMicros`: the proven balance,
 // for the quiet line of a recovery that is one paper (KIT_HINT).
-export function keysView({ protectedAccount, name, limit = '', waiting = '', paymentKeyHere = true, guardians = false, otherKeys = 0, paused = false, recoveryKind = null, balanceMicros = '0' }) {
+export function keysView({ protectedAccount, managed = false, name, limit = '', waiting = '', paymentKeyHere = true, guardians = false, otherKeys = 0, paused = false, recoveryKind = null, balanceMicros = '0' }) {
   const day = (id, title, rows, mark = 'Every day') => ({ id, title, mark: 'day', markText: mark, rows });
   const safe = (id, title, rows) => ({ id, title, mark: 'safe', markText: 'Keep safe', rows });
   const lede = `@${name}: what you need every day, and what to keep safe.`;
@@ -371,6 +418,20 @@ export function keysView({ protectedAccount, name, limit = '', waiting = '', pay
     ] };
   }
   const wait = waiting || 'the waiting period';
+  if (managed) {
+    const backup = recoveryKind === 'words' ? 'your paper recovery words' : 'your paper recovery words and any Recovery Kit you created';
+    return {
+      lede: 'Time Vault saves your credentials encrypted in this browser. Unlock them with your device and master passphrase.',
+      note: 'If you replace a wallet password or recovery words, update that entry in Time Vault.',
+      cards: [
+        day('login', 'Sign in', [['Open your account', 'Choose Open with Time Vault. Your wallet asks you to approve each website sign-in.']]),
+        day('payment', 'Approve a payment', [['When you pay', 'Choose Unlock with Time Vault beside the payment field. Review the recipient and amount before signing.'],
+          ['Spending limit', paused ? 'Payments are paused. Manage this on Home under Protection.' : `${limit} at once, including fees. Change it on Home under Protection.`]], 'When you pay'),
+        safe('phrase', 'Recover your account', [['If you lose this device', `In a new browser, choose Recover my account and use ${backup}. The recovery waits ${wait}.`],
+          ['Keep offline', 'Store the account name with the recovery words somewhere private, away from this device.']])
+      ]
+    };
+  }
   // What recovering needs, by the kind of recovery keys this browser knows the account has (security-flows.mjs,
   // recoveryKindOf): words only, words and a Recovery Kit, or not known here (keys made in another browser).
   const needs = recoveryKind === 'words' ? 'your recovery words' : recoveryKind === 'kit' ? 'your recovery words and your Recovery Kit' : 'your recovery words, and your Recovery Kit if your account has one';

@@ -36,6 +36,8 @@ export const CATEGORIES = Object.freeze({
   60: 'treasury', 61: 'treasury', 62: 'treasury',
   72: 'security', 73: 'security', 77: 'security',
   75: 'pending', 76: 'pending',
+  // The market of seconds against bitcoin (spec/market.md, section 6), on a network that has it.
+  50: 'market', 51: 'market', 52: 'market', 53: 'market', 54: 'market', 55: 'market', 56: 'market', 57: 'market', 58: 'market',
 });
 const REQUEST_STATUS = Object.freeze(['waiting', 'completed', 'cancelled', 'dropped', 'ended', 'unknown']);
 
@@ -101,6 +103,22 @@ export function describeAction(action) {
     case 17: add('detail.consensusKey', key(p.consensus_key)); add('detail.commission', percentOfBps(p.commission_bps)); return out('act.registerValidator');
     case 24: return out('act.retireValidator');
     case 20: return out('act.doubleVote');
+    // The market of seconds against bitcoin. A list item comes without content, so each kind has a sentence that
+    // needs none; an order's side and the seconds of an order or a fill are said when the content is there. A
+    // price is millionths of a satoshi for one second, and satoshis are a plain number: neither is an amount of time.
+    case 50: {
+      add('detail.marketPrice', number(p.price)); add('detail.marketMinSats', number(p.min_sats));
+      if ((p.side === 'sell' || p.side === 'buy') && isMicros(p.amount_micros)) return out(p.side === 'sell' ? 'act.marketSellOrder' : 'act.marketBuyOrder', { amount: amount(p.amount_micros) });
+      return out('act.marketOrder');
+    }
+    case 51: add('detail.marketOrder', number(p.order)); return out('act.marketCancel');
+    case 52: add('detail.marketOrder', number(p.order)); add('detail.marketSats', number(p.sats)); add('detail.marketTo', account(p.to)); return out(isMicros(p.amount_micros) ? 'act.marketTake' : 'act.marketTakePlain', { amount: amount(p.amount_micros) });
+    case 53: add('detail.marketOrder', number(p.order)); add('detail.marketSats', number(p.sats)); return out(isMicros(p.amount_micros) ? 'act.marketSell' : 'act.marketSellPlain', { amount: amount(p.amount_micros) });
+    case 54: add('detail.marketFill', number(p.fill)); return out('act.marketProof');
+    case 55: add('detail.marketFill', number(p.fill)); return out('act.marketExpire');
+    case 56: add('detail.marketFill', number(p.fill)); return out('act.marketRelease');
+    case 57: add('detail.marketFill', number(p.fill)); return out('act.marketSettle');
+    case 58: add('detail.marketOrder', number(p.order)); return out('act.marketScripts');
     case 80: {
       // A validator's signal about a change of the rules (docs/design/upgrade-mechanism.md): its
       // content is the plan it supports (the next version, the hash of its specification, the

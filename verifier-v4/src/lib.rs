@@ -10,6 +10,9 @@ pub mod light;
 mod light_tests;
 #[cfg(test)]
 mod live_tests;
+pub mod market;
+#[cfg(test)]
+mod market_tests;
 #[cfg(test)]
 mod proof_tests;
 #[cfg(test)]

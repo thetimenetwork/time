@@ -41,7 +41,13 @@ export const GENESIS_SETTINGS = Object.freeze([
 // version-5 engine only):
 // each is true or false, false (the default) leaves its field out, which is the protocol-4 rule, and a network without
 // any of them has the bytes and the network id it had before they existed.
-export function buildGenesis({ identities, consensusParams, blockMaxBytes = 4 * 1024 * 1024, startInMs = 20_000, now = Date.now(), feesToValidatorsPpm = 0, feeMicros = 1000, allNewTimeToValidators = false, stakeHandover = false, nodesReportUpgrades = false, ...settings }) {
+// market (version-5 engine with the market only): the network has the market of seconds against bitcoin
+// (spec/market.md, section 2); false leaves the field out. It is not one of GENESIS_SETTINGS: those are on for every
+// campaign, and the market is on only for a campaign that asks for it. It needs waitsSurviveStops, and the header
+// chain's numbers this builder writes anyway (a reorganisation bound of 144 blocks, a tip age of two hours, 32 fork
+// tips). With the laboratory profile and the Bitcoin network regtest, which this builder always writes, the market's
+// numbers are those of the laboratory column of spec/market.md, section 2.1.
+export function buildGenesis({ identities, consensusParams, blockMaxBytes = 4 * 1024 * 1024, startInMs = 20_000, now = Date.now(), feesToValidatorsPpm = 0, feeMicros = 1000, allNewTimeToValidators = false, stakeHandover = false, nodesReportUpgrades = false, market = false, ...settings }) {
   const n = identities.length;
   if (n < 4 || n > 40) throw Error('Expected 4 to 40 validators');
   if (allNewTimeToValidators !== false && allNewTimeToValidators !== true) throw Error('allNewTimeToValidators must be true or false');
@@ -50,6 +56,9 @@ export function buildGenesis({ identities, consensusParams, blockMaxBytes = 4 * 
   if (unknown.length) throw Error(`Unknown genesis option ${unknown.join(', ')}`);
   for (const [option] of GENESIS_SETTINGS) if (settings[option] !== undefined && settings[option] !== false && settings[option] !== true) throw Error(`${option} must be true or false`);
   if (nodesReportUpgrades !== false && nodesReportUpgrades !== true) throw Error('nodesReportUpgrades must be true or false');
+  if (market !== false && market !== true) throw Error('market must be true or false');
+  // The node refuses such a genesis (v5/src/genesis.rs); it is refused here first, before a network is started on it.
+  if (market && settings.waitsSurviveStops !== true) throw Error('A network with the market needs waits that survive a stop (waitsSurviveStops)');
   if (allNewTimeToValidators && n < 5) throw Error('A network that pays all new time to validators needs at least 5 validators');
 
   // Zero-balance genesis accounts: validator owners first, then registration sponsors.
@@ -99,6 +108,8 @@ export function buildGenesis({ identities, consensusParams, blockMaxBytes = 4 * 
   if (stakeHandover) appState.stake_handover = true;
   // After stake_handover, in the order of GENESIS_SETTINGS, last of all: the node writes them there.
   for (const [option, field] of GENESIS_SETTINGS) if (settings[option] === true) appState[field] = true;
+  // After service_records, last of all: the node writes the market there (v5/src/genesis.rs, `Genesis::market`).
+  if (market) appState.market = true;
   const consensus = structuredClone(consensusParams);
   consensus.block.max_bytes = String(blockMaxBytes);
   consensus.evidence.max_bytes = '65536';

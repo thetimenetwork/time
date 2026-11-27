@@ -1,0 +1,29 @@
+{
+  "rpc_url": "http://127.0.0.1:26657/",
+  "trust": {
+    "app_version": "4",
+    "network_id": "REPLACE_WITH_THE_NETWORK_ID_OF_THE_INDEPENDENTLY_VERIFIED_MANIFEST",
+    "chain_id": "time-devnet-v4-REPLACE",
+    "nodes_report_upgrades": true,
+    "checkpoint": "REPLACE: the rest of the trust manifest, exactly as the wallet installs it"
+  },
+  "bitcoin_nodes": [
+    { "name": "own", "url": "http://127.0.0.1:18332/", "cookie_file": "/var/lib/bitcoind/testnet3/.cookie" }
+  ],
+  "data_directory": "/var/lib/time-market-prover",
+  "account": "REPLACE_WITH_THE_NUMBER_OF_THE_PROVERS_OWN_ACCOUNT",
+  "key_file": "/etc/time-market-prover/spend.key",
+  "max_balance_micros": "5000000",
+  "min_balance_micros": "500000",
+  "max_fee_per_proof_micros": "100000",
+  "max_fees_per_day_micros": "2000000",
+  "expire": false,
+  "allow_unsecured_account": false,
+  "poll_seconds": 10,
+  "max_blocks_per_round": 64,
+  "bitcoin_timeout_seconds": 15,
+  "time_timeout_seconds": 30,
+  "host": "127.0.0.1",
+  "port": 8951,
+  "hosts": []
+}

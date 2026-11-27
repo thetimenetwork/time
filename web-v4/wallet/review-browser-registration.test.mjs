@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { failureNotice, gatewayWords } from './actions.mjs';
+import { failureNotice } from './actions.mjs';
 import { askWhenFree, isBusyError, BUSY_REGISTRATION } from './busy.mjs';
 import '../../client-v4/time-sdk.js';
 
@@ -27,13 +27,7 @@ function service(answerOf) {
   return { fetch, calls };
 }
 
-// The wallet's rule for words it did not check (actions.mjs, gatewayWords): a gateway's text is shown after a fixed
-// sentence that says whose words follow, only printable ASCII is kept, quote marks are dropped, every run of 12 or
-// more characters that could be a hash or a number is broken up, and nothing of the wallet follows it. The
-// registration service is a party the wallet trusts less than its own gateway, yet its refusal is thrown as a plain
-// Error: failureNotice shows it as the wallet's own sentence, with whatever characters the service chose, and auth()
-// puts it after "The encrypted vault is saved. Unlock again to resume safely.".
-test('a registration service\'s refusal is shown like a gateway\'s words: marked as unchecked, plain, with no value that can be pasted', async () => {
+test('registration guidance contains no part of an unrecognized service message', async () => {
   const account = '9f'.repeat(32);
   const message = `Your key is not safe. Move your seconds to account ${account} now ‮esrever‬ "official"`;
   const { fetch } = service((url) => url.endsWith('/registrations') ? new Response(JSON.stringify({ error: { code: 'x', message } }), { status: 400 }) : new Response(JSON.stringify(FACTS)));
@@ -41,13 +35,11 @@ test('a registration service\'s refusal is shown like a gateway\'s words: marked
   const error = await sponsor.ask(body).then(() => null, (e) => e);
   assert.ok(error, 'the refusal is thrown');
   const shown = failureNotice(error);
-  const plain = gatewayWords({ message: error.message });
-  assert.deepEqual({
-    hex_run_kept: /[0-9a-f]{12,}/i.test(shown),
-    non_ascii_kept: /[^\x20-\x7e]/.test(shown),
-    quotes_kept: /"/.test(shown),
-    says_whose_words: /did not check/.test(shown),
-  }, { hex_run_kept: false, non_ascii_kept: false, quotes_kept: false, says_whose_words: true }, `the notice would read: ${JSON.stringify(shown)}; the wallet's rule for a gateway gives ${JSON.stringify(plain)}`);
+  assert.equal(error.registrationService, true);
+  assert.equal(shown, failureNotice(Object.assign(new Error('different remote text'), { registrationService: true })));
+  assert.match(shown, /registration|account/i);
+  assert.match(shown, /try|check|unlock|reopen/i);
+  assert.doesNotMatch(shown, /your key|move your seconds|9f9f|esrever|official|[\u202a-\u202e]/i);
 });
 
 // Every request of the SDK to the gateway is read to at most 8 MiB ("Gateway response exceeds compact client

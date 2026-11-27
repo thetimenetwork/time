@@ -2089,13 +2089,61 @@ struct Selection {
     /// this proof, never from a node's word.
     #[serde(default)]
     include_upgrade: bool,
+    /// Also prove the market's summary and its clock of heights
+    /// (`market/meta`, `market/heights`; `spec/market.md`, section 4), or
+    /// that they are absent: a network without the market has neither. A
+    /// wallet reads a fill, an order and a price from these proofs before a
+    /// person pays bitcoin, never from a node's word.
+    #[serde(default)]
+    include_market: bool,
+    /// Each order named, by its id (`market/order/<id>`), or that there is
+    /// none: at most `MAX_MARKET_ROWS`.
+    #[serde(default)]
+    market_orders: Vec<String>,
+    /// Each fill named, by its id (`market/fill/<id>`), or that there is
+    /// none: at most `MAX_MARKET_ROWS`.
+    #[serde(default)]
+    market_fills: Vec<String>,
+    /// For each account named, the open orders it owns and the open fills it
+    /// pays (`market/account/<id>`), or that it has neither: at most
+    /// `MAX_MARKET_ACCOUNTS`.
+    #[serde(default)]
+    market_accounts: Vec<String>,
+    /// What each receiving script named serves (`market/script/<SHA-256>`),
+    /// or that it has no row. A script is lowercase hexadecimal, of one of
+    /// the five standard forms: at most `MAX_MARKET_ROWS`.
+    #[serde(default)]
+    market_scripts: Vec<String>,
+    /// The candle of each hour named (`market/candle/<hour>`), or that no
+    /// trade was proven in it: at most `MAX_MARKET_CANDLES`.
+    #[serde(default)]
+    market_candles: Vec<String>,
 }
+/// Most orders, most fills and most receiving scripts one selection names:
+/// as many as an order has scripts and a buy order has open fills.
+const MAX_MARKET_ROWS: usize = 16;
+/// Most accounts whose market index one selection names: as many as it
+/// names accounts by id.
+const MAX_MARKET_ACCOUNTS: usize = 8;
+/// Most candles one selection names: a day of hours and a third more.
+const MAX_MARKET_CANDLES: usize = 32;
 fn canonical_id(s: &str) -> Result<u64> {
     ensure!(
         !s.is_empty() && (s == "0" || !s.starts_with('0')) && s.bytes().all(|c| c.is_ascii_digit()),
         "noncanonical account ID"
     );
     Ok(s.parse()?)
+}
+/// A receiving script as a selection names it: lowercase hexadecimal, one of
+/// the five standard forms (`spec/market.md`, 5.1). No other script can have
+/// a row.
+fn receiving_script(text: &str) -> Result<Vec<u8>> {
+    let script = hex::decode(text)?;
+    ensure!(
+        hex::encode(&script) == text && bitcoin_bridge::standard_script(&script),
+        "invalid selected receiving script"
+    );
+    Ok(script)
 }
 fn add(
     version: &Version,
@@ -2124,7 +2172,12 @@ fn view(
             && selection.owners.len() <= 16
             && selection.candidates.len() <= 16
             && selection.epochs.len() <= 8
-            && selection.blocks.len() <= 16,
+            && selection.blocks.len() <= 16
+            && selection.market_orders.len() <= MAX_MARKET_ROWS
+            && selection.market_fills.len() <= MAX_MARKET_ROWS
+            && selection.market_accounts.len() <= MAX_MARKET_ACCOUNTS
+            && selection.market_scripts.len() <= MAX_MARKET_ROWS
+            && selection.market_candles.len() <= MAX_MARKET_CANDLES,
         "selection budget"
     );
     let mut entries = BTreeMap::new();
@@ -2204,6 +2257,28 @@ fn view(
         )?;
         add(version, &mut entries, crate::treasury_adapter::RECEIVING_KEY.to_vec(),
         )?;
+    }
+    // The market. On a network without it no row under `market/` exists, and
+    // every key below is proven absent: the answer is the same question,
+    // answered "none".
+    if selection.include_market {
+        add(version, &mut entries, crate::market::META_KEY.to_vec())?;
+        add(version, &mut entries, crate::market::HEIGHTS_KEY.to_vec())?;
+    }
+    for id in selection.market_orders {
+        add(version, &mut entries, crate::market::order_key(canonical_id(&id)?))?;
+    }
+    for id in selection.market_fills {
+        add(version, &mut entries, crate::market::fill_key(canonical_id(&id)?))?;
+    }
+    for id in selection.market_accounts {
+        add(version, &mut entries, crate::market::index_key(canonical_id(&id)?))?;
+    }
+    for script in selection.market_scripts {
+        add(version, &mut entries, crate::market::script_key(&receiving_script(&script)?))?;
+    }
+    for hour in selection.market_candles {
+        add(version, &mut entries, crate::market::candle_key(canonical_id(&hour)?))?;
     }
     for owner in selection.owners {
         let id = canonical_id(&owner)?;

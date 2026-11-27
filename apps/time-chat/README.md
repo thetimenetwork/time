@@ -51,6 +51,10 @@ Open **http://127.0.0.1:4175** on each installed client's computer. To connect t
 2. **Contact identity.** Each device computes the same safety code from both public keys, both account IDs and the network. Compare it in person or through a channel whose participants you already know. The browser pins the verified key and rejects a replacement. An attendee who joins with a new browser cannot silently enroll over an existing key. [Client cryptography](public/crypto.mjs)
 3. **Message authorship and integrity.** OpenPGP.js signs on the sender's device and encrypts for the entire verified membership, including the sender's device. On read, the client verifies the signature and the signed network ID, room ID, member list, sender ID and message ID before displaying content. A recipient can verify that a message came from the enrolled chat key. The relay can still delay, omit, reorder or replay traffic. History is not a publicly verifiable transcript. [OpenPGP.js](https://docs.openpgpjs.org/) · [Message verification](public/crypto.mjs)
 
+### Updating the chat client
+
+Hosted users can reload Time Chat. If you installed the client, update to the matching release, restart its local process and reload the page. Updating preserves your enrolled chat key and safety codes. A restarted relay asks you to sign in again. An ordinary login challenge identifies the relay and has a distinct form from an enrollment. The installed client also requires a browser-origin credential when using its local session. This credential stays on your device.
+
 ## Privacy limits
 
 The relay can see account names and IDs, membership, submission times, ciphertext sizes, read cursors, push endpoints and network addresses. The public Time chain is used for account authority. Message text, emoji, private chat keys and search queries stay off the chain. A recipient can copy a message or take a screenshot.
@@ -68,6 +72,7 @@ The default pin names the public testnet reset of 25 November 2026. The relay an
 | `TIME_CHAT_DATA` | Directory for relay SQLite data, push credentials and verified checkpoint. |
 | `TIME_CHAT_HOST`, `TIME_CHAT_PORT`, `TIME_CHAT_ORIGIN` | Relay listen address, port and exact hosted browser origin used in signed logins. |
 | `TIME_CHAT_INSTALLED_ORIGIN` | Additional fixed loopback origin for signed logins from independently installed clients. The hosted relay refreshes both verifiers’ checkpoints every six hours. |
+| `TIME_CHAT_TRUST_LOOPBACK_PROXY` | Set to `1` only when the relay listens on loopback behind a trusted reverse proxy that sets or appends the directly connected client's IP address to `X-Forwarded-For`. The relay uses that address for login rate limits. The default uses the socket peer. |
 | `TIME_CHAT_RELAY`, `TIME_CHAT_CLIENT_PORT`, `TIME_CHAT_CLIENT_DATA` | Remote relay origin, installed client's local port and local checkpoint directory. |
 | `CHROME_PATH` | Chromium executable for the browser tests if the system installation is not detected. |
 
@@ -76,6 +81,10 @@ npm test
 ```
 
 The browser tests use separate profiles and temporary wallet identities that sign real Time SDK challenges against a fixture chain. They compare independently computed safety codes, exchange messages, reload history and inspect the relay requests and database for plaintext. The live testnet and real browser push delivery are separate from these local tests.
+
+### Relay storage and traffic limits
+
+Each account can submit 8 MiB of encrypted envelopes and create 100 new conversations per rolling 24 hours. Reopening an existing room and retrying a message already accepted use no additional allowance. When the database volume has 64 MiB of available space or less, the relay pauses new messages and rooms. History remains available. Returning available space above the reserve allows writes to resume. Conversation lists load in pages.
 
 ## Browser library
 

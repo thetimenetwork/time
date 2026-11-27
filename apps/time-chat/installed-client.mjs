@@ -4,14 +4,15 @@ import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createAuth, keyCommitment } from './auth.mjs';
+import { isChatLoginNonce } from './public/login-nonce.mjs';
 import { serveAsset } from './assets.mjs';
 
 const hour = 60 * 60 * 1000;
 const hex32 = /^[a-f0-9]{64}$/;
-const cookieName = 'time_chat_installed';
 const fixedGet = new Set(['/api/config', '/api/me', '/api/events', '/api/contacts', '/api/chats', '/api/blocks']);
 const fixedPost = new Set(['/api/login/challenge', '/api/login/finish', '/api/logout', '/api/chats', '/api/push', '/api/push/remove', '/api/blocks']);
 const proofRoute = /^\/api\/contacts\/(0|[1-9]\d{0,19})\/proof$/;
+const singleRoomRoute = /^\/api\/chats\/[a-f0-9]{64}$/;
 const roomRoute = /^\/api\/chats\/[a-f0-9]{64}\/(messages|read)$/;
 const preToken = /^(?:bind\.[a-f0-9]{64}|[a-f0-9]{64}\.\d{1,16}\.\d{1,16}\.[a-f0-9]{64})$/;
 const apiHeaders = {
@@ -27,11 +28,15 @@ function json(res, status, value) {
 }
 function checkRoutes(method, url) {
   const p = url.pathname, room = roomRoute.exec(p);
-  const allowed = method === 'GET' ? fixedGet.has(p) || proofRoute.test(p) || room?.[1] === 'messages'
+  const allowed = method === 'GET' ? fixedGet.has(p) || proofRoute.test(p) || singleRoomRoute.test(p) || room?.[1] === 'messages'
     : method === 'POST' && (fixedPost.has(p) || Boolean(room));
   if (!allowed) refuse(404, 'Unknown client route.');
   const params = [...url.searchParams.keys()];
   if (!params.length) return;
+  if (method === 'GET' && p === '/api/chats' && params.length === 1 && params[0] === 'cursor') {
+    const cursor = /^(0|[1-9][0-9]{0,15})\.[0-9a-f]{64}$/.exec(url.searchParams.get('cursor'));
+    if (cursor && Number.isSafeInteger(Number(cursor[1]))) return;
+  }
   if (method === 'GET' && params.length === 1 &&
       (p === '/api/contacts' && params[0] === 'q' && url.searchParams.get('q').length <= 40 ||
        room?.[1] === 'messages' && params[0] === 'before' && /^[1-9]\d{0,15}$/.test(url.searchParams.get('before')))) return;
@@ -98,36 +103,43 @@ async function eventHints(response, res, controller) {
 }
 
 /** UI assets are always installed files. The relay can supply only parsed data on fixed routes. */
-export function createInstalledClient({ origin, relay, auth, fetcher = fetch }) {
+export function createInstalledClient({ origin, relay, loginRelayOrigin = relay, auth, fetcher = fetch }) {
   const local = new URL(origin), target = canonicalRelay(relay);
+  canonicalRelay(loginRelayOrigin);
+  const cookieName = 'time_chat_installed_' + (local.port || '80');
   if (local.origin !== origin || local.protocol !== 'http:' || local.hostname !== '127.0.0.1') throw new Error('Use a 127.0.0.1 client origin.');
   if (['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname) && target.port === local.port) throw new Error('Use different ports for the relay and the installed client.');
   const sessions = new Map(), pendingStreams = new Set();
-  function prune() { for (const [key,s] of sessions) if (s.expires <= Date.now()) sessions.delete(key); }
+  function forgetSession(session) {
+    if (!session) return;
+    sessions.delete(session.id);
+    for (const controller of session.streams) controller.abort();
+  }
+  function prune() { for (const s of sessions.values()) if (s.expires <= Date.now()) forgetSession(s); }
   const clean = setInterval(prune, 60_000).unref();
   function getSession(req) {
     const value = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(cookieName+'='))?.slice(cookieName.length+1);
     const session = value && sessions.get(value);
-    if (session?.expires > Date.now()) return session;
+    if (session?.expires > Date.now() && session.localBinding === req.headers['x-time-chat-local']) return session;
     return null;
   }
-  function startSession(res) {
+  function startSession(res, localBinding) {
     prune();
     if (sessions.size >= 128) refuse(429, 'Too many open sign-in requests.');
     const id = randomBytes(32).toString('hex');
-    const session = { id, expires: Date.now()+180000, pre: null, token: null, accountId: null, challenge: null };
+    const session = { id, expires: Date.now()+180000, localBinding, token: null, accountId: null, challenge: null, streams: new Set() };
     sessions.set(id, session);
     res.setHeader('Set-Cookie', cookieName+'='+id+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600');
     return session;
   }
   function clearSession(res, session) {
-    sessions.delete(session?.id);
+    forgetSession(session);
     res.setHeader('Set-Cookie', cookieName+'=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
   }
   const server = createServer(async (req,res) => {
     const controller = new AbortController();
     res.once('close', () => controller.abort());
-    let timer;
+    let timer, localLogout = false;
     try {
       if (req.headers.host !== local.host || !req.url?.startsWith('/') || req.url.startsWith('//') || req.url.includes('\\') || req.url.length > 2048) refuse(403, 'Local host required.');
       const url = new URL(req.url, origin), p = url.pathname, post = req.method === 'POST';
@@ -140,22 +152,30 @@ export function createInstalledClient({ origin, relay, auth, fetcher = fetch }) 
           (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') ||
           (req.headers['sec-fetch-dest'] && req.headers['sec-fetch-dest'] !== 'empty')) refuse(403, 'Open the installed Time Chat client.');
       checkRoutes(req.method,url);
+      const localBinding = req.headers['x-time-chat-local'];
+      // Browsers share loopback cookies across ports, while their local storage is per origin.
+      // This additional credential is consumed here and is never sent to the remote relay.
+      if (p !== '/api/config' && (typeof localBinding !== 'string' || !hex32.test(localBinding))) {
+        refuse(401,'Open Time Chat on this installed client.');
+      }
       let session = getSession(req), body;
       if (post) {
         if (req.headers['content-type']?.split(';')[0] !== 'application/json') refuse(415, 'JSON required.');
         body = await readJson(req,160*1024,false);
       }
       if (p === '/api/me' && !session?.token) return json(res,200,{user:null});
-      if (!session && p === '/api/login/challenge') session = startSession(res);
+      if (!session && p === '/api/login/challenge') session = startSession(res,localBinding);
+      const requestSessionId = session?.id;
       if (p !== '/api/config' && !session) refuse(401, 'Sign in with Time.');
-      let signedUser = null;
+      if (!session?.token && !['/api/config','/api/login/challenge','/api/login/finish'].includes(p)) refuse(401,'Sign in with Time.');
+      let signedUser = null, completing = null;
       if (p === '/api/login/finish') {
-        const request = session.challenge;
+        completing = session.challenge;
         session.challenge = null;
-        if (!request || request.expiresAt <= Date.now()) refuse(401,'Open the wallet to sign in again.');
-        try { signedUser = await auth.verifyFreshLogin(request,body); }
+        if (!completing || completing.request.expiresAt <= Date.now()) refuse(401,'Open the wallet to sign in again.');
+        try { signedUser = await auth.verifyFreshLogin(completing.request,body); }
         catch { refuse(401,'The wallet signature or current Time account could not be verified.'); }
-        if (session.bound && session.accountId !== signedUser.accountId) refuse(401,'Link a key using the same Time account.');
+        if (completing.bound && session.accountId !== signedUser.accountId) refuse(401,'Link a key using the same Time account.');
       }
       const headers = { Accept: p === '/api/events' ? 'text/event-stream' : 'application/json', 'X-Time-Chat-Client':'installed' };
       if (post) { headers.Origin=origin; headers['Content-Type']='application/json'; }
@@ -166,47 +186,59 @@ export function createInstalledClient({ origin, relay, auth, fetcher = fetch }) 
       }
       const cookies = [];
       if (session?.token) cookies.push('time_chat_session='+session.token);
-      if (session?.pre && p === '/api/login/finish') cookies.push('time_chat_pre='+session.pre);
+      if (completing) cookies.push('time_chat_pre='+completing.pre);
       if (cookies.length) headers.Cookie = cookies.join('; ');
-      timer = setTimeout(() => controller.abort(),30000).unref();
+      if (p === '/api/logout') {
+        clearSession(res,session);
+        localLogout = true;
+      }
+      timer = setTimeout(() => controller.abort(),p === '/api/logout' ? 3000 : 30000).unref();
       const remote = await fetcher(new URL(p+url.search,target),{
         method:req.method, headers, body:post ? JSON.stringify(body) : undefined, redirect:'error', signal:controller.signal
       });
+      if (p === '/api/logout') {
+        await remote.body?.cancel();
+        return json(res,200,{ok:true});
+      }
+      const sessionActive = () => !session || (sessions.get(requestSessionId) === session && session.expires > Date.now());
+      if (!sessionActive()) refuse(401,'Sign in with Time again.');
       if (!remote.ok) {
         await remote.body?.cancel();
-        if (p === '/api/logout') { clearSession(res,session); return json(res,200,{ok:true}); }
         const status = [400,401,403,404,409,413,415,429,503].includes(remote.status) ? remote.status : 502;
         return json(res,status,{error:status===401?'Sign in with Time again.':status===409?'The requested change conflicts with an existing record.':'The relay declined or could not complete this request.'});
       }
       if (p === '/api/events') {
-        clearTimeout(timer); pendingStreams.add(controller);
-        try { await eventHints(remote,res,controller); } finally { pendingStreams.delete(controller); }
+        clearTimeout(timer); pendingStreams.add(controller); session.streams.add(controller);
+        try { await eventHints(remote,res,controller); } finally { pendingStreams.delete(controller); session.streams.delete(controller); }
         return;
       }
       if (remote.headers.get('content-type')?.split(';')[0] !== 'application/json') refuse(502,'Invalid relay response format.');
       let output = await readJson(remote.body,roomRoute.test(p) && !post ? 8*1024*1024 : 2*1024*1024,true);
+      if (!sessionActive()) refuse(401,'Sign in with Time again.');
       if (p === '/api/config') {
         if (output.networkId !== auth.networkId || output.walletOrigin !== auth.walletOrigin) refuse(502,'The relay uses another Time network or wallet.');
         // A relay cannot nominate a different service as an authority for enrollment.
-        output = {networkId:auth.networkId,walletOrigin:auth.walletOrigin,enrollmentOrigins:[origin,target.origin],pushKey:typeof output.pushKey==='string' && /^[a-zA-Z0-9_-]{87}$/.test(output.pushKey) ? output.pushKey : null};
+        output = {networkId:auth.networkId,walletOrigin:auth.walletOrigin,loginRelayOrigin,installedClient:true,enrollmentOrigins:[origin,target.origin],pushKey:typeof output.pushKey==='string' && /^[a-zA-Z0-9_-]{87}$/.test(output.pushKey) ? output.pushKey : null};
       } else if (p === '/api/login/challenge') {
         const c = output.challenge;
         if (c?.purpose!=='login' || c.origin!==origin || c.networkId!==auth.networkId || !hex32.test(c.nonce) ||
             !Number.isSafeInteger(c.issuedAt) || !Number.isSafeInteger(c.expiresAt) || c.issuedAt > Date.now()+10000 ||
             c.expiresAt<=Date.now() || c.expiresAt-c.issuedAt!==180000) refuse(502,'The relay returned an invalid Time challenge.');
-        session.bound = body.publicKey != null;
-        if (session.bound && (!session.accountId || c.nonce !== keyCommitment(output.salt,body.publicKey))) refuse(502,'The relay did not bind this device key.');
-        session.pre=relayCookie(remote,'time_chat_pre',preToken);
-        session.challenge={purpose:'login',origin,networkId:auth.networkId,nonce:c.nonce,issuedAt:c.issuedAt,expiresAt:c.expiresAt};
-        output={challenge:session.challenge,salt:session.bound?output.salt:null};
+        const bound = body.publicKey != null;
+        if (bound && (!session.accountId || c.nonce !== keyCommitment(output.salt,body.publicKey))) refuse(502,'The relay did not bind this device key.');
+        if (!bound && !await isChatLoginNonce(c.nonce,loginRelayOrigin)) refuse(502,'The relay did not return a sign-in challenge for this client.');
+        const request={purpose:'login',origin,networkId:auth.networkId,nonce:c.nonce,issuedAt:c.issuedAt,expiresAt:c.expiresAt};
+        session.challenge={request,bound,pre:relayCookie(remote,'time_chat_pre',preToken)};
+        output={challenge:request,salt:bound?output.salt:null};
       } else if (p === '/api/login/finish') {
-        session.token=relayCookie(remote,'time_chat_session',hex32);
-        session.accountId=signedUser.accountId; session.name=signedUser.name; session.pre=null;
+        const token=relayCookie(remote,'time_chat_session',hex32);
+        forgetSession(session);
+        session.id=randomBytes(32).toString('hex'); sessions.set(session.id,session);
+        session.token=token;
+        session.accountId=signedUser.accountId; session.name=signedUser.name;
         session.expires=Date.now()+hour;
         res.setHeader('Set-Cookie',cookieName+'='+session.id+'; Path=/; HttpOnly; SameSite=Strict; Max-Age=3600');
         output={ok:true};
-      } else if (p === '/api/logout') {
-        clearSession(res,session); output={ok:true};
       } else if (p === '/api/me') {
         if (!output.user) { clearSession(res,session); output={user:null}; }
         else {
@@ -224,6 +256,7 @@ export function createInstalledClient({ origin, relay, auth, fetcher = fetch }) 
       }
       json(res,200,output);
     } catch(error) {
+      if (localLogout && !res.headersSent && !res.destroyed) return json(res,200,{ok:true});
       if (!res.headersSent && !res.destroyed) json(res,error.status||502,{error:error.status?error.message:'Could not reach the configured relay.'});
       else res.end();
     } finally { clearTimeout(timer); controller.abort(); }

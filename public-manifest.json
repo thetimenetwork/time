@@ -24,6 +24,7 @@
         "apps/time-chat/public/icon-512.png",
         "apps/time-chat/public/icon.svg",
         "apps/time-chat/public/index.html",
+        "apps/time-chat/public/login-nonce.mjs",
         "apps/time-chat/public/manifest.webmanifest",
         "apps/time-chat/public/style.css",
         "apps/time-chat/public/sw.js",

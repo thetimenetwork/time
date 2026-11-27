@@ -1,5 +1,6 @@
-import { loadIdentity, safetyNumber, pinPeer, isPeerPinned, roomId, encryptEvent, decryptEvent } from './crypto.mjs';
+import { installedApiCredential, loadIdentity, safetyNumber, pinPeer, isPeerPinned, roomId, encryptEvent, decryptEvent } from './crypto.mjs';
 import { materializeThread } from './thread.mjs';
+import { isChatLoginNonce } from './login-nonce.mjs';
 
 const $ = id => document.getElementById(id);
 const by = (tag, className, text) => {
@@ -34,27 +35,37 @@ const toHex = bytes => Array.from(new Uint8Array(bytes), x => x.toString(16).pad
 const keyNonce = async (salt, key) => toHex(await crypto.subtle.digest('SHA-256', utf8.encode(JSON.stringify(['time-chat-key/v1', salt, canonicalKey(key)]))));
 let config, user, identity, csrf, stream, chats = [], active, dialogSerial = 0, signing = false;
 let refreshBusy = false, refreshAgain = false, refreshed = false;
+let inboxCursor = null, hasOlderPages = false, olderRequest = null;
 let sessionReady = false, notificationsEnabled = false, sseTimer, fallbackTimer;
+let sessionGeneration = 0;
+let localApiCredential;
+let signingOut = false;
+const signedOutKey = () => 'time-chat/signed-out/v1/' + config.networkId;
+const contactProofs = new Map();
 const sessionChanges = globalThis.BroadcastChannel ? new BroadcastChannel('time-chat-session-v1') : null;
 if (sessionChanges) sessionChanges.onmessage = ({ data }) => {
   if (data === 'logout') endSession('Signed out in another tab.');
 };
 window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
 
-async function api(path, payload) {
-  const options = { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } };
+async function api(path, payload, { csrfToken = csrf, signal } = {}) {
+  const generation = sessionGeneration;
+  const options = { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal, headers: { Accept: 'application/json' } };
+  if (localApiCredential) options.headers['X-Time-Chat-Local'] = localApiCredential;
   if (payload !== undefined) {
     options.method = 'POST';
     options.headers['Content-Type'] = 'application/json';
-    if (csrf) options.headers['X-CSRF-Token'] = csrf;
+    if (csrfToken) options.headers['X-CSRF-Token'] = csrfToken;
     options.body = JSON.stringify(payload);
   }
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401 && sessionReady) endSession('Your session ended. Sign in again.');
+    if (response.status === 401 && sessionReady && generation === sessionGeneration) endSession('Your session ended. Sign in again.');
     const reason = typeof data.error === 'string' ? data.error.slice(0, 180) : 'Request failed (' + response.status + ').';
-    throw new Error(reason);
+    const error = new Error(reason);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -85,12 +96,15 @@ function privacy() {
 for (const el of document.querySelectorAll('[data-privacy]')) el.onclick = privacy;
 
 function endSession(message = '') {
+  ++sessionGeneration;
+  contactProofs.clear();
   sessionReady = false;
   stream?.close();
   clearTimeout(sseTimer);
   clearInterval(fallbackTimer);
   closeDialog();
   stream = null; user = null; identity = null; csrf = null; active = null; chats = []; refreshed = false;
+  inboxCursor = null; hasOlderPages = false; olderRequest = null;
   clearMessageSearch(); clearMode(false);
   $('messages').replaceChildren(); $('chats').replaceChildren(); $('draft').value = ''; $('filter').value = '';
   $('room-title').textContent = ''; $('room-detail').textContent = ''; $('user-name').textContent = ''; $('user-avatar').textContent = '';
@@ -102,10 +116,11 @@ function endSession(message = '') {
 function setSignButton(label) {
   const sign = $('signin');
   $('signin-label').textContent = label;
-  sign.disabled = !config || signing;
+  sign.disabled = !config || signing || signingOut;
 }
 async function signIn() {
-  if (!config || signing) return;
+  if (!config || signing || signingOut) return;
+  const generation = ++sessionGeneration;
   const binding = Boolean(user && !user.publicKey && identity);
   signing = true;
   setSignButton(binding ? 'Link this device' : 'Sign in with Time');
@@ -115,21 +130,27 @@ async function signIn() {
     const request = api('/api/login/challenge', binding ? { publicKey: identity.publicKey } : {}).then(async result => {
       const c = result.challenge;
       if (!c || c.origin !== location.origin || c.networkId !== config.networkId || c.purpose !== 'login') throw new Error('Wallet challenge belongs to a different app or network.');
+      if (!binding && ((location.protocol === 'https:' && config.loginRelayOrigin !== location.origin) ||
+          !await isChatLoginNonce(c.nonce, config.loginRelayOrigin))) throw new Error('The wallet challenge is not a Time Chat sign-in.');
       if (binding && c.nonce !== await keyNonce(result.salt, identity.publicKey)) throw new Error('The wallet challenge does not match this device’s chat key.');
       return { type: 'login', challenge: c };
     });
     const proof = await globalThis.TimeSDK.requestWallet({ walletOrigin: config.walletOrigin, request });
+    if (generation !== sessionGeneration) return;
     await api('/api/login/finish', proof);
-    await openSession();
+    if (generation === sessionGeneration) { localStorage.removeItem(signedOutKey()); await openSession(); }
   } catch (e) { report('signin-status', e); }
   finally { signing = false; $('signin').disabled = !config; }
 }
 $('signin').onclick = signIn;
 async function openSession() {
+  const generation = sessionGeneration;
   const me = await api('/api/me');
+  if (generation !== sessionGeneration) return;
   if (!me.user) { endSession(); return; }
-  user = me.user; csrf = me.csrf;
-  identity = await loadIdentity(config.networkId, user.id);
+  const localIdentity = await loadIdentity(config.networkId, me.user.id);
+  if (generation !== sessionGeneration) return;
+  user = me.user; csrf = me.csrf; identity = localIdentity;
   if (!user.publicKey) {
     setSignButton('Link this device');
     $('switch-account').hidden = false;
@@ -147,12 +168,54 @@ async function openSession() {
   $('welcome').hidden = true; $('workspace').hidden = false;
   $('user-name').textContent = labelFor(user); $('user-avatar').textContent = initials(labelFor(user));
   await refresh();
-  if (!sessionReady) return;
-  stream?.close(); stream = new EventSource('/api/events');
-  stream.addEventListener('change', scheduleRefresh);
-  stream.addEventListener('open', scheduleRefresh);
+  if (generation !== sessionGeneration || !sessionReady) return;
+  stream?.close(); stream = subscribeChanges();
   clearInterval(fallbackTimer);
   fallbackTimer = setInterval(() => { if (sessionReady && !document.hidden) scheduleRefresh(); }, 30000);
+}
+function subscribeChanges() {
+  if (!localApiCredential) {
+    const events = new EventSource('/api/events');
+    events.addEventListener('change', scheduleRefresh);
+    events.addEventListener('open', scheduleRefresh);
+    return events;
+  }
+  // EventSource cannot attach the origin-bound credential. The installed proxy
+  // emits fixed ASCII frames. Ignore heartbeat comments and bound partial frames.
+  const controller = new AbortController();
+  let retry;
+  async function connect() {
+    let reader;
+    try {
+      const response = await fetch('/api/events', {
+        headers: { Accept: 'text/event-stream', 'X-Time-Chat-Local': localApiCredential },
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      });
+      if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'text/event-stream') {
+        await response.body?.cancel();
+        if (response.status === 401 && !controller.signal.aborted) endSession('Your session ended. Sign in again.');
+        return;
+      }
+      reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8', { fatal: true });
+      let pending = '';
+      scheduleRefresh();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done || controller.signal.aborted || value.length > 16384) break;
+        const frames = (pending + decoder.decode(value, {stream: true})).split('\n\n');
+        pending = frames.pop();
+        if (pending.length > 128) break;
+        if (frames.includes('event: change\ndata: {}')) scheduleRefresh();
+      }
+    } catch { /* Retry while this session is open. Periodic refresh also continues. */ }
+    finally {
+      if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      if (!controller.signal.aborted) retry = setTimeout(connect, 3000);
+    }
+  }
+  connect();
+  return { close() { clearTimeout(retry); controller.abort(); } };
 }
 const owner = chat => chat.members.find(member => member.id === user.id);
 const others = chat => chat.members.filter(member => member.id !== user.id);
@@ -165,41 +228,108 @@ function drawRail() {
   for (const chat of chats) {
     const title = titleOf(chat);
     if (query && !title.toLocaleLowerCase().includes(query)) continue;
-    const row = button('', 'chat-row', () => { selectRoom(chat).catch(e => report('room-status', e)); });
+    const row = button('', 'chat-row', () => { selectRoom(chat, {lookup:true}).catch(e => report('room-status', e)); });
     if (active?.chat.id === chat.id) row.setAttribute('aria-current', 'true');
-    const text = by('span', 'row-text'); text.append(by('strong', null, title), by('small', '', memberLabel(chat)));
+    const namesChecked = others(chat).every(member => cachedProof(member)?.verified);
+    const text = by('span', 'row-text');
+    text.append(by('strong', null, title), by('small', '', memberLabel(chat) + (namesChecked ? '' : ' · Names unverified')));
     row.append(by('span', 'avatar', initials(title)), text);
     if (chat.unread > 0) row.append(by('span', 'unread', String(chat.unread)));
     list.append(row);
   }
-  if (!list.childElementCount) list.append(by('p', 'list-note', query ? 'No matching conversations.' : refreshed ? 'No conversations yet.' : 'Loading conversations…'));
+  if (!list.childElementCount) list.append(by('p', 'list-note', query ? 'No matching conversations loaded.' : refreshed ? 'No conversations yet.' : 'Loading conversations…'));
+  if (inboxCursor) {
+    const more = button('Load more conversations', 'quiet', loadOlderRooms);
+    more.disabled = Boolean(olderRequest); list.append(more);
+  }
 }
 $('filter').addEventListener('input', drawRail);
 async function assertRoom(chat) {
+  if (!Array.isArray(chat?.members) || chat.members.some(member =>
+    typeof member?.name !== 'string' || !/^[a-z0-9_]{2,15}$/.test(member.name) ||
+    typeof member.publicKey !== 'string' || member.publicKey.length > 16384))
+    throw new Error('Could not verify this conversation’s members.');
   const ids = chat.members.map(member => member.id);
-  if (ids.length < 2 || ids.length > 16 || ids.length !== new Set(ids).size || !owner(chat) || canonicalKey(owner(chat).publicKey) !== canonicalKey(identity.publicKey) ||
+  if (ids.length < 2 || ids.length > 16 || ids.length !== new Set(ids).size || !owner(chat) || owner(chat).name !== user.name || canonicalKey(owner(chat).publicKey) !== canonicalKey(identity.publicKey) ||
       await roomId(config.networkId, ids) !== chat.id) throw new Error('Could not verify this conversation’s membership.');
 }
 function scheduleRefresh() { clearTimeout(sseTimer); sseTimer = setTimeout(refresh, 90); }
+function sameRoster(previous, next) {
+  return Array.isArray(next.members) && previous.members.length === next.members.length &&
+    previous.members.every(member => next.members.some(other =>
+      member.id === other.id && member.name === other.name && member.publicKey === other.publicKey));
+}
+const compareRooms = (a,b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+function mergeRooms(rows, retained = []) {
+  const byId = new Map(retained.map(chat => [chat.id,chat]));
+  for (const chat of rows) byId.set(chat.id,chat);
+  return [...byId.values()].sort(compareRooms);
+}
+async function inboxPage(cursor) {
+  const page = await api(cursor ? '/api/chats?cursor=' + encodeURIComponent(cursor) : '/api/chats');
+  if (!Array.isArray(page.chats) || page.chats.length > 24 ||
+      (page.nextCursor != null && (page.nextCursor === cursor || !/^[0-9]{1,16}\.[a-f0-9]{64}$/.test(page.nextCursor) || !page.chats.length)))
+    throw new Error('Could not read this conversation list.');
+  await Promise.all(page.chats.map(assertRoom));
+  return page;
+}
+async function loadOlderRooms() {
+  if (!identity || !inboxCursor || olderRequest) return;
+  const session = identity, cursor = inboxCursor;
+  const pending = olderRequest = inboxPage(cursor); drawRail();
+  let error;
+  try {
+    const page = await pending;
+    if (session !== identity || cursor !== inboxCursor) return;
+    const current = new Set(chats.map(chat => chat.id));
+    chats = mergeRooms(page.chats.filter(chat => !current.has(chat.id)),chats);
+    inboxCursor = page.nextCursor ?? null; hasOlderPages = true;
+  } catch { error = 'Could not load more conversations. Try again.'; }
+  finally {
+    if (olderRequest === pending) {
+      olderRequest = null; drawRail();
+      if (error) $('chats').append(by('p','list-note',error));
+    }
+  }
+}
+async function currentRoom(id) {
+  const { chat } = await api('/api/chats/' + encodeURIComponent(id));
+  if (chat?.id !== id) throw new Error('The relay returned another conversation.');
+  return chat;
+}
 async function refresh() {
   if (!sessionReady) return;
   if (refreshBusy) { refreshAgain = true; return; }
   refreshBusy = true;
   try {
     const session = identity;
-    const result = await api('/api/chats');
+    const result = await inboxPage(null);
     if (session !== identity) return;
-    chats = result.chats; refreshed = true; drawRail();
+    const last = result.chats.at(-1);
+    const overlap = hasOlderPages && result.nextCursor && result.chats.some(row => chats.some(old => old.id === row.id));
+    const retained = overlap ? chats.filter(row => compareRooms(row,last) > 0) : [];
+    if (!overlap) { inboxCursor = result.nextCursor ?? null; hasOlderPages = false; }
+    chats = mergeRooms(result.chats,retained); refreshed = true;
     const view = active;
     if (view) {
-      const chat = chats.find(c => c.id === view.chat.id);
-      if (!chat) { leaveRoom(); return; }
-      await assertRoom(chat);
-      if (active !== view) return;
+      let chat = result.chats.find(c => c.id === view.chat.id);
+      if (!chat) {
+        try { chat = await currentRoom(view.chat.id); }
+        catch (error) {
+          if (active !== view) return;
+          if (error.status !== 404) throw error;
+          chats = chats.filter(c => c.id !== view.chat.id);
+          leaveRoom(); return;
+        }
+        if (active !== view) return;
+        chats = mergeRooms([chat],chats);
+      }
+      if (!sameRoster(view.chat, chat)) { await selectRoom(chat, {replace:true}); return; }
+      drawRail();
       view.chat = chat;
       await checkRoom(view);
       if (active === view && view.ready) await loadMessages(view);
-    }
+    } else drawRail();
   } catch (e) {
     if (sessionReady) {
       if (active) report('room-status', e);
@@ -222,6 +352,7 @@ function blockPrompt(member) {
     yes.disabled = true;
     try {
       await api('/api/blocks', { id: member.id, blocked: true });
+      chats = chats.filter(chat => !chat.members.some(person => person.id === member.id));
       if (dialogSerial !== serial) { scheduleRefresh(); return; }
       closeDialog(); leaveRoom(); await refresh();
     } catch (e) { if (dialogSerial === serial) report('dialog-status', e); }
@@ -258,22 +389,49 @@ async function blockedContacts() {
     }
   } catch (e) { if (dialogSerial === serial) report('dialog-status', e); }
 }
-async function selectRoom(chat) {
-  if (active?.chat.id === chat.id) return;
+async function selectRoom(chat, {replace = false, lookup = false} = {}) {
+  if (!replace && active?.chat.id === chat.id) return;
+  closeDialog();
   const view = { chat, ready: false, messages: new Map(), decoded: new Map(), lastAck: 0, hasMore: false, sending: false, busy: false, again: false };
   active = view;
   $('workspace').classList.add('room-open'); $('empty-room').hidden = true; $('conversation').hidden = false; $('messages').replaceChildren();
-  $('room-title').textContent = titleOf(chat); $('room-avatar').textContent = initials(titleOf(chat)); $('room-detail').textContent = memberLabel(chat);
+  $('room-title').textContent = ''; $('room-avatar').textContent = ''; $('room-detail').textContent = 'Checking conversation…';
   $('room-status').textContent = ''; $('draft').value = ''; $('older').hidden = true; clearMode(false); clearMessageSearch(); closeEmoji(); controls(); drawRail();
-  await assertRoom(chat);
-  if (active !== view) return;
+  if (lookup) {
+    try { view.chat = await currentRoom(chat.id); }
+    catch (error) {
+      if (active === view && error.status === 404) {
+        chats = chats.filter(c => c.id !== chat.id); leaveRoom(); return;
+      }
+      throw error;
+    }
+    if (active !== view) return;
+  }
   await checkRoom(view);
   if (active === view && view.ready) await loadMessages(view);
 }
 async function checkRoom(view) {
   const chat = view.chat;
-  const pins = await Promise.all(others(chat).map(m => isPeerPinned(identity, m.id, m.publicKey)));
+  let pins;
+  try {
+    await assertRoom(chat);
+    if (active !== view) return;
+    const peers = others(chat);
+    if (!peers.every(member => cachedProof(member)?.verified)) { view.ready = false; controls(); }
+    pins = await Promise.all(peers.map(async member => {
+      await verifyEnrollment(member);
+      return isPeerPinned(identity, member.id, member.publicKey);
+    }));
+  } catch (error) {
+    if (active === view) {
+      view.ready = false; controls();
+      view.messages.clear(); view.decoded.clear(); $('messages').replaceChildren(); $('older').hidden = true;
+      clearMode(false); clearMessageSearch(); $('room-detail').textContent = 'Could not verify contacts';
+    }
+    throw error;
+  }
   if (active !== view) return;
+  $('room-title').textContent = titleOf(chat); $('room-avatar').textContent = initials(titleOf(chat));
   const groupAccepted = chat.members.length === 2 || localStorage.getItem(membershipKey(chat.id)) === 'yes';
   view.ready = pins.every(Boolean) && groupAccepted;
   $('room-detail').textContent = memberLabel(chat) + ' · ' + (view.ready ? 'Keys verified' : 'Verification needed');
@@ -293,7 +451,22 @@ function controls() {
 }
 
 const unhex = s => Uint8Array.from(s.match(/../g), pair => Number.parseInt(pair, 16));
-async function verifyEnrollment(member) {
+function cachedProof(member) {
+  const proof = contactProofs.get(member.id);
+  if (proof && proof.name === member.name && proof.publicKey === member.publicKey && proof.until > performance.now()) return proof;
+}
+function verifyEnrollment(member) {
+  const cached = cachedProof(member);
+  if (cached) return cached.promise;
+  const proof = { name: member.name, publicKey: member.publicKey, until: performance.now() + 60000 };
+  proof.promise = readEnrollment(member).then(() => { proof.verified = true; }, error => {
+    if (contactProofs.get(member.id) === proof) contactProofs.delete(member.id);
+    throw error;
+  });
+  contactProofs.set(member.id, proof);
+  return proof.promise;
+}
+async function readEnrollment(member) {
   const record = await api('/api/contacts/' + encodeURIComponent(member.id) + '/proof');
   const a = record.attestation, m = a?.proof?.message, signature = a?.proof?.signature;
   if (!record.verified || record.id !== member.id || record.name !== member.name || canonicalKey(record.publicKey) !== canonicalKey(member.publicKey) || a?.version !== 1 ||
@@ -315,6 +488,7 @@ async function verifyRoom() {
     append(by('p', '', 'Compare the full safety code with each person in person or by another trusted channel. Enter the code they see on their device.'));
     if (chat.members.length > 2) append(by('strong', '', 'Members'), by('p', '', chat.members.map(m => labelFor(m) + ' (#' + m.id + ')').join(' · ')));
     for (const member of others(chat)) {
+      await verifyEnrollment(member);
       const code = await safetyNumber(identity, member.id, member.publicKey);
       const pinned = await isPeerPinned(identity, member.id, member.publicKey);
       if (dialogSerial !== serial || active !== view) return;
@@ -402,8 +576,12 @@ function newChat() {
     try {
       const { users } = await api('/api/contacts?q=' + encodeURIComponent(q));
       if (dialogSerial !== serial || n !== searchCount) return;
+      if (!Array.isArray(users) || users.length > 1) throw new Error('The lookup returned ambiguous contacts.');
       results.replaceChildren();
-      for (const m of users.filter(m => m.id !== user.id && m.publicKey)) {
+      const exact = /^(0|[1-9][0-9]{0,19})$/.test(q) ? m => m.id === q : m => m.name === q.replace(/^@/, '').toLowerCase();
+      for (const m of users.filter(m => m.id !== user.id && m.publicKey && exact(m))) {
+        await verifyEnrollment(m);
+        if (dialogSerial !== serial || n !== searchCount) return;
         const pick = button(labelFor(m) + ' · #' + m.id, 'action-row', () => {
           if (!selected.has(m.id) && selected.size >= 15) { report('dialog-status', 'A group holds up to 16 people, including you.'); return; }
           selected.set(m.id, m); results.replaceChildren(); lookup.input.value = ''; drawSelected(); lookup.input.focus();
@@ -440,6 +618,8 @@ async function sendEvent(view, event) {
   if (view !== active || !view.ready || view.sending) return false;
   view.sending = true; controls(); closeEmoji(); $('room-status').textContent = '';
   try {
+    await checkRoom(view);
+    if (view !== active || !view.ready) return false;
     // A lost relay response can be retried without creating another signed event.
     const key = JSON.stringify(event);
     if (view.pending?.key !== key) {
@@ -634,10 +814,10 @@ async function pushSubscription() {
   const reg = await navigator.serviceWorker.getRegistration('/');
   return reg?.pushManager?.getSubscription() ?? null;
 }
-async function disablePush() {
+async function disablePush(options) {
   const sub = await pushSubscription();
   if (sub) {
-    try { await api('/api/push/remove', { endpoint: sub.endpoint }); }
+    try { await api('/api/push/remove', { endpoint: sub.endpoint }, options); }
     finally { await sub.unsubscribe(); }
   }
   localStorage.removeItem('time-chat/push-owner/v1');
@@ -660,14 +840,20 @@ async function enablePush() {
   notificationsEnabled = true;
 }
 async function logout() {
-  let notice = 'Signed out.';
-  try { if ('serviceWorker' in navigator) await disablePush(); }
-  catch { notice = 'Signed out. Review this site’s notification permission in your browser settings.'; }
+  if (signingOut) return;
+  signingOut = true;
+  const token = csrf;
+  localStorage.setItem(signedOutKey(), 'yes');
+  endSession('Signed out on this device.');
+  const generation = sessionGeneration;
+  sessionChanges?.postMessage('logout');
   try {
-    await api('/api/logout', {});
-    sessionChanges?.postMessage('logout');
-    endSession(notice);
-  } catch (e) { report('dialog-status', e); }
+    try { if ('serviceWorker' in navigator) await disablePush({csrfToken:token,signal:AbortSignal.timeout(3000)}); }
+    catch { /* A stale push endpoint will expire at the provider. */ }
+    await api('/api/logout', {}, {csrfToken:token,signal:AbortSignal.timeout(8000)});
+  } catch {
+    if (generation === sessionGeneration) $('signin-status').textContent = 'Signed out on this device. The relay could not confirm session revocation.';
+  } finally { signingOut = false; setSignButton('Sign in with Time'); }
 }
 async function settings() {
   const serial = showDialog('Account settings');
@@ -699,8 +885,13 @@ async function boot() {
       config = null;
       throw new Error('Open Time Chat on HTTPS or localhost in a browser with encrypted device storage.');
     }
+    if (config.installedClient) {
+      if (location.hostname !== '127.0.0.1') { config = null; throw new Error('The installed client needs its own loopback origin.'); }
+      localApiCredential = await installedApiCredential();
+    }
     setSignButton('Sign in with Time');
-    await openSession();
+    if (localStorage.getItem(signedOutKey()) === 'yes') endSession('Signed out on this device.');
+    else await openSession();
   } catch (err) {
     report('signin-status', err);
     if (config && !sessionReady) $('signin').disabled = false;

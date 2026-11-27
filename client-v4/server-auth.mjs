@@ -63,7 +63,7 @@ export async function verifyLogin({ verifiedState, networkId, origin, challenge,
   if (!verify(null, sdk.loginBytes(message), publicKey, Buffer.from(proof.signature, 'hex'))) fail('Invalid login signature');
   return { account, state, message };
 }
-export function createLoginService({ origin, networkId, verifiedState, now = Date.now, ttlMs = 180000, sessionMs = 3600000 }) {
+export function createLoginService({ origin, networkId, verifiedState, now = Date.now, ttlMs = 180000, sessionMs = 3600000, generateNonce = token }) {
   if (new URL(origin).origin !== origin || !/^[0-9a-f]{64}$/.test(networkId) || typeof verifiedState !== 'function') fail('Invalid login service configuration');
   // A challenge is kept by nobody here: it travels in the prelogin cookie, its nonce and times with a MAC under a key
   // made at start (a restart only makes the sign-ins under way start again). Handing one out costs no memory, so no
@@ -75,7 +75,8 @@ export function createLoginService({ origin, networkId, verifiedState, now = Dat
   const mac = (nonce, issuedAt, expiresAt) => createHmac('sha256', key).update(`time-prelogin-v1|${origin}|${networkId}|${nonce}|${issuedAt}|${expiresAt}`).digest('hex');
   function prune() { const time = now(); for (const [nonce, expiresAt] of used) if (expiresAt <= time) used.delete(nonce); for (const [id, value] of sessions) if (value.expiresAt <= time) sessions.delete(id); }
   function issue() {
-    const nonce = token(), issuedAt = now(), expiresAt = issuedAt + ttlMs;
+    const nonce = generateNonce(), issuedAt = now(), expiresAt = issuedAt + ttlMs;
+    if (typeof nonce !== 'string' || !/^[0-9a-f]{64}$/.test(nonce)) fail('Invalid login nonce');
     const challenge = { purpose: 'login', origin, networkId, nonce, issuedAt, expiresAt };
     return { cookie: `${nonce}.${issuedAt}.${expiresAt}.${mac(nonce, issuedAt, expiresAt)}`, challenge };
   }

@@ -9,6 +9,12 @@ Two marks are used:
 
 "Not yet run on real devices" means that it ran in tests and in Chrome with its virtual authenticator only: no phone, no Windows Hello or Touch ID, no Safari or Firefox.
 
+## 27 November 2026: Time Chat security update
+
+Time Chat now checks that an ordinary wallet sign-in belongs to the chosen relay. The installed client binds sessions to the browser origin. Opening or sending in a conversation checks the participants' Time identities and pinned chat keys. Update an installed client before signing in. See `apps/time-chat/README.md` for the privacy model and operating limits.
+
+**Stored format.** The relay adds SQLite indexes and records the creator of newly opened rooms to enforce per-account limits. Existing enrollments, safety codes and encrypted message history carry forward. The relay limits encrypted uploads, returns inboxes in bounded pages, and caps concurrent notification deliveries.
+
 ## 26 November 2026, second publication of the day: website sign-in
 
 A protected wallet now shows its payment password field only when a website requests a payment. Signing in to a website and linking a Time Chat device both use the account's sign-in key. The wallet asks for spending approval when the user chooses to pay.

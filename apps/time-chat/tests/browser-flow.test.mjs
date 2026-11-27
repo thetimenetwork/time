@@ -79,7 +79,7 @@ async function fixtureRelay(users, installed) {
   const hostedOrigin = upstream ? 'http://127.0.0.1:' + upstream.address().port : origin;
   try {
     const authFor = loginOrigin => createAuth({
-      origin:loginOrigin, enrollmentOrigins:[origin,hostedOrigin], walletOrigin, gateway: origin,
+      origin:loginOrigin, loginRelayOrigin:hostedOrigin, enrollmentOrigins:[origin,hostedOrigin], walletOrigin, gateway: origin,
       verifiedState: async () => ({
         verified: true,
         state: {
@@ -214,6 +214,51 @@ for (const mode of ['hosted','installed','mixed']) test('two isolated browsers s
       assert.ok(!JSON.stringify(requests).includes(text));
       assert.ok(!JSON.stringify(relay.store.db.prepare('SELECT * FROM messages').all()).includes(text));
     }
+    if (mode === 'installed') {
+      // A legitimate network rename can reach the verified state before the directory.
+      // Existing safety-code pins must not authorize a stale name on a new page.
+      users[1].account.name = 'bobby';
+      await alice.reload();
+      await alice.locator('#chats .chat-row', {hasText:'@bob'}).click();
+      await alice.getByText('Could not verify contacts', {exact:true}).waitFor();
+      assert.equal(await alice.locator('#draft').isDisabled(),true);
+      assert.equal(await alice.locator('#messages .bubble').count(),0);
+      relay.store.enroll({...relay.store.binding('62'),name:'bobby'});
+      await alice.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await alice.locator('#room-title').getByText('@bobby',{exact:true}).waitFor();
+      await alice.locator('#messages .bubble').first().waitFor();
+      assert.equal(await alice.locator('#draft').isEnabled(),true);
+    }
+    if (mode === 'hosted') {
+      // A second tab can still be restoring its session when the user signs out.
+      // Deliver its genuine earlier account response after the logout broadcast.
+      const tab = await alice.context().newPage();
+      const pending = Promise.withResolvers(), release = Promise.withResolvers();
+      await tab.route('**/api/me', async route => {
+        const response = await route.fetch();
+        pending.resolve();
+        await release.promise;
+        await route.fulfill({response});
+      });
+      try {
+        await tab.goto(relay.origin);
+        await pending.promise;
+        await alice.route('**/api/logout', route => route.abort());
+        await alice.locator('#settings').click();
+        await alice.getByRole('button',{name:'Sign out',exact:true}).click();
+        await tab.locator('#signin-status').getByText('Signed out in another tab.',{exact:true}).waitFor();
+        const delivered = tab.waitForResponse('**/api/me');
+        release.resolve();
+        await (await delivered).finished();
+        await tab.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+        assert.equal(await tab.locator('#workspace').isHidden(),true);
+        assert.equal(await tab.locator('#user-name').textContent(),'');
+        await alice.locator('#signin-status').getByText(/could not confirm session revocation/).waitFor();
+        await alice.reload();
+        await alice.getByText('Signed out on this device.', {exact:true}).waitFor();
+        assert.equal(await alice.locator('#workspace').isHidden(),true);
+      } finally { release.resolve(); }
+    }
   } finally {
     await browser?.close();
     await relay.close();
@@ -280,6 +325,29 @@ test('three installed clients verify the full group roster before reading encryp
     assert.equal(rows[0].senderId, '51');
     assert.ok(rows[0].ciphertext.startsWith(messageStart));
     assert.equal(rows[0].ciphertext.includes(message),false);
+
+    // Exercise the page boundary with two genuine enrolled conversations. The
+    // fixture narrows only the first page; later pages and room lookup use the API.
+    const direct = relay.store.createChat('51',['62']);
+    const groupId = relay.store.db.prepare('SELECT room FROM messages LIMIT 1').get().room;
+    await alice.route(url => url.pathname === '/api/chats' && !url.search, async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const response = await route.fetch();
+      const { chats } = await response.json();
+      const first = chats[0];
+      assert.equal(first.id,direct.id);
+      await route.fulfill({response,json:{chats:[first],nextCursor:first.updatedAt + '.' + first.id}});
+    });
+    await alice.reload();
+    await alice.locator('#filter').fill('cara');
+    await alice.getByRole('button',{name:'Load more conversations'}).click();
+    await alice.locator('#chats .chat-row',{hasText:'@cara'}).click();
+    await alice.locator('#messages').getByText(message,{exact:true}).waitFor();
+    const checkedRoom = alice.waitForResponse(response => new URL(response.url()).pathname === '/api/chats/' + groupId && response.ok());
+    await alice.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await checkedRoom;
+    await alice.locator('#messages').getByText(message,{exact:true}).waitFor();
+    assert.equal(await alice.locator('#chats .chat-row',{hasText:'@cara'}).count(),1);
   } finally {
     await browser?.close();
     await relay.close();

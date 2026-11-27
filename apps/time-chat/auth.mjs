@@ -1,4 +1,5 @@
 import { publicKeyStart, publicKeyEnd } from './public/armor.mjs';
+import { loginNoncePrefix } from './public/login-nonce.mjs';
 import { createHash, createPublicKey, randomBytes, verify } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -65,7 +66,7 @@ export async function createAuth({
   walletOrigin = process.env.TIME_WALLET_ORIGIN || testnetWallet,
   gateway = process.env.TIME_GATEWAY || walletOrigin,
   trustFile = process.env.TIME_TRUST_FILE || path.join(appDirectory, 'config/testnet-trust.json'),
-  enrollmentOrigins = [origin], verifiedState: injectedReader, now = Date.now
+  enrollmentOrigins = [origin], loginRelayOrigin = origin, verifiedState: injectedReader, now = Date.now
 }) {
   canonicalOrigin(origin);
   const acceptedEnrollments = new Set(enrollmentOrigins.map(canonicalOrigin));
@@ -88,15 +89,20 @@ export async function createAuth({
     sdk.requireKnownVersion(result.state);
     return result;
   }
-  const login = helpers.createLoginService({ origin, networkId, verifiedState, now });
+  const loginPrefix = await loginNoncePrefix(canonicalOrigin(loginRelayOrigin));
+  const generateNonce = () => loginPrefix + randomBytes(16).toString('hex');
+  const login = helpers.createLoginService({ origin, networkId, verifiedState, now, generateNonce });
   const pending = new Map();
+  const checkingSessions = new Map();
   const user = session => ({ accountId: session.accountId, name: session.name, expiresAt: session.expiresAt });
 
-  function issue(key) {
+  function issue(key, existingSessionToken) {
     if (key == null) {
       const { cookie, challenge } = login.issue();
+      if (!challenge.nonce.startsWith(loginPrefix)) fail('The installed Time SDK does not support scoped chat sign-in.', 503);
       return { token: cookie, challenge };
     }
+    if (!login.session(existingSessionToken)) fail('Sign in before linking a device.');
     const publicKey = publicArmor(key);
     const issuedAt = now();
     for (const [token, request] of pending) if (request.challenge.expiresAt <= issuedAt) pending.delete(token);
@@ -104,13 +110,18 @@ export async function createAuth({
     const salt = randomBytes(32).toString('hex');
     const token = 'bind.' + randomBytes(32).toString('hex');
     const challenge = { purpose: 'login', origin, networkId, nonce: keyCommitment(salt, publicKey), issuedAt, expiresAt: issuedAt + challengeLifetime };
-    pending.set(token, { publicKey, salt, challenge });
+    pending.set(token, { publicKey, salt, challenge, sessionToken:existingSessionToken });
     return { token, challenge, salt };
   }
 
   async function current(token) {
-    if (!token) return null;
-    const active = await login.current(token);
+    if (!token || !login.session(token)) return null;
+    let check = checkingSessions.get(token);
+    if (!check) {
+      check = login.current(token).finally(() => checkingSessions.delete(token));
+      checkingSessions.set(token, check);
+    }
+    const active = await check;
     if (!active || login.session(token) !== active.session) return null;
     return user(active.session);
   }
@@ -122,10 +133,15 @@ export async function createAuth({
       return { token: result.cookie, ...user(result.session), publicKey: null, attestation: null };
     }
     const request = pending.get(token);
-    pending.delete(token);
-    if (!request || request.challenge.expiresAt <= now()) fail('The key-binding request expired. Start again.');
+    if (!request || request.challenge.expiresAt <= now()) {
+      pending.delete(token);
+      fail('The key-binding request expired. Start again.');
+    }
     const session = login.session(existingSessionToken);
-    if (!session || proof?.message?.accountId !== session.accountId) fail('Sign in to the same Time account before linking a key.');
+    if (!session || request.sessionToken !== existingSessionToken || proof?.message?.accountId !== session.accountId) {
+      fail('Use the same signed-in session to link this device.');
+    }
+    pending.delete(token);
     await helpers.verifyLogin({ verifiedState, networkId, origin, challenge: request.challenge, proof, now });
     if (!await current(existingSessionToken)) fail('Your Time session expired. Sign in again.');
     return {
@@ -150,7 +166,7 @@ export async function createAuth({
         typeof message.authEpoch !== 'string' || sdk.decimal(message.authEpoch) !== message.authEpoch ||
         typeof message.publicKey !== 'string' || !hex32.test(message.publicKey) ||
         typeof proof.signature !== 'string' || !/^[0-9a-f]{128}$/.test(proof.signature) ||
-        message.nonce !== keyCommitment(attestation.salt, publicKey) ||
+        message.nonce !== keyCommitment(attestation.salt, publicKey) || message.nonce.startsWith(loginPrefix) ||
         !Number.isSafeInteger(message.issuedAt) || !Number.isSafeInteger(message.expiresAt) ||
         message.issuedAt < 0 || message.issuedAt > now() || message.expiresAt - message.issuedAt !== challengeLifetime) {
       fail('The chat key does not match its signed Time enrollment.');
@@ -177,5 +193,7 @@ export async function createAuth({
     return { accountId: String(account.id), name: account.name };
   }
   const refreshCheckpoint = () => verifiedState({ids:['0']});
-  return { networkId, walletOrigin, sdkPath: path.resolve(timeRoot, 'client-v4/time-sdk.js'), issue, finish, current, logout: login.logout, resolveName, verifyAttestation, verifyFreshLogin, refreshCheckpoint };
+  // Used only to charge an existing account's rate limit before expensive proof verification.
+  const sessionAccount = token => login.session(token)?.accountId ?? null;
+  return { networkId, walletOrigin, sdkPath: path.resolve(timeRoot, 'client-v4/time-sdk.js'), issue, finish, current, sessionAccount, logout: login.logout, resolveName, verifyAttestation, verifyFreshLogin, refreshCheckpoint };
 }

@@ -1,5 +1,6 @@
 import { generateVAPIDKeys, sendNotification } from 'web-push';
 import { readFile, writeFile } from 'node:fs/promises';
+import { Agent } from 'node:https';
 import path from 'node:path';
 import { ApiError } from './store.mjs';
 
@@ -42,8 +43,8 @@ export function validateSubscription(input) {
     bad();
   const { auth, p256dh } = input.keys ?? {};
   if (
-    !/^[A-Za-z0-9_-]{22}$/.test(auth ?? '') ||
-    !/^[A-Za-z0-9_-]{87}$/.test(p256dh ?? '') ||
+    typeof auth !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(auth) ||
+    typeof p256dh !== 'string' || !/^[A-Za-z0-9_-]{87}$/.test(p256dh) ||
     Buffer.from(p256dh, 'base64url')[0] !== 4
   )
     bad();
@@ -60,6 +61,8 @@ export async function openPush(dir, deliver = sendNotification) {
     if (error.code !== 'EEXIST') throw error;
   }
   const keys = JSON.parse(await readFile(file, 'utf8'));
+  const agent = new Agent({ maxSockets: 16, maxTotalSockets: 16 });
+  const pending = new Set();
   return {
     publicKey: keys.publicKey,
     async notify(store, owner) {
@@ -68,8 +71,14 @@ export async function openPush(dir, deliver = sendNotification) {
         'mailto:postmaster@example.com';
       await Promise.allSettled(
         store.subscriptions(owner).map(async (sub) => {
+          // A wakeup has no message-specific payload. Coalesce outstanding wakeups
+          // for the same device and bound both open sockets and work waiting on them.
+          if (pending.has(sub.endpoint) || pending.size >= 256) return;
+          pending.add(sub.endpoint);
           try {
-            await deliver(sub, undefined, {
+            const checked = validateSubscription(sub);
+            await deliver(checked, undefined, {
+              agent,
               TTL: 900,
               timeout: 8000,
               topic: 'time-chat',
@@ -78,6 +87,8 @@ export async function openPush(dir, deliver = sendNotification) {
           } catch (error) {
             if ([404, 410].includes(error.statusCode))
               store.unsubscribe(owner, sub.endpoint);
+          } finally {
+            pending.delete(sub.endpoint);
           }
         })
       );

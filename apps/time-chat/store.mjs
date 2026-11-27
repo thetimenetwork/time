@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
+import { statfsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+
+const day = 24 * 60 * 60 * 1000;
+const dailyMessageBytes = 8 * 1024 * 1024;
+const dailyRoomCreations = 100;
+const pageBytes = 1024 * 1024;
+const roomsPerPage = 24;
+const diskReserve = 64n * 1024n * 1024n;
 
 export class ApiError extends Error {
   constructor(status, message) {
@@ -13,8 +21,14 @@ export function roomId(networkId, members) {
   return createHash('sha256').update(JSON.stringify(context)).digest('hex');
 }
 
-export function openStore(path, networkId) {
+export function openStore(path, networkId, { volumeStats = statfsSync } = {}) {
   const db = new DatabaseSync(path);
+  function requireWriteSpace() {
+    if (path === ':memory:') return;
+    const { bavail, bsize } = volumeStats(path, { bigint: true });
+    if (bavail * bsize <= diskReserve)
+      throw new ApiError(503, 'Relay storage is nearly full. Try again later.');
+  }
   db.exec(`
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
@@ -23,10 +37,13 @@ export function openStore(path, networkId) {
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, publicKey TEXT NOT NULL, attestation TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS rooms(id TEXT PRIMARY KEY, updatedAt INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS members(room TEXT REFERENCES rooms(id), user TEXT REFERENCES users(id), seen INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(room,user));
+    CREATE TABLE IF NOT EXISTS room_creations(room TEXT PRIMARY KEY REFERENCES rooms(id), creator TEXT NOT NULL REFERENCES users(id), createdAt INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS creator_activity ON room_creations(creator, createdAt);
     CREATE INDEX IF NOT EXISTS member_rooms ON members(user,room);
     CREATE TABLE IF NOT EXISTS messages(seq INTEGER PRIMARY KEY, room TEXT NOT NULL REFERENCES rooms(id), senderId TEXT NOT NULL REFERENCES users(id),
       messageId TEXT NOT NULL, ciphertext TEXT NOT NULL, createdAt INTEGER NOT NULL, UNIQUE(room,messageId));
     CREATE INDEX IF NOT EXISTS room_history ON messages(room,seq);
+    CREATE INDEX IF NOT EXISTS sender_volume ON messages(senderId,createdAt,octet_length(ciphertext));
     CREATE TABLE IF NOT EXISTS subscriptions(endpoint TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), subscription TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS blocks(owner TEXT NOT NULL REFERENCES users(id), peer TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(owner,peer));
   `);
@@ -86,6 +103,7 @@ export function openStore(path, networkId) {
     db,
     user,
     chat,
+    requireMember,
     participants,
     visibleParticipants(id) {
       return participants(id).filter((member) => !blockedRoom(id, member.id));
@@ -106,12 +124,8 @@ export function openStore(path, networkId) {
       )
         throw new ApiError(400, 'Invalid contact.');
       if (blocked)
-        db.prepare('INSERT OR IGNORE INTO blocks VALUES(?,?)').run(owner, peer);
-      else
-        db.prepare('DELETE FROM blocks WHERE owner=? AND peer=?').run(
-          owner,
-          peer
-        );
+        return db.prepare('INSERT OR IGNORE INTO blocks VALUES(?,?)').run(owner, peer).changes !== 0;
+      return db.prepare('DELETE FROM blocks WHERE owner=? AND peer=?').run(owner, peer).changes !== 0;
     },
     enroll({ id, name, publicKey, attestation }) {
       return transaction(() => {
@@ -181,21 +195,49 @@ export function openStore(path, networkId) {
             'Conversation unavailable for these participants.'
           );
         if (!db.prepare('SELECT 1 FROM rooms WHERE id=?').get(id)) {
-          db.prepare('INSERT INTO rooms VALUES (?,?)').run(id, Date.now());
+          const now = Date.now();
+          const { total } = db.prepare('SELECT count(*) AS total FROM room_creations WHERE creator=? AND createdAt>?').get(owner, now - day);
+          if (total >= dailyRoomCreations) throw new ApiError(429, 'Daily new conversation limit reached.');
+          requireWriteSpace();
+          db.prepare('INSERT INTO rooms VALUES (?,?)').run(id, now);
+          db.prepare('INSERT INTO room_creations VALUES (?,?,?)').run(id, owner, now);
           const add = db.prepare('INSERT INTO members(room,user) VALUES (?,?)');
           for (const member of ids) add.run(id, member);
         }
         return chat(id, owner);
       });
     },
-    list(owner) {
-      return db
-        .prepare(
-          'SELECT room FROM members JOIN rooms ON rooms.id=members.room WHERE user=? ORDER BY updatedAt DESC,room'
+    list(owner, cursor = null) {
+      let timestamp = Number.MAX_SAFE_INTEGER, room = '';
+      if (cursor !== null) {
+        const match = typeof cursor === 'string' && /^(0|[1-9][0-9]{0,15})\.([a-f0-9]{64})$/.exec(cursor);
+        if (!match || !Number.isSafeInteger(Number(match[1]))) throw new ApiError(400, 'Invalid conversation cursor.');
+        timestamp = Number(match[1]);
+        room = match[2];
+      }
+      const rows = db.prepare(`
+        SELECT r.id FROM members me JOIN rooms r ON r.id=me.room
+        WHERE me.user=? AND (r.updatedAt<? OR (r.updatedAt=? AND r.id>?))
+        AND NOT EXISTS (
+          SELECT 1 FROM members peer WHERE peer.room=me.room AND (
+            EXISTS (SELECT 1 FROM blocks WHERE owner=me.user AND peer=peer.user) OR
+            EXISTS (SELECT 1 FROM blocks WHERE owner=peer.user AND peer=me.user)
+          )
         )
-        .all(owner)
-        .filter(({ room }) => !blockedRoom(room, owner))
-        .map(({ room }) => chat(room, owner));
+        ORDER BY r.updatedAt DESC,r.id LIMIT ?
+      `).all(owner, timestamp, timestamp, room, roomsPerPage + 1);
+      const chats = [];
+      let bytes = 128; // Includes JSON object framing and the longest cursor.
+      for (const row of rows.slice(0, roomsPerPage)) {
+        const value = chat(row.id, owner);
+        const size = Buffer.byteLength(JSON.stringify(value)) + 1;
+        if (chats.length && bytes + size > pageBytes) break;
+        chats.push(value);
+        bytes += size;
+      }
+      const last = chats.at(-1);
+      const nextCursor = chats.length < rows.length ? last.updatedAt + '.' + last.id : null;
+      return { chats, nextCursor };
     },
     history(id, owner, before) {
       requireMember(id, owner);
@@ -203,11 +245,16 @@ export function openStore(path, networkId) {
         .prepare(
           `SELECT seq,senderId,messageId,ciphertext,createdAt FROM messages WHERE room=? AND seq<? ORDER BY seq DESC LIMIT 51`
         )
-        .all(id, before ?? Number.MAX_SAFE_INTEGER);
-      return {
-        messages: rows.slice(0, 50).reverse(),
-        hasMore: rows.length > 50,
-      };
+        .iterate(id, before ?? Number.MAX_SAFE_INTEGER);
+      const messages = [];
+      let bytes = 32, hasMore = false;
+      for (const row of rows) {
+        const size = Buffer.byteLength(JSON.stringify(row)) + 1;
+        if (messages.length === 50 || bytes + size > pageBytes) { hasMore = true; break; }
+        messages.push(row);
+        bytes += size;
+      }
+      return { messages: messages.reverse(), hasMore };
     },
     append(id, owner, messageId, ciphertext) {
       return transaction(() => {
@@ -223,6 +270,11 @@ export function openStore(path, networkId) {
           return { seq: existing.seq, inserted: false };
         }
         const now = Date.now();
+        const { used } = db.prepare('SELECT coalesce(sum(octet_length(ciphertext)),0) AS used FROM messages WHERE senderId=? AND createdAt>?').get(owner, now - day);
+        if (used + Buffer.byteLength(ciphertext) > dailyMessageBytes) {
+          throw new ApiError(429, 'Daily encrypted message allowance reached. Try again later.');
+        }
+        requireWriteSpace();
         const result = db
           .prepare(
             'INSERT INTO messages(room,senderId,messageId,ciphertext,createdAt) VALUES (?,?,?,?,?)'

@@ -93,6 +93,14 @@ function stored(db, storeName, key, initialValue) {
   });
 }
 
+// The installed loopback proxy binds its session to this browser origin. A cookie
+// alone is shared by every port on the same host. One IDB transaction handles
+// simultaneous first visits from two tabs without creating competing credentials.
+export async function installedApiCredential() {
+  const db = await openDatabase();
+  return stored(db, 'identities', 'installed-api-credential/v1', hex(crypto.getRandomValues(new Uint8Array(32))));
+}
+
 function runtimeIdentity(networkId, accountId, privateKey, store) {
   const identity = { networkId, accountId, publicKey: privateKey.toPublic().armor() };
   // JSON.stringify(identity) is safe to use as public metadata.
@@ -144,7 +152,7 @@ export async function loadIdentity(networkId, accountId) {
   }
 }
 
-async function parsePublic(armor) {
+export async function parsePublic(armor) {
   if (typeof armor !== 'string' || armor.length > 16384 ||
       !armor.startsWith(publicKeyStart))
     throw new Error('Invalid public chat key.');

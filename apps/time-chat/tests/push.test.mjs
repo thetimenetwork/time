@@ -6,6 +6,11 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { openPush } from '../push.mjs';
 
+const browserKeys = {
+  auth: Buffer.alloc(16).toString('base64url'),
+  p256dh: Buffer.concat([Buffer.from([4]), Buffer.alloc(64)]).toString('base64url'),
+};
+
 test('push service sends an empty wakeup and prunes expired subscriptions', async t => {
   const dir = await mkdtemp(path.join(tmpdir(),'time-chat-push-'));
   t.after(()=>rm(dir,{recursive:true,force:true}));
@@ -15,7 +20,7 @@ test('push service sends an empty wakeup and prunes expired subscriptions', asyn
     if(subscription.endpoint.endsWith('/expired')) throw Object.assign(new Error('Gone'),{statusCode:410});
   });
   await service.notify({
-    subscriptions:()=>[{endpoint:'https://fcm.googleapis.com/current'},{endpoint:'https://fcm.googleapis.com/expired'}],
+    subscriptions:()=>['current','expired'].map(path=>({endpoint:'https://fcm.googleapis.com/'+path, keys:browserKeys})),
     unsubscribe:(id,endpoint)=>removed.push({id,endpoint})
   },'9');
   assert.equal(sent.length,2);
@@ -25,6 +30,27 @@ test('push service sends an empty wakeup and prunes expired subscriptions', asyn
   }
   assert.deepEqual(removed,[{id:'9',endpoint:'https://fcm.googleapis.com/expired'}]);
   assert.equal(service.publicKey,(await openPush(dir)).publicKey);
+});
+
+test('each endpoint gets one pending wakeup and stored destinations are checked again', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(),'time-chat-push-'));
+  t.after(() => rm(dir,{recursive:true,force:true}));
+  const destinations = [];
+  const completion = Promise.withResolvers();
+  const service = await openPush(dir, async (sub, payload, options) => {
+    destinations.push(sub.endpoint);
+    assert.equal(options.agent.maxTotalSockets, 16);
+    await completion.promise;
+  });
+  const valid = {endpoint:'https://fcm.googleapis.com/current', keys:browserKeys};
+  const store = { subscriptions: () => [valid, { ...valid, endpoint:'https://example.com/unused' }] };
+  const first = service.notify(store,'9');
+  await service.notify(store,'9');
+  assert.deepEqual(destinations,[valid.endpoint]);
+  completion.resolve();
+  await first;
+  await service.notify(store,'9');
+  assert.deepEqual(destinations,[valid.endpoint, valid.endpoint]);
 });
 
 test('the service worker shows fixed text and opens its own app', async () => {

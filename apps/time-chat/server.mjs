@@ -1,10 +1,15 @@
 import { messageStart, messageEnd } from './public/armor.mjs';
 import { createServer } from 'node:http';
+import { isIP } from 'node:net';
 import { createHmac, randomBytes } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readKey, readMessage, enums } from 'openpgp';
+import {
+  AEADEncryptedDataPacket, PacketList, PublicKeyEncryptedSessionKeyPacket,
+  SymEncryptedIntegrityProtectedDataPacket, enums, unarmor,
+} from 'openpgp';
+import { parsePublic } from './public/crypto.mjs';
 import { createAuth } from './auth.mjs';
 import { ApiError, openStore } from './store.mjs';
 import { openPush, validateSubscription } from './push.mjs';
@@ -12,16 +17,16 @@ import { serveAsset } from './assets.mjs';
 
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const encryptedTags = new Set([
-  enums.packet.symEncryptedIntegrityProtectedData,
-  enums.packet.aeadEncryptedData,
-]);
+const encryptedPackets = Object.fromEntries([
+  PublicKeyEncryptedSessionKeyPacket, SymEncryptedIntegrityProtectedDataPacket, AEADEncryptedDataPacket,
+].map(packet => [packet.tag, packet]));
 const knownErrors = new Set([400, 401, 403, 404, 409, 413, 415, 429, 503]);
 export function json(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    'Cross-Origin-Resource-Policy': 'same-origin',
     'Referrer-Policy': 'no-referrer',
   });
   res.end(JSON.stringify(data));
@@ -71,10 +76,14 @@ async function requireCiphertext(armor) {
   )
     throw new ApiError(400, 'Expected an encrypted chat envelope.');
   try {
-    const message = await readMessage({ armoredMessage: armor });
-    const tags = message.packets.map((p) => p.constructor.tag);
+    // A relay only handles encrypted outer packets. A general message reader can
+    // decompress plaintext before the caller ever gets to inspect the packet tags.
+    const { type, data } = await unarmor(armor);
+    if (type !== enums.armor.message) throw Error();
+    const packets = await PacketList.fromBinary(data, encryptedPackets);
+    const tags = packets.map((p) => p.constructor.tag);
     if (
-      !encryptedTags.has(tags.at(-1)) ||
+      ![enums.packet.symEncryptedIntegrityProtectedData, enums.packet.aeadEncryptedData].includes(tags.at(-1)) ||
       tags.length < 2 ||
       tags.length > 17 ||
       tags
@@ -87,6 +96,15 @@ async function requireCiphertext(armor) {
   }
 }
 
+export function loginRateAddress(peer, forwardedFor, trustLoopbackProxy) {
+  if (!trustLoopbackProxy || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(peer) ||
+      typeof forwardedFor !== 'string') return peer;
+  // The trusted reverse proxy appends its directly connected peer. Earlier hops
+  // may be supplied by a client and must never select its rate-limit bucket.
+  const lastHop = forwardedFor.slice(forwardedFor.lastIndexOf(',') + 1).trim();
+  return isIP(lastHop) ? lastHop : peer;
+}
+
 export function createChatServer({
   auth: primaryAuth,
   store,
@@ -94,11 +112,12 @@ export function createChatServer({
   origin: primaryOrigin,
   installed = null,
   hosts = [new URL(primaryOrigin).host],
+  trustLoopbackProxy = false,
 }) {
   const csrfSecret = randomBytes(32);
   const csrfFor = (token) =>
     createHmac('sha256', csrfSecret).update(token).digest('hex');
-  const streams = new Map(),
+  const streams = new Map(), sessionStreams = new Map(),
     buckets = new Map();
   const cookie = (name, value, ttl) =>
     name +
@@ -108,10 +127,18 @@ export function createChatServer({
     ttl +
     (primaryOrigin.startsWith('https:') ? '; Secure' : '');
   const signal = (members) => {
-    for (const { id } of members)
-      for (const res of streams.get(id) || [])
-        res.write('event: change\ndata: {}\n\n');
+    for (const { id } of members) {
+      for (const res of streams.get(id) || []) {
+        if (res.writableEnded || res.destroyed) continue;
+        if (res.writableNeedDrain) res.destroy();
+        else res.write('event: change\ndata: {}\n\n');
+      }
+    }
   };
+  function logout(auth, token) {
+    auth.logout(token);
+    for (const res of sessionStreams.get(token) || []) res.end();
+  }
   function limit(key, max) {
     const now = Date.now();
     let b = buckets.get(key);
@@ -142,22 +169,27 @@ export function createChatServer({
       if (!post && req.method !== 'GET')
         throw new ApiError(404, 'Route unavailable.');
       if (
-        req.headers['sec-fetch-site'] === 'cross-site' ||
+        (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') ||
+        (req.headers['sec-fetch-dest'] && req.headers['sec-fetch-dest'] !== 'empty') ||
         (req.headers.origin && req.headers.origin !== origin) ||
         (post && req.headers.origin !== origin)
       )
         throw new ApiError(403, 'App origin required.');
-      const cookies = parseCookies(req),
-        token = cookies.time_chat_session;
+      // A sibling website cannot plant a __Host- cookie for the HTTPS chat site.
+      // The installed client's relay cookies travel over its private server-side connection.
+      const cookiePrefix = !viaInstalled && primaryOrigin.startsWith('https:') ? '__Host-' : '';
+      const sessionCookie = cookiePrefix + 'time_chat_session', preCookie = cookiePrefix + 'time_chat_pre';
+      const cookies = parseCookies(req), token = cookies[sessionCookie];
       if (!post && p === '/api/config')
         return json(res, 200, {
           networkId: auth.networkId,
           walletOrigin: auth.walletOrigin,
+          loginRelayOrigin: primaryOrigin,
           enrollmentOrigins: installed ? [primaryOrigin, installed.origin] : [primaryOrigin],
           pushKey: push?.publicKey ?? null,
         });
       if (post && p === '/api/login/challenge') {
-        limit('login:' + req.socket.remoteAddress, 40);
+        limit('login:' + loginRateAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], trustLoopbackProxy), 40);
         const { publicKey } = shape(await readBody(req), ['publicKey']);
         if (publicKey != null) {
           if (
@@ -167,27 +199,24 @@ export function createChatServer({
           )
             throw new ApiError(403, 'Sign in before linking a device.');
           try {
-            if (
-              typeof publicKey !== 'string' ||
-              publicKey.length > 16384 ||
-              (await readKey({ armoredKey: publicKey })).isPrivate()
-            )
-              throw Error();
+            const key = await parsePublic(publicKey);
+            // The wallet must bind exactly the public certificate that clients verify.
+            if (key.armor().trim() !== publicKey.replaceAll('\r\n', '\n').trim()) throw Error();
           } catch {
             throw new ApiError(400, 'Invalid chat public key.');
           }
         }
-        const issue = auth.issue(publicKey);
-        res.setHeader('Set-Cookie', cookie('time_chat_pre', issue.token, 180));
+        const issue = auth.issue(publicKey, token);
+        res.setHeader('Set-Cookie', cookie(preCookie, issue.token, 180));
         return json(res, 200, {
           challenge: issue.challenge,
           salt: issue.salt ?? null,
         });
       }
       if (post && p === '/api/login/finish') {
-        limit('finish:' + req.socket.remoteAddress, 40);
+        limit('finish:' + loginRateAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], trustLoopbackProxy), 40);
         const proof = shape(await readBody(req), ['message', 'signature']);
-        const result = await auth.finish(cookies.time_chat_pre, proof, token);
+        const result = await auth.finish(cookies[preCookie], proof, token);
         if (result.publicKey)
           store.enroll({
             id: result.accountId,
@@ -195,10 +224,10 @@ export function createChatServer({
             publicKey: result.publicKey,
             attestation: result.attestation,
           });
-        if (token && token !== result.token) auth.logout(token);
+        if (token && token !== result.token) logout(auth, token);
         res.setHeader('Set-Cookie', [
-          cookie('time_chat_session', result.token, 3600),
-          cookie('time_chat_pre', '', 0),
+          cookie(sessionCookie, result.token, 3600),
+          cookie(preCookie, '', 0),
         ]);
         return json(res, 200, { ok: true });
       }
@@ -206,13 +235,19 @@ export function createChatServer({
         if (!token || req.headers['x-csrf-token'] !== csrfFor(token))
           throw new ApiError(403, 'Refresh your session.');
         shape(await readBody(req), []);
-        auth.logout(token);
+        logout(auth, token);
         res.setHeader('Set-Cookie', [
-          cookie('time_chat_session', '', 0),
-          cookie('time_chat_pre', '', 0),
+          cookie(sessionCookie, '', 0),
+          cookie(preCookie, '', 0),
         ]);
         return json(res, 200, { ok: true });
       }
+      if (post && token && req.headers['x-csrf-token'] !== csrfFor(token))
+        throw new ApiError(403, 'Refresh your session.');
+      // Use the locally issued session only to select a rate bucket. The Time
+      // authority check below still runs before any data is served or changed.
+      const rateAccount = auth.sessionAccount(token);
+      if (rateAccount) limit('api:' + rateAccount, 600);
       const active = await auth.current(token);
       if (!post && p === '/api/me') {
         if (!active) return json(res, 200, { user: null });
@@ -227,16 +262,13 @@ export function createChatServer({
         });
       }
       if (!active) throw new ApiError(401, 'Sign in with Time.');
-      if (post && req.headers['x-csrf-token'] !== csrfFor(token))
-        throw new ApiError(403, 'Refresh your session.');
       const owner = active.accountId;
       if (!store.user(owner))
         throw new ApiError(403, 'Link your chat key first.');
       if (p === '/api/blocks') {
         if (!post) return json(res, 200, { users: store.blocks(owner) });
         const { id, blocked } = shape(await readBody(req), ['id', 'blocked']);
-        store.block(owner, id, blocked);
-        signal([{ id: owner }, { id }]);
+        if (store.block(owner, id, blocked)) signal([{ id: owner }, { id }]);
         return json(res, 200, { ok: true });
       }
       if (!post && p === '/api/events') {
@@ -244,6 +276,9 @@ export function createChatServer({
         if (set.size >= 6) throw new ApiError(429, 'Too many open chat tabs.');
         streams.set(owner, set);
         set.add(res);
+        const forSession = sessionStreams.get(token) || new Set();
+        forSession.add(res);
+        sessionStreams.set(token, forSession);
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-store',
@@ -251,12 +286,14 @@ export function createChatServer({
           'X-Content-Type-Options': 'nosniff',
         });
         res.write(': connected\n\n');
+        const expiry = setTimeout(() => res.end(), Math.max(0, active.expiresAt - Date.now())).unref();
         let checking = false;
         const refresh = setInterval(async () => {
           if (checking) return;
           checking = true;
           try {
-            if (!(await auth.current(token))) res.end();
+            if (res.writableNeedDrain) res.destroy();
+            else if (!(await auth.current(token))) res.end();
             else res.write(': open\n\n');
           } catch {
             res.end();
@@ -266,8 +303,11 @@ export function createChatServer({
         }, 30000).unref();
         res.on('close', () => {
           clearInterval(refresh);
+          clearTimeout(expiry);
           set.delete(res);
           if (!set.size) streams.delete(owner);
+          forSession.delete(res);
+          if (!forSession.size) sessionStreams.delete(token);
         });
         return;
       }
@@ -279,6 +319,7 @@ export function createChatServer({
       }
       const proofPath = p.match(/^\/api\/contacts\/(\d{1,20})\/proof$/);
       if (!post && proofPath) {
+        limit('contacts:' + owner, 90);
         const binding = store.binding(proofPath[1]);
         const checked = await auth.verifyAttestation({
           ...binding,
@@ -291,13 +332,20 @@ export function createChatServer({
         });
       }
       if (p === '/api/chats') {
-        if (!post) return json(res, 200, { chats: store.list(owner) });
+        if (!post) {
+          const params = [...url.searchParams.keys()];
+          if (params.length && (params.length !== 1 || params[0] !== 'cursor'))
+            throw new ApiError(400, 'Invalid conversation cursor.');
+          return json(res, 200, store.list(owner, url.searchParams.get('cursor')));
+        }
         limit('new-room:' + owner, 30);
         const { members } = shape(await readBody(req), ['members']);
         const room = store.createChat(owner, members);
         signal(room.members);
         return json(res, 200, { chat: room });
       }
+      const roomPath = p.match(/^\/api\/chats\/([a-f0-9]{64})$/);
+      if (!post && roomPath) return json(res, 200, { chat: store.chat(roomPath[1], owner) });
       const route = p.match(/^\/api\/chats\/([a-f0-9]{64})\/(messages|read)$/);
       if (route) {
         const [, id, op] = route;
@@ -314,6 +362,7 @@ export function createChatServer({
         }
         if (op === 'messages' && post) {
           limit('send:' + owner, 120);
+          store.requireMember(id, owner);
           const { messageId, ciphertext } = shape(await readBody(req), [
             'messageId',
             'ciphertext',
@@ -401,7 +450,7 @@ if (
   const auth = await createAuth({ origin, enrollmentOrigins, dataDirectory: data });
   const installed = installedOrigin ? {
     origin: installedOrigin,
-    auth: await createAuth({ origin: installedOrigin, enrollmentOrigins, dataDirectory: path.join(data,'installed-checkpoint') })
+    auth: await createAuth({ origin: installedOrigin, loginRelayOrigin: origin, enrollmentOrigins, dataDirectory: path.join(data,'installed-checkpoint') })
   } : null;
   const store = openStore(
     path.join(data, 'chat-' + auth.networkId + '.sqlite'),
@@ -414,7 +463,8 @@ if (
     '127.0.0.1:' + port,
     'localhost:' + port,
   ];
-  const server = createChatServer({ auth, store, push, origin, installed, hosts });
+  const trustLoopbackProxy = process.env.TIME_CHAT_TRUST_LOOPBACK_PROXY === '1';
+  const server = createChatServer({ auth, store, push, origin, installed, hosts, trustLoopbackProxy });
   // Keep each verifier within the network's trusting period even when nobody signs in.
   const checkpointReaders = installed ? [auth, installed.auth] : [auth];
   async function updateCheckpoints() {

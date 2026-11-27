@@ -30,7 +30,7 @@ try {
   await once(relay,'listening');
   const relayHost = '127.0.0.1:' + relay.address().port;
   hosts.push(relayHost);
-  client = createInstalledClient({origin,relay:'http://' + relayHost,auth:clientAuth});
+  client = createInstalledClient({origin,relay:'http://' + relayHost,loginRelayOrigin:origin,auth:clientAuth});
   client.listen(port,'127.0.0.1');
   await once(client,'listening');
   console.log('Time Chat is ready at ' + origin);

@@ -98,6 +98,9 @@ test('IndexedDB seals one identity across concurrent tabs and reloads', {
         : route.fulfill({ contentType: 'text/html', body: '<title>Local test</title>' }));
     const tabs = await Promise.all([context.newPage(), context.newPage()]);
     await Promise.all(tabs.map(tab => tab.goto('http://127.0.0.1:31417/')));
+    const credential = tab => tab.evaluate(async () => (await import('/crypto.mjs')).installedApiCredential());
+    const credentials = await Promise.all(tabs.map(credential));
+    assert.ok(credentials[0] === credentials[1] && /^[0-9a-f]{64}$/.test(credentials[0]));
     const enroll = tab => tab.evaluate(async net => {
       const crypt = await import('/crypto.mjs');
       return (await crypt.loadIdentity(net, '42')).publicKey;
@@ -111,6 +114,7 @@ test('IndexedDB seals one identity across concurrent tabs and reloads', {
       await pinPeer(identity, '81', key, await safetyNumber(identity, '81', key));
     }, [network, peer.publicKey]);
     await tabs[1].reload();
+    assert.ok(await credential(tabs[1]) === credentials[0]);
     assert.equal(await enroll(tabs[1]), enrolled[0]);
     assert.equal(await tabs[1].evaluate(async net => {
       const { loadIdentity, getPinnedKey } = await import('/crypto.mjs');

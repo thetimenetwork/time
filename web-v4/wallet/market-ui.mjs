@@ -194,7 +194,8 @@ export function createMarketUI(c) {
   }
 
   // ---------------------------------------------------------------- B. buy seconds with bitcoin
-  const rules = (state = c.state()) => sdk.marketRules(state);
+  // The rules as the pages word them: on a private test chain the length of a block is left out (market.mjs, blocksDuration).
+  const rules = (state = c.state()) => { const r = sdk.marketRules(state); return bitcoinNetworkOf(state) === 'regtest' ? { ...r, blockMicros: null } : r; };
   const readNote = id => readNotes(c.storage.getItem(notesKey(net(), name())))[id] ?? null;
   const freeScript = order => order.scripts.some(entry => entry.fill === undefined && entry.used !== true);
   // What the buy form holds between two drawings: what was typed, the offer found, and the orders set aside.
@@ -251,7 +252,7 @@ export function createMarketUI(c) {
       el('p', { class: 'market-amount', id: 'market-offer-amount', text: `${seconds(offer.amountMicros)} seconds` }, el('small', { text: `for ${bitcoinWords(offer.sats)}` })),
       facts([['Price', priceWords(offer.price)], ['You pay', `${bitcoinWords(offer.sats)}, from your own Bitcoin wallet`],
         ['Deposit', `${seconds(offer.depositMicros)} seconds, locked now. It comes back when your payment is proven. You lose it to the seller if you do not pay in time, or if you give up.`],
-        ['Time to pay', `${offer.payBlocks} Bitcoin blocks, ${blocksDuration(offer.payBlocks, r.blockMicros)}`], ['Confirmations', `${offer.confirmations}, ${blocksDuration(offer.confirmations, r.blockMicros)} more, before the seconds are yours`],
+        ['Time to pay', `${offer.payBlocks} Bitcoin blocks, ${blocksDuration(offer.payBlocks, r.blockMicros)}`], ['Confirmations', r.blockMicros === null ? `${offer.confirmations} more blocks, before the seconds are yours` : `${offer.confirmations}, ${blocksDuration(offer.confirmations, r.blockMicros)} more, before the seconds are yours`],
         ['Fee', `${seconds(fee)} seconds`], ['Seller', `Account ${offer.owner}, order ${offer.order}. Smallest purchase: ${grouped(offer.minSats)} satoshis.`]]),
       p(`Read from the chain and checked by this browser at block ${offer.height}.`, 'field-note'));
     if (offer.more) card.append(p('This offer covers a part of what you asked for. After this purchase, come back for the rest: each purchase is one payment in bitcoin.', 'subtle'));
@@ -386,7 +387,7 @@ export function createMarketUI(c) {
       el('h3', { text: 'Where buyers pay you' }), p('Tick as many of your addresses as purchases you want this order to serve at once: each purchase uses one, once.', 'field-note'), ...boxes.map(box => box.node),
       el('details', { class: 'market-terms' }, el('summary', { text: 'Terms for buyers' }),
         ...field('market-sell-confirmations', 'Confirmations you ask of a payment', { inputMode: 'numeric', value: defaults.confirmations }, `From ${r.kMin} to ${r.kMax}. More is safer for you and slower for the buyer.`),
-        ...field('market-sell-blocks', 'Time to pay, in Bitcoin blocks', { inputMode: 'numeric', value: defaults.payBlocks }, `From ${r.nMin} to ${r.nMax}. ${defaults.payBlocks} blocks are ${blocksDuration(defaults.payBlocks, r.blockMicros)}.`),
+        ...field('market-sell-blocks', 'Time to pay, in Bitcoin blocks', { inputMode: 'numeric', value: defaults.payBlocks }, `From ${r.nMin} to ${r.nMax}. ${r.blockMicros === null ? 'On this test chain a block comes when its operator makes one.' : `${defaults.payBlocks} blocks are ${blocksDuration(defaults.payBlocks, r.blockMicros)}.`}`),
         ...field('market-sell-min', 'Smallest purchase, in satoshis', { inputMode: 'numeric', placeholder: 'suggested' }, `Left empty: the order shared over the addresses you ticked, so that they are enough to sell all of it; at least ${grouped(r.minSats)}.`),
         ...field('market-sell-deposit', 'Deposit a buyer locks, in percent', { inputMode: 'decimal', value: percentText(defaults.depositPpm).replace('%', '') }, 'What a buyer loses to you if they take your offer and do not pay.'),
         ...field('market-sell-min-deposit', 'Least deposit, in seconds', { inputMode: 'decimal', value: '0' }, 'So that small purchases cannot use up your addresses for almost nothing.')),

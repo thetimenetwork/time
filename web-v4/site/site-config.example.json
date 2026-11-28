@@ -8,5 +8,6 @@
   "ends": "2026-12-20",
   "hardware": "https://hardware.example",
   "source": "https://source.example/time",
-  "chat": "https://chat.example"
+  "chat": "https://chat.example",
+  "test_bitcoin": "https://faucet.example/bitcoin/"
 }

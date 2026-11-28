@@ -63,7 +63,12 @@ export function percentText(ppm) { const value = big(String(ppm)), fraction = (v
 export function groupedAddress(address) { assert(typeof address === 'string' && address.length > 0 && address.length <= 100, 'An address was expected.'); return address.match(/.{1,4}/g).join(' '); }
 /// About how long a number of Bitcoin blocks takes, by what the network takes a block to last (`blockMicros` of
 /// marketRules): "about 60 minutes". It is an average: blocks come when miners find them.
+/// On a private test chain (regtest) nobody can say: whoever runs the chain makes a block when they choose, and the
+/// length the rules take a block to last there (one second, on a laboratory network) is not how long one takes. The
+/// page passes null for such a chain (market-ui.mjs, `rules`), and the words say no duration.
+export const TEST_CHAIN_PACE = 'as this test chain makes them';
 export function blocksDuration(blocks, blockMicros) {
+  if (blockMicros === null) return TEST_CHAIN_PACE;
   const micros = big(String(blocks)) * big(String(blockMicros)), seconds = micros / MICROS;
   if (seconds < 120n) return `about ${seconds} second${seconds === 1n ? '' : 's'}`;
   const minutes = (seconds + 30n) / 60n;
@@ -187,13 +192,22 @@ export function leastAmountFor(sdk, sats, price) {
 }
 /// Why `amountMicros` of an order cannot be one fill (6.11), in words, or null when it can. `order` has
 /// `amount_micros`, `price`, `min_sats`; `rules` is TimeSDK.marketRules of the network.
+/// The least a Bitcoin payment to an address can carry: Bitcoin Core refuses to send, and to relay, an output below its
+/// dust amount (at the default dust fee: 294 satoshis to a SegWit address, 330 to a Taproot one, 546 to the oldest form).
+/// The rules of a test network let a trade cost less (its smallest trade can be one satoshi); such a purchase could
+/// never be paid, so the wallet does not make one. Found by the market simulation on a test network, 27 November 2026.
+export const BITCOIN_DUST_SATS = 546n;
+const dustWords = (cost) => `Bitcoin does not send so little: a payment of less than ${grouped(BITCOIN_DUST_SATS.toString())} satoshis to an address is refused by Bitcoin wallets. This amount costs ${grouped(cost.toString())} satoshis: choose more.`;
+/// Why an amount of an order cannot be one fill (spec/market.md, 6.11, and what Bitcoin sends), or null.
 export function sizeRefusal(sdk, order, amountMicros, rules) {
   const amount = big(String(amountMicros)), offer = big(order.amount_micros);
   if (amount < 1n) return 'Enter an amount.';
   if (amount > offer) return `This order offers ${secondsText(offer)} seconds, no more.`;
   const cost = BigInt(sdk.marketSats(amount.toString(), order.price)), least = big(order.min_sats);
+  if (amount === offer && cost >= big(rules.minSats) && cost < BITCOIN_DUST_SATS) return dustWords(cost);
   if (amount === offer) return cost >= big(rules.minSats) ? null : `What is left of this order costs less than the smallest trade of the network (${grouped(rules.minSats)} satoshis).`;
   if (cost < least) return `The smallest purchase of this order costs ${grouped(order.min_sats)} satoshis. This amount costs ${grouped(cost.toString())}.`;
+  if (cost < BITCOIN_DUST_SATS) return dustWords(cost);
   const rest = BigInt(sdk.marketSats((offer - amount).toString(), order.price));
   if (rest < least) return `That would leave ${secondsText(offer - amount)} seconds in the order, less than its smallest purchase. Take all ${secondsText(offer)} seconds, or at most ${secondsText(offer - BigInt(leastAmountFor(sdk, order.min_sats, order.price)))}.`;
   return null;

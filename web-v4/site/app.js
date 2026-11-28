@@ -6,7 +6,9 @@
 
 export const LINK_KEYS = Object.freeze(['wallet', 'faucet', 'explorer', 'blog']);
 /// Apps of the project that a network may not have: each card is shown only when its address is set.
-export const APP_KEYS = Object.freeze(['hardware', 'source', 'chat']);
+/// `test_bitcoin` is set on a network that has the market of seconds against bitcoin: the address of the page that
+/// hands out its play bitcoin. The market's own card is shown with it and leads to the wallet, where the market is.
+export const APP_KEYS = Object.freeze(['hardware', 'source', 'chat', 'test_bitcoin']);
 export const REQUIRED_KEYS = Object.freeze([...LINK_KEYS, 'api', 'network_name', 'ends']);
 export const KEYS = Object.freeze([...REQUIRED_KEYS, ...APP_KEYS]);
 export const EVERY_MS = 10000;
@@ -54,13 +56,15 @@ export function readConfig(value) {
   for (const key of Object.keys(value)) if (!KEYS.includes(key)) problems.push(`"${plainText(key, 40) ?? '?'}" is not a setting of this page.`);
   return { config, problems };
 }
-/// The links made from the settings: the explorer's Validators page, the wallet's "Check this device" page, and the
-/// guide for developers in the source. Null where the setting they come from is not set.
+/// The links made from the settings: the explorer's Validators page, the wallet's "Check this device" page, the
+/// guide for developers in the source, and the market (in the wallet, on a network that has it). Null where the
+/// setting they come from is not set.
 export function derivedLinks(config) {
   return {
     validators: config.explorer ? new URL('#/validators', config.explorer).href : null,
     device: config.wallet ? new URL('device-check.html', config.wallet).href : null,
     developers: config.source ? `${config.source.replace(/\/+$/, '')}/blob/main/docs/integration-guide.md` : null,
+    market: config.test_bitcoin && config.wallet ? config.wallet : null,
   };
 }
 /// "2026-12-20" -> "20 December 2026".

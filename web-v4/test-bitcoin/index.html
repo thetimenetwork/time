@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
+  <meta name="description" content="Play bitcoin on a private chain of the Time test network, worth nothing, for trying the market of seconds against bitcoin: pay an address, get a receiving address, see the chain.">
+  <title>Test bitcoin</title>
+  <link rel="stylesheet" href="test-bitcoin/styles.css">
+  <script type="module" src="test-bitcoin/app.mjs"></script>
+  <script type="module" src="shared/network-menu.js"></script>
+</head>
+<body>
+  <div class="strip"><strong>Test network.</strong> <span>This is play bitcoin. It is worth nothing and cannot be exchanged for anything.</span></div>
+  <header class="topbar"><span class="brand"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10.5"/><path d="M12 6.5v6l4 2.3"/></svg>Time</span><span class="where">Test bitcoin</span><span data-network-menu data-app="faucet" data-inline></span></header>
+  <main>
+    <div class="hero">
+      <svg class="ribbon" viewBox="0 0 400 240" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0 214C70 152 130 206 206 160S330 58 400 66C352 98 312 214 210 226S62 232 0 214Z"/></svg>
+      <h1>Test bitcoin</h1>
+      <p class="lede">Play bitcoin on a private chain of this test network. It is worth nothing. It is here only for trying the market of seconds against bitcoin.</p>
+    </div>
+
+    <section class="part first" aria-labelledby="pay-title">
+      <h2 id="pay-title">Pay an address</h2>
+      <p class="soft">The service pays play bitcoin from its own wallet to an address of this test chain. The address gets the exact amount: the fee is paid on top by the service.</p>
+      <form id="pay" autocomplete="off" novalidate>
+        <label for="target">Address, or a payment link that begins with <span class="mono">bitcoin:</span></label>
+        <input id="target" name="target" type="text" inputmode="text" maxlength="400" spellcheck="false" autocapitalize="off" autocorrect="off" aria-describedby="target-note" placeholder="bcrt1…">
+        <p id="target-note" class="note" role="status"></p>
+        <label for="sats">Amount in satoshis</label>
+        <div class="amount">
+          <input id="sats" name="sats" type="text" inputmode="numeric" maxlength="16" spellcheck="false" aria-describedby="sats-btc sats-note" placeholder="for example 10000">
+          <output id="sats-btc" class="btc" for="sats">= 0 BTC</output>
+        </div>
+        <p id="sats-note" class="note" role="status"></p>
+        <button id="pay-button" type="submit">Pay</button>
+      </form>
+      <section id="result" class="result" role="status" aria-live="polite" hidden>
+        <p id="result-title" class="result-title"></p>
+        <p id="result-text"></p>
+        <p id="result-txid-line" hidden>Transaction id: <code id="result-txid"></code></p>
+        <p id="result-progress" hidden></p>
+      </section>
+    </section>
+
+    <section class="part" aria-labelledby="receive-title">
+      <h2 id="receive-title">Get a receiving address</h2>
+      <p class="soft">The address is held by the test network's Bitcoin node. What arrives at it is shown here and cannot be spent by you. That is all a seller needs to try the market: name the address in a sell order, and see the buyer's payment arrive.</p>
+      <form id="receive" autocomplete="off">
+        <label for="kind">Kind of address</label>
+        <div class="row">
+          <select id="kind" name="kind">
+            <option value="p2wpkh">SegWit (begins with bcrt1q)</option>
+            <option value="p2tr">Taproot (begins with bcrt1p)</option>
+          </select>
+          <button id="new-address" type="submit">New address</button>
+        </div>
+      </form>
+      <p id="receive-note" class="note" role="status"></p>
+      <p id="addresses-empty" class="soft">No address made in this browser yet.</p>
+      <ul id="addresses" class="addresses" aria-label="Your receiving addresses"></ul>
+      <p class="tools"><button id="refresh" type="button" class="quiet" hidden>Look again at what arrived</button></p>
+      <p id="storage-note" class="soft small">The list is kept in this browser only. Forget takes an address off this list; the address itself goes on existing.</p>
+    </section>
+
+    <section class="part" aria-labelledby="chain-title">
+      <h2 id="chain-title">The chain</h2>
+      <p id="chain-status" class="soft" role="status">Asking the service…</p>
+      <dl id="chain-facts" hidden>
+        <dt>Block height</dt><dd id="fact-height"></dd>
+        <dt>Pace</dt><dd id="fact-pace"></dd>
+        <dt>Next block</dt><dd id="fact-next"></dd>
+        <dt>Most in one payment</dt><dd id="fact-max"></dd>
+        <dt>You can still be paid today</dt><dd id="fact-left"></dd>
+      </dl>
+      <p class="soft small">Blocks are made on this fixed pace and never on request. The chain is private: no other Bitcoin software can reach it, and its coins exist nowhere else.</p>
+    </section>
+  </main>
+</body>
+</html>

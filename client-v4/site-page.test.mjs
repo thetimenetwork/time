@@ -25,7 +25,7 @@ test('an address becomes a link only if it is https:// (or http://127.0.0.1 with
 test('the settings file: every value checked, the problems said, the example complete', async () => {
   const example = JSON.parse(await file('site-config.example.json'));
   assert.deepEqual(Object.keys(example), KEYS);
-  assert.deepEqual(readConfig(example), { config: { wallet: 'https://wallet.example/', faucet: 'https://faucet.example/', explorer: 'https://api.example/explorer/', blog: 'https://blog.example/', api: 'https://api.example', network_name: 'Time test network', ends: '2026-12-20', hardware: 'https://hardware.example/', source: 'https://source.example/time', chat: 'https://chat.example/' }, problems: [] });
+  assert.deepEqual(readConfig(example), { config: { wallet: 'https://wallet.example/', faucet: 'https://faucet.example/', explorer: 'https://api.example/explorer/', blog: 'https://blog.example/', api: 'https://api.example', network_name: 'Time test network', ends: '2026-12-20', hardware: 'https://hardware.example/', source: 'https://source.example/time', chat: 'https://chat.example/', test_bitcoin: 'https://faucet.example/bitcoin/' }, problems: [] });
   const empty = readConfig({});
   assert.deepEqual(empty.config, Object.fromEntries(KEYS.map(key => [key, null])));
   // An app's address may be left out: its card is not shown, and nothing is said.
@@ -112,22 +112,25 @@ test('the page: exactly its files, nothing loaded from outside its folder, no in
   assert.deepEqual([...script.matchAll(/path(?: =|:) '([^']+)'/g)].map(match => match[1]).sort(), ['/v1/stats', '/v1/status']);
   assert(!/url\(|@import|https?:\/\//.test(styles));
   for (const words of ['Test network.', 'have no value', 'may be reset at any time', 'has not had its outside audit', 'Create your account', 'Get test time', 'Send some to a friend', 'Sign in to the demo blog', 'Your keys in one minute', 'The backup file', 'Protect my account', 'five recovery words', 'written by hand on paper', 'Look up any account or payment, and check it in your own browser.', 'one for the whole network and not one per person', 'Seconds in existence', 'Who holds time', 'Every person\'s account is shown as Anonymous.', 'its word, not a proof', 'Apps']) assert(html.includes(words), words);
-  // The four steps, the wallet's explanation of keys, and the ten apps. An app the network may not have (data-app-of)
+  // The four steps, the wallet's explanation of keys, and the twelve apps. An app the network may not have (data-app-of)
   // is hidden by the script when its address is not set; the network's own pages are always offered.
-  assert.equal((html.match(/data-link="/g) || []).length, 15);
+  assert.equal((html.match(/data-link="/g) || []).length, 17);
   const derived = Object.keys(derivedLinks({}));
   for (const key of html.matchAll(/data-link="([^"]+)"/g)) assert([...LINK_KEYS_OF_PAGE, ...APP_KEYS, ...derived].includes(key[1]), key[1]);
   for (const card of html.matchAll(/data-app-of="([^"]+)"/g)) assert(APP_KEYS.includes(card[1]), card[1]);
   // Every app card is one link, with its name and its sentence; the icons are drawn inline, not loaded.
-  assert.equal((html.match(/class="app"/g) || []).length, 10);
-  assert.equal((html.match(/class="app-about"/g) || []).length, 10);
+  assert.equal((html.match(/class="app"/g) || []).length, 12);
+  assert.equal((html.match(/class="app-about"/g) || []).length, 12);
+  // The market's card leads to the wallet, and only on a network that has the market (the test bitcoin's address is set).
+  assert.deepEqual([derivedLinks({ wallet: 'https://w.example/', test_bitcoin: 'https://f.example/bitcoin/' }).market, derivedLinks({ wallet: 'https://w.example/' }).market, derivedLinks({ test_bitcoin: 'https://f.example/bitcoin/' }).market], ['https://w.example/', null, null]);
+  assert.equal((html.match(/data-app-of="test_bitcoin"/g) || []).length, 2);
   assert(!/Seconds devnet|LOCAL DEVNET|laboratory|\bLAB\b|devnet/i.test(html + script), 'old names');
 });
 
 test('the links made from the settings, and amounts, lengths and shares in words', () => {
   assert.deepEqual(derivedLinks({ explorer: 'https://explorer.example/explorer/', wallet: 'https://wallet.example/', source: 'https://source.example/time' }), {
-    validators: 'https://explorer.example/explorer/#/validators', device: 'https://wallet.example/device-check.html', developers: 'https://source.example/time/blob/main/docs/integration-guide.md' });
-  assert.deepEqual(derivedLinks({}), { validators: null, device: null, developers: null });
+    validators: 'https://explorer.example/explorer/#/validators', device: 'https://wallet.example/device-check.html', developers: 'https://source.example/time/blob/main/docs/integration-guide.md', market: null });
+  assert.deepEqual(derivedLinks({}), { validators: null, device: null, developers: null, market: null });
   assert.deepEqual([0n, 999n, 1000n, 44000n, 300000n, 59963000n, 999999499n, 999999500n, 11653445000000n, null, -1n].map(secondsText),
     ['0', 'less than 0.001', '0.001', '0.044', '0.3', '59.963', '999.999', '1,000', '11,653,445', '–', '–']);
   assert.deepEqual([0, 59000, 3600000, 3661000, 203472000, 86400000 * 400].map(durationWords), ['0 seconds', '59 seconds', '1 hour', '1 hour 1 minute', '2 days 8 hours 31 minutes', '400 days']);

@@ -32,7 +32,7 @@ test('amounts and prices are written exactly, and read back to the chain\'s whol
   // An address is grouped for comparing and never shortened: every character is there, in order.
   const address = 'bcrt1qqyqszqgpqyqszqgpqyqszqgpqyqszqgpvxat9d';
   assert.equal(M.groupedAddress(address).replaceAll(' ', ''), address); assert.match(M.groupedAddress(address), /^(?:\S{4} )+\S{1,4}$/);
-  assert.deepEqual([M.blocksDuration('6', '600000000'), M.blocksDuration('3', '600000000'), M.blocksDuration('144', '600000000'), M.blocksDuration('6', '1000000')], ['about 60 minutes', 'about 30 minutes', 'about 24 hours', 'about 6 seconds']);
+  assert.deepEqual([M.blocksDuration('6', '600000000'), M.blocksDuration('3', '600000000'), M.blocksDuration('144', '600000000'), M.blocksDuration('6', '1000000'), M.blocksDuration('6', null)], ['about 60 minutes', 'about 30 minutes', 'about 24 hours', 'about 6 seconds', 'as this test chain makes them']);
 });
 
 test('the deposit and the sizes follow the chain\'s formulas, on the engine\'s own vectors', () => {
@@ -57,6 +57,13 @@ test('the deposit and the sizes follow the chain\'s formulas, on the engine\'s o
 
 test('the size of a fill: the smallest purchase, a rest that stays takeable, and all that is left', () => {
   const o = order();   // 40 s at 250 sats: 10,000 sats; smallest purchase 1,000 sats = 4 s
+  // An order of a test network may ask a smallest purchase of one satoshi; Bitcoin still sends no less than its dust
+  // amount, so the wallet makes no purchase it could not pay: 2.184 s cost 546 satoshis, 2.18 s 545.
+  const tiny = order({ min_sats: '1' });
+  assert.equal(M.sizeRefusal(sdk, tiny, '2184000', RULES), null);
+  assert.match(M.sizeRefusal(sdk, tiny, '2180000', RULES), /less than 546 satoshis .* costs 545 satoshis: choose more/);
+  assert.match(M.sizeRefusal(sdk, order({ min_sats: '1', amount_micros: '1000000' }), '1000000', { ...RULES, minSats: '1' }), /costs 250 satoshis: choose more/);
+  assert.equal(M.fitAmount(sdk, tiny, '1000000', RULES), '0');
   assert.equal(M.sizeRefusal(sdk, o, '4000000', RULES), null); assert.equal(M.sizeRefusal(sdk, o, '40000000', RULES), null); assert.equal(M.sizeRefusal(sdk, o, '36000000', RULES), null);
   assert.equal(M.sizeRefusal(sdk, o, '3996001', RULES), null, 'a cost is rounded up: 3.996001 s cost 1,000 satoshis');
   assert.match(M.sizeRefusal(sdk, o, '3996000', RULES), /smallest purchase of this order costs 1,000 satoshis\. This amount costs 999\./);

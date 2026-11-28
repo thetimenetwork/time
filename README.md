@@ -107,7 +107,7 @@ The files under `web-v4/wallet/tests/` are not part of these suites: they drive 
 - [spec/protocol-4.md](spec/protocol-4.md): the rules of protocol version 4, and [docs/design/upgrade-mechanism.md](docs/design/upgrade-mechanism.md): how validators schedule a new version and what every program does at the switch.
 - [docs/integration-guide.md](docs/integration-guide.md) and [deploy/api/README.md](deploy/api/README.md): the HTTP API for exchanges, shops and wallets, with its recipes for deposits and withdrawals.
 - [web-v4/explorer/README.md](web-v4/explorer/README.md): the explorer pages and what a visitor's browser checks for itself.
-- [deploy/watch/README.md](deploy/watch/README.md): the alert watch. [deploy/faucet/README.md](deploy/faucet/README.md): the faucet of a test network.
+- [deploy/watch/README.md](deploy/watch/README.md): the alert watch. [deploy/faucet/README.md](deploy/faucet/README.md): the faucet of a test network. [deploy/test-bitcoin/README.md](deploy/test-bitcoin/README.md): play bitcoin on a private chain, for a test network with the market.
 - [v4/PROTOCOL.md](v4/PROTOCOL.md) and [v4/REQUIREMENTS.md](v4/REQUIREMENTS.md): the protocol-4 ledger that the engine implements.
 - [client-v4/README.md](client-v4/README.md): the SDK, the trust a wallet starts from, how a website integrates.
 - [web-v4/README.md](web-v4/README.md) and [web-v4/wallet/README.md](web-v4/wallet/README.md): the wallet.

@@ -39,7 +39,7 @@ test('buy: the offer is the proven order, the take is reviewed and signed, and t
   assert.equal(w.$('market-offer-amount').textContent, '10 seconds');
   assert.match(w.text(), /for 0\.00002500 BTC \(2,500 satoshis\)/); assert.match(w.text(), /Price 250 satoshis for one second/);
   assert.match(w.text(), /Deposit 0\.5 seconds, locked now\. It comes back when your payment is proven\. You lose it to the seller if you do not pay in time, or if you give up\./);
-  assert.match(w.text(), /Time to pay 6 Bitcoin blocks, about 6 seconds/); assert.match(w.text(), /Confirmations 2,/); assert.match(w.text(), /Fee 0\.001 seconds/);
+  assert.match(w.text(), /Time to pay 6 Bitcoin blocks, as this test chain makes them/); assert.match(w.text(), /Confirmations 2 more blocks, before the seconds are yours/); assert.match(w.text(), /Fee 0\.001 seconds/);
   assert.match(w.text(), /Read from the chain and checked by this browser at block/);
   assert.equal(w.signed.length, 0);
   await w.press(w.$('market-buy-review'));
@@ -56,7 +56,7 @@ test('buy: the offer is the proven order, the take is reviewed and signed, and t
   assert.equal(w.$('market-pay-amount').textContent, '0.00002500 BTC'); assert.match(w.text(), /2,500 satoshis, still to pay/);
   assert.equal(w.$('market-pay-link').href, `bitcoin:${address}?amount=0.00002500`);
   assert.match(textOf(w.$('market-pay-state')), /Waiting for payment Nothing is counted yet\./);
-  assert.match(w.text(), /Pay by Bitcoin block 106 at the latest\. The chain now knows block 100: 6 blocks left, about 6 seconds\./); assert.match(w.text(), /Confirmations 2 after that, by block 107/);
+  assert.match(w.text(), /Pay by Bitcoin block 106 at the latest\. The chain now knows block 100: 6 blocks left, as this test chain makes them\./); assert.match(w.text(), /Confirmations 2 after that, by block 107/);
   assert.match(w.text(), /Purchase number Fill 1/);
   for (const words of [PAY.exact, PAY.exchange, PAY.late, PAY.proof, PAY.publicNote, PAY.compare, PAY.giveUp]) assert.ok(w.text().includes(words), words);
   assert.ok(w.reads.some(read => JSON.stringify(read.market_fills) === '["1"]'));
